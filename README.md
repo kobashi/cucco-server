@@ -5,14 +5,21 @@
 ## 概要
 
 - ゲーム研究ゼミ内での運用を想定したCucco対戦サーバー
-- プレイヤーは人間・AIの両方に対応(AIは策定中の通信プロトコルに従って対局する)
+- プレイヤーは人間・AIの両方に対応(AIは確定した通信プロトコルに従って対局する)
 - 開発当初はiMac上でローカル運用、安定後にCloudflare経由で限定公開
 
 ## 状態
 
-設計中。技術選定・プロトコル仕様を詰めている段階。
+要求仕様・ゲームルール・通信プロトコル設計が確定。実装はこれから。
 
-## 開発方針(検討中・暫定)
+## ドキュメント
+
+- [`docs/requirements.md`](docs/requirements.md) — 要求仕様書(全体像はここから)
+- [`docs/rules/final_rules.md`](docs/rules/final_rules.md) — 確定したゲームルール
+- [`docs/protocol/design.md`](docs/protocol/design.md) — 通信プロトコル設計
+- [`docs/ai-client-guide.md`](docs/ai-client-guide.md) — AIプレイヤー実装ガイド
+
+## 開発方針
 
 - 言語: Python
 - 通信: WebSocket / JSON

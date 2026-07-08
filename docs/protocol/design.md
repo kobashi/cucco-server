@@ -1,6 +1,6 @@
-# Cucco 通信プロトコル設計(素案)
+# Cucco 通信プロトコル設計
 
-`docs/rules/final_rules.md`のルールと`docs/protocol/decisions.md`の運用方針に基づく、通信プロトコルの素案。レビュー用のドラフトであり、確定ではない。
+`docs/rules/final_rules.md`のルールと`docs/protocol/decisions.md`の運用方針に基づく、通信プロトコルの設計。Fable5による7回のレビューを経て、実装可能な水準まで確定している(要求仕様としての全体像は`docs/requirements.md`を参照)。
 
 ## 技術スタック
 
@@ -136,11 +136,11 @@
   "deal_number": "number",
   "deck_remaining_count": "number",
   "discard_pile": [
-    { "card": "string(ランク名)", "original_holder": "player_id | null", "discarded_via": "open | disqualification | deck_draw", "discarded_at": "ISO8601" }
+    { "card": "string(ランク名)", "original_holder": "player_id | null", "discarded_via": "open | disqualification | deck_draw | dealer_swap", "discarded_at": "ISO8601" }
   ],
-  "provenance_map": { "現在の所持者player_id": "その札の最初の持ち主player_id" },
+  "provenance_map": { "現在の所持者player_id": "その札の最初の持ち主player_id、山札から直接受け取った札の場合はnull" },
   "declarations_this_deal": [
-    { "player_id": "string", "action": "cambio | no_change | cucco_declare | cucco_pass", "via_timeout": "boolean", "ts": "ISO8601" }
+    { "player_id": "string", "action": "cambio | no_change | cucco_declare", "via_timeout": "boolean", "ts": "ISO8601" }
   ],
   "your_hand": "string(ランク名) | null (この接続の本人にのみ含める。手札を持たない場合はnull)"
 }
@@ -148,7 +148,9 @@
 
 - `discard_pile`は捨て札に加わったカードの一覧。「猫」の効果に必要な`provenance_map`(元の持ち主の追跡)とあわせて全員に公開する
   - `discarded_via`が`deck_draw`の場合(山札から引かれたが親が受け取らなかったカード。`docs/rules/final_rules.md`「山札から引かれたが親が最終的に受け取らなかったカードの行き先」参照)、`original_holder`は`null`になる
-- `declarations_this_deal`は、そのディール中に行われた宣言(カンビオ/ノンカンビオ/クク関連)の時系列一覧。カウンティングや行動履歴の把握に使う。`deal_started`で空配列にリセットされる。手番タイムアウトによる自動ノーチェンジも`action: "no_change"`、`via_timeout: true`として記録する(タイムアウトによる行動もカウンティング上見落とされないようにするため)
+  - `discarded_via`が`dealer_swap`の場合(親が山札交換に成功し、手放した元のカード。`docs/rules/final_rules.md`「親の山札交換が成立した場合の元のカードの行き先」参照)、`original_holder`は通常通りそのカードの最初の持ち主。なお、親が新たに受け取った山札由来のカードは、`provenance_map`上`null`(元の持ち主なし)として扱う
+- `declarations_this_deal`は、そのディール中に行われた宣言(カンビオ/ノンカンビオ/クク宣言)の時系列一覧。カウンティングや行動履歴の把握に使う。`deal_started`で空配列にリセットされる。手番タイムアウトによる自動ノーチェンジも`action: "no_change"`、`via_timeout: true`として記録する(タイムアウトによる行動もカウンティング上見落とされないようにするため)
+  - **`cucco_pass`(クク宣言を見送ったこと)は、この公開ログには一切記録しない**。`cucco_window`はクク保持者にのみ送られるため、`cucco_pass`を公開履歴に含めると「誰がククを持っているか」が他プレイヤーに漏れてしまう(物理卓には存在しない情報)。`cucco_pass`はサーバー内部の行動ログ(リプレイ用、`docs/protocol/design.md`「永続化・成績記録」参照)にのみ記録する
 - **自分の現在の手札**(`your_hand`)は、宛先が本人の場合にのみ`state_snapshot`に含める(他プレイヤー・観戦者向けには含めない)。切断中に交換要求のターゲットにされて手札が変わっていても、再接続時の`state_snapshot`でこのフィールドから現在の手札を復元できる。ディールに参加していない(まだ配られていない/そのディールから既に脱落した)場合は`null`
 - 観戦者にも同じ公開ゲーム状態が送られる(`your_hand`を除く)
 - **山札の再構築**: 山札が尽きて捨て札から再構築される際(ポット途中、`docs/rules/final_rules.md`8.)、`deck_reshuffled`イベントを配信する。このタイミングで`deck_remaining_count`は再構築後の枚数に、`discard_pile`は空になる(そのディールの最弱判定・途中失格による捨て札はこの再構築で山札に戻るため、以降のカウンティングはリセットされる)
@@ -198,11 +200,11 @@
 - 次ポット時の人数不足はゲーム終了+チップ順位判定
 - 不正な操作: 人間向けUIはそもそも不正な操作を送信できない設計にする。AIには`action_rejected`で通知する
 - 手番タイムアウト秒数はサーバー設定値。人間/AIで別々の値を持つ(`turn_timeout_human_sec` / `turn_timeout_ai_sec`)
-- 手番以外のプロンプト(`ready`, `dealer_ready`, `continue_prompt`, `cucco_window`)にもタイムアウトのデフォルト動作を設ける
-  - `ready`のタイムアウト: そのポットに参加しない(観戦扱い)
-  - `dealer_ready`のタイムアウト: 自動的に「どうぞ」を宣言したものとして進める
-  - `continue_prompt`のタイムアウト: 辞退(そのポットから脱落)として扱う
-  - `cucco_window`のタイムアウト: 宣言なしとして次の手番へ進む
+- 手番以外のプロンプト(`ready`, `dealer_ready`, `continue_prompt`, `cucco_window`)にもタイムアウトのデフォルト動作を設ける。いずれもタイムアウトの計測は、対応する直前のイベントを受信した時点から始まる
+  - `ready`のタイムアウト: 直前の`pot_result`(または卓参加時の`state_snapshot`)の受信時点から計測。タイムアウトするとそのポットに参加しない(観戦扱い)
+  - `dealer_ready`のタイムアウト: `deal_started`の受信時点から計測。タイムアウトすると自動的に「どうぞ」を宣言したものとして進める
+  - `continue_prompt`のタイムアウト: `continue_prompt`自体の受信時点から計測。タイムアウトすると辞退(そのポットから脱落)として扱う
+  - `cucco_window`のタイムアウト: `cucco_window`自体の受信時点から計測。タイムアウトすると宣言なしとして次の手番へ進む
 
 ## AI専用高速評価モード
 
