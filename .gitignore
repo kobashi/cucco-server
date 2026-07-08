@@ -6,3 +6,6 @@ venv/
 .DS_Store
 *.log
 .claude/
+*.egg-info/
+data/
+.pytest_cache/
