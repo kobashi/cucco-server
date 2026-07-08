@@ -128,6 +128,10 @@ class Deal:
     def is_awaiting_open(self) -> bool:
         return self.cucco_declared_by is not None or self.legal_actor() is None
 
+    @property
+    def is_opened(self) -> bool:
+        return self._opened
+
     def current_cucco_holders(self) -> set[str]:
         return {pid for pid, card in self.hands.items() if card is Rank.CUCCO and pid not in self.disqualified}
 

@@ -100,3 +100,60 @@ DealEvent = Union[
     DealOpened,
     DeckReshuffled,
 ]
+
+
+# -- Pot-level events -----------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ChipsPaid:
+    """A deal loser paid the required chips during "child time" and remains
+    in the pot."""
+
+    player_id: str
+    amount: int
+    chips_now: int  # absolute, per docs/protocol/design.md
+
+
+@dataclass(frozen=True)
+class PlayerLeftPot:
+    player_id: str
+    reason: str  # "adult_time" | "insolvent" | "declined"
+
+
+@dataclass(frozen=True)
+class ContinuePrompted:
+    """A child-time loser must be asked whether to pay and continue."""
+
+    player_id: str
+    required_chips: int
+
+
+@dataclass(frozen=True)
+class DealerChanged:
+    player_id: str
+
+
+@dataclass(frozen=True)
+class PotWon:
+    winner: str
+    amount: int
+    chips_now: int
+
+
+@dataclass(frozen=True)
+class PotWipedOut:
+    """No single winner: every remaining participant was eliminated
+    simultaneously. `amount` stays pooled and carries into the next Pot."""
+
+    amount: int
+
+
+PotEvent = Union[
+    ChipsPaid,
+    PlayerLeftPot,
+    ContinuePrompted,
+    DealerChanged,
+    PotWon,
+    PotWipedOut,
+]
