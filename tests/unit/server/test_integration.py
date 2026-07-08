@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from cucco.persistence.results_store import ResultsStore
 from cucco.protocol.envelope import build_envelope
 from cucco.server.dispatch import ConnectionHandler
 from cucco.server.registry import TableRegistry
@@ -45,9 +46,11 @@ async def auto_respond(handler: ConnectionHandler, conn: FakeConnection, stop_ev
             stop_event.set()
 
 
-async def _setup_player(registry: TableRegistry, name: str) -> tuple[ConnectionHandler, FakeConnection]:
+async def _setup_player(
+    registry: TableRegistry, name: str, results_store=None, action_log_dir=None
+) -> tuple[ConnectionHandler, FakeConnection]:
     conn = FakeConnection(name)
-    handler = ConnectionHandler(conn, registry)
+    handler = ConnectionHandler(conn, registry, results_store=results_store, action_log_dir=action_log_dir)
     await handler.handle_message(build_envelope("identify", {"name": name, "player_type": "ai"}))
     return handler, conn
 
@@ -115,3 +118,61 @@ async def test_full_game_runs_to_completion_over_fake_connections():
     for m in pot_results:
         assert m["payload"]["result"] in ("won", "wiped_out")
         assert set(m["payload"]["chips_now"]) == {creator.session.player_id, bob.session.player_id, carol.session.player_id}
+
+
+@pytest.mark.asyncio
+async def test_full_game_persists_a_results_row_and_a_replayable_action_log(tmp_path):
+    registry = TableRegistry()
+    results_store = ResultsStore(tmp_path / "results.db")
+    action_log_dir = tmp_path / "action_logs"
+
+    creator, creator_conn = await _setup_player(registry, "Alice", results_store, action_log_dir)
+    await creator.handle_message(
+        build_envelope("create_table", {"mode": "normal", "end_condition": "chips_zero", "starting_chips": 5})
+    )
+    room_id = next(m for m in creator_conn.sent if m["type"] == "table_created")["payload"]["room_id"]
+
+    bob, bob_conn = await _setup_player(registry, "Bob", results_store, action_log_dir)
+    carol, carol_conn = await _setup_player(registry, "Carol", results_store, action_log_dir)
+
+    handlers_and_conns = [(creator, creator_conn), (bob, bob_conn), (carol, carol_conn)]
+    for handler, conn in handlers_and_conns:
+        await handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    stop_event = asyncio.Event()
+    responder_tasks = [
+        asyncio.create_task(auto_respond(handler, conn, stop_event)) for handler, conn in handlers_and_conns
+    ]
+    for handler, _ in handlers_and_conns:
+        await handler.handle_message(build_envelope("ready", {}))
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=10.0)
+    finally:
+        for task in responder_tasks:
+            task.cancel()
+        await asyncio.gather(*responder_tasks, return_exceptions=True)
+
+    # The runner records results in the background as part of finishing the
+    # game_ended broadcast -- give that a moment to land.
+    await asyncio.sleep(0.05)
+
+    games = results_store._conn.execute("SELECT table_id, mode FROM games").fetchall()
+    assert games == [(room_id, "normal")]
+    participants = results_store._conn.execute(
+        "SELECT player_id, name, player_type, final_rank FROM participants ORDER BY final_rank"
+    ).fetchall()
+    assert {row[0] for row in participants} == {creator.session.player_id, bob.session.player_id, carol.session.player_id}
+    assert [row[3] for row in participants] == [1, 2, 3]  # ranks 1..3, no gaps
+
+    log_path = action_log_dir / f"{room_id}.jsonl"
+    assert log_path.exists()
+    lines = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert lines[0]["kind"] == "seed"
+    assert isinstance(lines[0]["seed"], int)
+    # Every well-behaved player passes on クク at least once during a full
+    # game -- confirms cucco_pass reaches the log despite never being
+    # broadcast on the wire (docs/protocol/design.md).
+    assert any(line["kind"] == "action" and line["action_type"] == "cucco_pass" for line in lines)
+    assert any(line["kind"] == "event" and line["event_type"] == "GameEnded" for line in lines)
+
+    results_store.close()

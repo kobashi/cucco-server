@@ -15,9 +15,12 @@ import asyncio
 import logging
 import random
 import uuid
+from pathlib import Path
 
 from cucco.domain.errors import IllegalAction
 from cucco.domain.game import Game
+from cucco.persistence.action_log import ActionLogWriter
+from cucco.persistence.results_store import ResultsStore
 from cucco.protocol.actions import (
     CambioDeclare,
     ContinueDeclare,
@@ -64,8 +67,19 @@ async def _start_game(table: Table) -> None:
         table.ready_ids.clear()
         table.ready_deadline_task = None
         return
-    table.game = Game(participants, table.config, random.Random())
-    asyncio.create_task(_run_table_safely(table))
+    # Recorded up front (docs/protocol/design.md 「永続化・成績記録」) so the
+    # game is deterministically replayable from the action log alone --
+    # random.Random() with no seed draws from OS entropy and can't be
+    # recovered after the fact.
+    seed = random.SystemRandom().randrange(2**63)
+    table.game = Game(participants, table.config, random.Random(seed))
+
+    action_log = None
+    if table.action_log_dir is not None:
+        action_log = ActionLogWriter(table.action_log_dir / f"{table.room_id}.jsonl")
+        action_log.write_seed(seed)
+
+    asyncio.create_task(_run_table_safely(table, action_log))
 
 
 async def _ready_timeout_watchdog(table: Table) -> None:
@@ -74,12 +88,12 @@ async def _ready_timeout_watchdog(table: Table) -> None:
         await _start_game(table)
 
 
-async def _run_table_safely(table: Table) -> None:
+async def _run_table_safely(table: Table, action_log: ActionLogWriter | None = None) -> None:
     """`TableRunner.run()` is launched as a fire-and-forget task; without
     this wrapper, an uncaught exception would silently kill the task and
     leave the table permanently hung with no explanation to its players."""
     try:
-        await TableRunner(table).run()
+        await TableRunner(table, action_log=action_log, results_store=table.results_store).run()
     except Exception:
         logger.exception("TableRunner crashed for table %s", table.room_id)
         table.finished = True
@@ -97,9 +111,17 @@ async def _run_table_safely(table: Table) -> None:
 
 
 class ConnectionHandler:
-    def __init__(self, connection: Connection, registry: TableRegistry) -> None:
+    def __init__(
+        self,
+        connection: Connection,
+        registry: TableRegistry,
+        results_store: ResultsStore | None = None,
+        action_log_dir: Path | None = None,
+    ) -> None:
         self.connection = connection
         self.registry = registry
+        self.results_store = results_store
+        self.action_log_dir = action_log_dir
         self.session: PlayerSession | None = None
         self.table: Table | None = None
 
@@ -154,7 +176,13 @@ class ConnectionHandler:
             # yet -- accepting the table would silently behave like a single
             # normal game instead. Reject until cucco.evaluation exists.
             raise ProtocolError("mode 'evaluation' is not yet implemented")
-        table = Table(room_id="", config=config, creator_id=self.session.player_id)
+        table = Table(
+            room_id="",
+            config=config,
+            creator_id=self.session.player_id,
+            results_store=self.results_store,
+            action_log_dir=self.action_log_dir,
+        )
         room_id = self.registry.register(table)
         table.room_id = room_id
         await self._send_raw("table_created", {"room_id": room_id})

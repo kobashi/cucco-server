@@ -19,6 +19,8 @@ from cucco.domain.errors import IllegalAction
 from cucco.domain.events import ChipsPaid, ContinuePrompted, DealerChanged, PlayerLeftPot, PotWipedOut, PotWon
 from cucco.domain.game import Game
 from cucco.domain.pot import Pot
+from cucco.persistence.action_log import ActionLogWriter
+from cucco.persistence.results_store import PlayerInfo, ResultsStore
 from cucco.protocol.actions import (
     Action,
     CambioDeclare,
@@ -111,8 +113,15 @@ def _seat_view(session: PlayerSession, game: Game | None, active_ids: set[str] |
 
 
 class TableRunner:
-    def __init__(self, table: Table) -> None:
+    def __init__(
+        self,
+        table: Table,
+        action_log: ActionLogWriter | None = None,
+        results_store: ResultsStore | None = None,
+    ) -> None:
         self.table = table
+        self.action_log = action_log
+        self.results_store = results_store
 
     # -- low-level I/O -------------------------------------------------------------
 
@@ -124,6 +133,11 @@ class TableRunner:
             await self._send_to(session, type_, payload_for(session.player_id))
 
     async def _send_event(self, event) -> None:
+        # Every domain event is a "result" worth recording for replay
+        # (docs/protocol/design.md 「永続化・成績記録」), even ones with no
+        # wire representation (e.g. a cambio/cucco_declare Declaration).
+        if self.action_log is not None:
+            self.action_log.write_event(event)
         wire = translate(event)
         if wire is None:
             return
@@ -205,13 +219,35 @@ class TableRunner:
     async def run(self) -> None:
         game = self.table.game
         assert game is not None
-        for event in game.start_first_pot():
-            await self._send_event(event)
-        await self._broadcast_state_snapshot()
+        try:
+            for event in game.start_first_pot():
+                await self._send_event(event)
+            await self._broadcast_state_snapshot()
 
-        while not game.is_finished:
-            await self._run_pot(game)
-        self.table.finished = True
+            while not game.is_finished:
+                await self._run_pot(game)
+            self.table.finished = True
+
+            if self.results_store is not None:
+                self._record_results(game)
+        finally:
+            if self.action_log is not None:
+                self.action_log.close()
+
+    def _record_results(self, game: Game) -> None:
+        assert game.final_ranking is not None
+        players = [
+            PlayerInfo(pid, session.name, session.player_type)
+            for pid in game.seats
+            if (session := self.table.get(pid)) is not None
+        ]
+        self.results_store.record_game_ended(
+            table_id=self.table.room_id,
+            mode=self.table.config.mode,
+            players=players,
+            ranking=game.final_ranking,
+            action_log_path=str(self.action_log.path) if self.action_log is not None else None,
+        )
 
     async def _run_pot(self, game: Game) -> None:
         pot = game.current_pot
@@ -380,12 +416,21 @@ class TableRunner:
                 continue
             session = self.table.get(pid)
             if session is None or not session.connected:
+                self._log_cucco_pass(pid, via_timeout=True)
                 continue
             action = await self._prompt(session, "cucco_window", (CuccoDeclare, CuccoPass))
             if action is None or isinstance(action, CuccoPass):
+                self._log_cucco_pass(pid, via_timeout=action is None)
                 continue
             try:
                 events = deal.submit_cucco_declare(pid)
                 await self._send_events(events)
             except IllegalAction as exc:
                 await self._reject(session, str(exc))
+
+    def _log_cucco_pass(self, player_id: str, *, via_timeout: bool) -> None:
+        # cucco_pass deliberately produces no domain event (recording it
+        # publicly would leak who holds クク) -- the action log is the only
+        # place this is ever recorded (Deal.submit_cucco_pass's docstring).
+        if self.action_log is not None:
+            self.action_log.write_action(player_id, "cucco_pass", {"via_timeout": via_timeout})
