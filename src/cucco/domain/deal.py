@@ -69,14 +69,6 @@ class Deal:
         self.deck.on_reshuffle = self._on_deck_reshuffled
 
         self._opened = False
-        # Set as soon as any exchange resolves against the deck. The deck is
-        # structurally the terminal position in turn order (nothing can ever
-        # come "after" it), so once it happens -- whether it was the literal
-        # dealer's own turn or an earlier requester's chain that ran off the
-        # end of `order` -- no further turns remain this deal, even if the
-        # literal dealer (or some other seat) technically never called
-        # submit_cambio/submit_no_change themselves.
-        self._deck_resolved = False
 
     # -- reshuffle plumbing -------------------------------------------------
 
@@ -115,9 +107,15 @@ class Deal:
         player is simply whoever `legal_actor()` returns last) AND the "the
         role can only be inherited by someone who hasn't already acted"
         condition (only not-yet-acted seats are ever returned).
+
+        Note that a house/horse holder who merely REFUSED someone else's
+        chained request (and was never themselves the active requester)
+        does not count as having acted -- they still get their own normal
+        turn later, even if that earlier chain already resolved against the
+        deck on someone else's behalf. This can mean the deck is exchanged
+        with more than once in a single deal (once per player whose own
+        turn happens to fall off the end of `order`).
         """
-        if self._deck_resolved:
-            return None
         for pid in self.order:
             if pid in self.disqualified or pid in self.turn_acted:
                 continue
@@ -240,10 +238,6 @@ class Deal:
         return events
 
     def _resolve_against_deck(self, actor: str) -> list[DealEvent]:
-        # Reaching the deck at all -- whether this is the literal dealer's
-        # own turn or an earlier requester's chain that ran off the end of
-        # `order` -- means no further turns remain this deal.
-        self._deck_resolved = True
         events: list[DealEvent] = []
         while True:
             card = self._draw(events)

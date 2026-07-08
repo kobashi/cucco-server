@@ -63,8 +63,18 @@ def test_chain_reaching_end_of_turn_order_resolves_as_deck_exchange_by_the_origi
     assert deal.hands["B"] is Rank.N10
     assert deal.hands["C"] is Rank.HORSE  # the literal dealer's hand is untouched
 
-    # The dealer's own "turn" has been consumed by this chain resolution --
-    # no further turns remain, even though C never called submit_cambio.
+    # C only ever REFUSED as a chain relay target -- C never independently
+    # acted, so C still gets their own normal turn afterward, even though
+    # B's chain already resolved against the deck on B's own behalf.
+    assert deal.legal_actor() == "C"
+    assert not deal.is_awaiting_open
+
+    # C's own turn is a second, independent exchange with the deck.
+    events2 = deal.submit_cambio("C")
+    deck_ex2 = next(e for e in events2 if isinstance(e, DeckExchangeAccepted))
+    assert deck_ex2.actor == "C"
+    assert deck_ex2.given_up_card is Rank.HORSE
+    assert deal.hands["C"] is not Rank.HORSE
     assert deal.legal_actor() is None
     assert deal.is_awaiting_open
 
@@ -91,3 +101,7 @@ def test_chain_never_loops_back_to_the_original_requester():
     assert deal.hands["B"] is Rank.HOUSE
     assert deal.hands["C"] is Rank.HORSE
     assert deal.hands["D"] is Rank.HOUSE
+
+    # B, C, and D only ever refused as chain relay targets -- none of them
+    # independently acted, so they each still have their own turn to take.
+    assert deal.legal_actor() == "B"
