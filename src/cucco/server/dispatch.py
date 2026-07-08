@@ -12,6 +12,7 @@ API and is a known simplification of this implementation.
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import uuid
 
@@ -39,6 +40,55 @@ from cucco.server.session import Connection, PlayerSession
 from cucco.server.table import Table
 
 QUEUE_ROUTED = (DealerReady, CambioDeclare, NoChangeDeclare, CuccoDeclare, CuccoPass, ContinueDeclare)
+
+# A generous fixed window for players to join and declare `ready` before the
+# first pot starts anyway (docs/protocol/design.md: "ready"のタイムアウトは
+# そのポットに参加しない扱いになる). Not tied to turn_timeout_* since this
+# is a lobby-wide wait, not a single player's per-action budget.
+READY_TIMEOUT_SEC = 60.0
+
+logger = logging.getLogger("cucco.server.dispatch")
+
+
+async def _start_game(table: Table) -> None:
+    if table.game is not None:
+        return
+    participants = [pid for pid in table.player_ids() if pid in table.ready_ids]
+    if len(participants) < table.min_players:
+        # Not enough players readied up in time -- reset so a fresh round
+        # of `ready` declarations can retry rather than wedging forever.
+        table.ready_ids.clear()
+        return
+    table.game = Game(participants, table.config, random.Random())
+    asyncio.create_task(_run_table_safely(table))
+
+
+async def _ready_timeout_watchdog(table: Table) -> None:
+    await asyncio.sleep(READY_TIMEOUT_SEC)
+    if table.game is None:
+        await _start_game(table)
+
+
+async def _run_table_safely(table: Table) -> None:
+    """`TableRunner.run()` is launched as a fire-and-forget task; without
+    this wrapper, an uncaught exception would silently kill the task and
+    leave the table permanently hung with no explanation to its players."""
+    try:
+        await TableRunner(table).run()
+    except Exception:
+        logger.exception("TableRunner crashed for table %s", table.room_id)
+        table.finished = True
+        for session in list(table.sessions.values()):
+            try:
+                await session.send(
+                    build_envelope(
+                        "action_rejected",
+                        {"reason": "internal server error -- this table has stopped"},
+                        table_id=table.room_id,
+                    )
+                )
+            except Exception:
+                logger.exception("failed to notify session %s of table crash", session.player_id)
 
 
 class ConnectionHandler:
@@ -93,6 +143,12 @@ class ConnectionHandler:
         if self.session is None:
             raise ProtocolError("must identify before create_table")
         config = create_table_to_config(action)
+        if config.mode == "evaluation":
+            # docs/protocol/design.md's AI専用高速評価モード (game_count loop,
+            # seat rotation, evaluation_summary) has no server-side runner
+            # yet -- accepting the table would silently behave like a single
+            # normal game instead. Reject until cucco.evaluation exists.
+            raise ProtocolError("mode 'evaluation' is not yet implemented")
         table = Table(room_id="", config=config, creator_id=self.session.player_id)
         room_id = self.registry.register(table)
         table.room_id = room_id
@@ -136,12 +192,11 @@ class ConnectionHandler:
         if table.game is not None:
             return  # first pot already started; later pots auto-include everyone
         table.ready_ids.add(self.session.player_id)
-        if len(table.ready_ids) < max(table.min_players, len(table.players())):
-            return
-        if len(table.players()) < table.min_players:
-            return
-        table.game = Game(table.player_ids(), table.config, random.Random())
-        asyncio.create_task(TableRunner(table).run())
+        if table.ready_deadline_task is None:
+            table.ready_deadline_task = asyncio.create_task(_ready_timeout_watchdog(table))
+        if len(table.ready_ids) >= max(table.min_players, len(table.players())):
+            table.ready_deadline_task.cancel()
+            await _start_game(table)
 
     async def _route_to_inbox(self, action) -> None:
         if self.session is None or self.table is None:

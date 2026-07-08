@@ -100,3 +100,18 @@ async def test_full_game_runs_to_completion_over_fake_connections():
         deal_starts = [m for m in conn.sent if m["type"] == "deal_started"]
         assert deal_starts
         assert any(m["payload"]["your_hand"] is not None for m in deal_starts)
+
+    # deal_result/pot_result aggregates (docs/protocol/design.md) were sent
+    # and carry absolute chip counts for every seat.
+    deal_results = [m for m in creator_conn.sent if m["type"] == "deal_result"]
+    assert deal_results
+    for m in deal_results:
+        assert set(m["payload"]["chips_now"]) == {creator.session.player_id, bob.session.player_id, carol.session.player_id}
+        assert "losers" in m["payload"]
+        assert "discarded_cards" in m["payload"]
+
+    pot_results = [m for m in creator_conn.sent if m["type"] == "pot_result"]
+    assert pot_results
+    for m in pot_results:
+        assert m["payload"]["result"] in ("won", "wiped_out")
+        assert set(m["payload"]["chips_now"]) == {creator.session.player_id, bob.session.player_id, carol.session.player_id}

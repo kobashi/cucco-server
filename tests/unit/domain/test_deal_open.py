@@ -44,6 +44,21 @@ def test_open_moves_all_compared_hands_to_discard_not_just_losers():
     assert discarded_ranks == {Rank.N5, Rank.N2, Rank.N9}
 
 
+def test_sole_survivor_of_mid_deal_disqualifications_is_not_a_loser():
+    # A requests B (holds 人間) and is disqualified. B never independently
+    # acted, so B still gets a normal turn; B no-changes. Only B remains
+    # un-disqualified -- B must not be treated as "weakest" against nobody.
+    deal = build_deal({"A": Rank.N5, "B": Rank.HUMAN}, dealer_id="B")
+    deal.submit_cambio("A")
+    assert deal.disqualified == {"A"}
+    assert deal.legal_actor() == "B"
+    deal.submit_no_change("B")
+
+    opened = deal.open()[0]
+    assert opened.losers == ()
+    assert opened.hands == {"B": Rank.HUMAN}
+
+
 def test_full_deal_happy_path_all_no_change():
     deal = build_deal({"A": Rank.N5, "B": Rank.N2, "C": Rank.N9, "D": Rank.N1}, dealer_id="D")
     for pid in ("A", "B", "C"):

@@ -10,7 +10,7 @@ ends up calling `for_recipient`.
 Some wire events described in docs/protocol/design.md (`deal_result`,
 `pot_result`, `state_snapshot`) are *aggregates* built from several domain
 events plus live Deal/Pot/Game state -- those are assembled by the server
-layer (`cucco.server.table`), not here. This module only handles the
+layer (`cucco.server.runner`), not here. This module only handles the
 events that map cleanly from a single domain event.
 """
 

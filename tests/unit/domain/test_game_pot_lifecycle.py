@@ -48,6 +48,37 @@ def test_pot_won_ends_the_game_if_someone_is_at_zero_chips():
     assert not any(isinstance(e, PotStarted) for e in events)
 
 
+def test_pot_won_excludes_insolvent_seats_from_the_next_pot_under_round_limit():
+    # Under "round_limit", reaching 0 chips does NOT end the game by itself
+    # (unlike "chips_zero") -- but an insolvent seat must still be excluded
+    # from the next pot's entry-fee charge, or their chips go negative.
+    config = GameConfig(end_condition="round_limit", round_limit=100)
+    game = make_game(["A", "B", "C"], config=config)
+    game.start_first_pot()
+    game.chips.update({"A": 30, "B": 0, "C": 24})  # B went insolvent in pot 1
+
+    events = game.process_pot_outcome(PotWon(winner="A", amount=6, chips_now=30))
+
+    assert not game.is_finished
+    started = next(e for e in events if isinstance(e, PotStarted))
+    assert set(started.participants) == {"A", "C"}
+    assert game.chips["B"] == 0  # not charged an entry fee it can't afford
+
+
+def test_pot_won_ends_the_game_under_round_limit_if_fewer_than_two_seats_are_solvent():
+    config = GameConfig(end_condition="round_limit", round_limit=100)
+    game = make_game(["A", "B", "C"], config=config)
+    game.start_first_pot()
+    game.chips.update({"A": 30, "B": 0, "C": 0})
+
+    events = game.process_pot_outcome(PotWon(winner="A", amount=6, chips_now=30))
+
+    assert game.is_finished
+    ended = next(e for e in events if isinstance(e, GameEnded))
+    assert ended.ranking[0] == ("A", 30)
+    assert not any(isinstance(e, PotStarted) for e in events)
+
+
 def test_wipeout_with_one_nonzero_survivor_wins_immediately_without_a_deal():
     game = make_game(["A", "B", "C"])
     game.start_first_pot()

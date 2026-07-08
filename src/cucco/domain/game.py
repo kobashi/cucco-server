@@ -59,7 +59,15 @@ class Game:
         if isinstance(outcome, PotWon):
             if self._chip_zero_end_reached():
                 return [self._end_game()]
-            return self._start_new_pot(self.seats, waive_entry_fee=False)
+            # Under "round_limit", a player can be sitting at 0 chips (having
+            # gone insolvent inside a *previous* pot) without that alone
+            # ending the game -- charging them another entry fee here would
+            # send them negative. Exclude insolvent seats from the next pot,
+            # same as the wipeout-carryover path already does.
+            solvent = [p for p in self.seats if self.chips.get(p, 0) > 0]
+            if len(solvent) < 2:
+                return [self._end_game()]
+            return self._start_new_pot(solvent, waive_entry_fee=False)
         return self._handle_wipeout(outcome.amount)
 
     def force_end(self) -> list[GameEvent]:

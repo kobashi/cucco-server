@@ -1,11 +1,17 @@
 import asyncio
 import json
+import random
 
 import pytest
 
+from cucco.domain.config import GameConfig
+from cucco.domain.game import Game
 from cucco.protocol.envelope import build_envelope
-from cucco.server.dispatch import ConnectionHandler
+from cucco.server.dispatch import ConnectionHandler, _start_game
 from cucco.server.registry import TableRegistry
+from cucco.server.runner import TableRunner
+from cucco.server.session import PlayerSession
+from cucco.server.table import Table
 
 
 class FakeConnection:
@@ -33,6 +39,14 @@ async def test_create_table_before_identify_is_rejected():
     handler = ConnectionHandler(FakeConnection(), TableRegistry())
     await handler.handle_message(build_envelope("create_table", {}))
     assert handler.connection.sent[0]["type"] == "action_rejected"
+
+
+@pytest.mark.asyncio
+async def test_create_table_with_evaluation_mode_is_rejected_until_implemented():
+    handler = ConnectionHandler(FakeConnection(), TableRegistry())
+    await handler.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "ai"}))
+    await handler.handle_message(build_envelope("create_table", {"mode": "evaluation", "game_count": 10}))
+    assert handler.connection.sent[-1]["type"] == "action_rejected"
 
 
 @pytest.mark.asyncio
@@ -88,3 +102,50 @@ async def test_spectator_cannot_declare_ready():
     await handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
     await handler.handle_message(build_envelope("ready", {}))
     assert handler.connection.sent[-1]["type"] == "action_rejected"
+
+
+@pytest.mark.asyncio
+async def test_ready_timeout_starts_game_with_only_the_players_who_readied():
+    table = Table(room_id="ABC123", config=GameConfig(), creator_id="p1")
+    for pid in ("p1", "p2", "p3"):
+        table.add_session(PlayerSession(player_id=pid, name=pid, player_type="ai", session_token=pid, connection=FakeConnection()))
+    # Only 2 of the 3 seated players readied up before the lobby-wide
+    # timeout fires -- the watchdog must start the game with just them
+    # rather than waiting forever for the third.
+    table.ready_ids = {"p1", "p2"}
+
+    await _start_game(table)
+
+    assert table.game is not None
+    assert set(table.game.seats) == {"p1", "p2"}
+
+
+@pytest.mark.asyncio
+async def test_ready_timeout_with_too_few_players_resets_for_a_retry():
+    table = Table(room_id="ABC123", config=GameConfig(), creator_id="p1")
+    table.add_session(PlayerSession(player_id="p1", name="p1", player_type="ai", session_token="p1", connection=FakeConnection()))
+    table.ready_ids = set()  # nobody readied up in time
+
+    await _start_game(table)
+
+    assert table.game is None
+    assert table.ready_ids == set()
+
+
+@pytest.mark.asyncio
+async def test_force_end_fires_when_too_few_connected_players_remain_to_start_a_pot():
+    config = GameConfig()
+    table = Table(room_id="ABC123", config=config, creator_id="p1")
+    conns = {pid: FakeConnection() for pid in ("p1", "p2")}
+    for pid, conn in conns.items():
+        table.add_session(PlayerSession(player_id=pid, name=pid, player_type="ai", session_token=pid, connection=conn))
+    game = Game(["p1", "p2"], config, random.Random(0))
+    table.game = game
+    game.start_first_pot()
+    table.get("p2").connected = False  # p2 dropped before this pot could run
+
+    runner = TableRunner(table)
+    await runner._run_pot(game)
+
+    assert game.is_finished
+    assert any(m["type"] == "game_ended" for m in conns["p1"].sent)

@@ -51,6 +51,13 @@ class Deal:
         self.deck = deck
         self.config = config
 
+        # Attach the reshuffle hook BEFORE dealing: with few cards left in
+        # the shared deck (e.g. late in a pot), even the initial deal-out
+        # can exhaust the draw pile and trigger a reshuffle, which must be
+        # reported the same as any other reshuffle.
+        self._reshuffle_events: list[DeckReshuffled] = []
+        self.deck.on_reshuffle = self._on_deck_reshuffled
+
         self.hands: dict[str, Rank] = {}
         self.provenance: dict[str, str | None] = {}
         for pid in self.order:
@@ -65,9 +72,6 @@ class Deal:
         self.declarations: list[Declaration] = []
         self.deferred_discards: list[DiscardEntry] = []
 
-        self._reshuffle_events: list[DeckReshuffled] = []
-        self.deck.on_reshuffle = self._on_deck_reshuffled
-
         self._opened = False
 
     # -- reshuffle plumbing -------------------------------------------------
@@ -81,6 +85,16 @@ class Deal:
             events.extend(self._reshuffle_events)
             self._reshuffle_events.clear()
         return card
+
+    def take_pending_events(self) -> list[DealEvent]:
+        """Pop any events accumulated outside of a `submit_*` call -- in
+        practice, only a `DeckReshuffled` triggered by exhausting the deck
+        during the initial deal-out in `__init__`. Callers (Pot/runner)
+        should call this immediately after construction and broadcast the
+        result before `deal_started`."""
+        events = list(self._reshuffle_events)
+        self._reshuffle_events.clear()
+        return events
 
     # -- turn order -----------------------------------------------------------
 
@@ -322,10 +336,15 @@ class Deal:
         def _strength(pid: str, card: Rank) -> int:
             return strength(card, elevated=pid in self.elevated_joker_holders)
 
-        if remaining:
+        if len(remaining) > 1:
             weakest = min(_strength(pid, card) for pid, card in remaining.items())
             losers = tuple(pid for pid, card in remaining.items() if _strength(pid, card) == weakest)
         else:
+            # 0 remaining: everyone was mid-deal disqualified (e.g. a mutual
+            # Joker exchange) -- `deal.disqualified` already carries the
+            # full loser set for Pot purposes, no "weakest" to compute.
+            # 1 remaining: a lone survivor of mid-deal disqualifications has
+            # nobody to be weaker than and is not a loser of this deal.
             losers = ()
 
         # All cards compared at "open" (not just the losers') become

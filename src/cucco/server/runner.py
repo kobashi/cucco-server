@@ -16,12 +16,19 @@ import asyncio
 from cucco.domain.cards import Rank
 from cucco.domain.deal import Deal
 from cucco.domain.errors import IllegalAction
-from cucco.domain.events import ContinuePrompted, PotWipedOut, PotWon
+from cucco.domain.events import ChipsPaid, ContinuePrompted, DealerChanged, PlayerLeftPot, PotWipedOut, PotWon
 from cucco.domain.game import Game
 from cucco.domain.pot import Pot
-from cucco.protocol.actions import Action, CambioDeclare, ContinueDeclare, CuccoDeclare, CuccoPass, DealerReady, NoChangeDeclare, Ready
+from cucco.protocol.actions import (
+    Action,
+    CambioDeclare,
+    ContinueDeclare,
+    CuccoDeclare,
+    CuccoPass,
+    DealerReady,
+    NoChangeDeclare,
+)
 from cucco.protocol.envelope import build_envelope
-from cucco.protocol.errors import ProtocolError
 from cucco.protocol.wire_events import translate
 from cucco.server.session import PlayerSession
 from cucco.server.table import Table
@@ -141,10 +148,27 @@ class TableRunner:
     }
 
     async def _prompt(
-        self, session: PlayerSession, prompt_type: str, extra_payload: dict | None = None
+        self,
+        session: PlayerSession,
+        prompt_type: str,
+        expected_types: tuple[type, ...],
+        extra_payload: dict | None = None,
     ) -> Action | None:
-        """Send `prompt_type` to `session` and wait for a response. Returns
-        `None` on timeout."""
+        """Send `prompt_type` to `session` and wait for a response matching
+        `expected_types`. Returns `None` on timeout.
+
+        Any action already sitting in the inbox before this prompt is sent
+        is drained first -- it's a leftover response to a PREVIOUS, already-
+        closed prompt (e.g. a `cucco_declare` that arrived just after that
+        window's timeout) and per docs/protocol/design.md must be silently
+        ignored rather than misapplied to this new prompt. A response that
+        arrives during THIS window but doesn't match `expected_types` is
+        rejected (so a buggy AI gets a diagnostic) and the wait continues
+        on the same deadline.
+        """
+        while not session.inbox.empty():
+            session.inbox.get_nowait()
+
         timeout = timeout_for(self.table.config, prompt_type, session.player_type)
         payload = dict(extra_payload or {})
         payload["timeout_sec"] = timeout
@@ -159,11 +183,17 @@ class TableRunner:
                 action = await asyncio.wait_for(session.inbox.get(), timeout=remaining)
             except asyncio.TimeoutError:
                 return None
-            return action
+            if isinstance(action, expected_types):
+                return action
+            expected_names = ", ".join(t.__name__ for t in expected_types)
+            await self._reject(session, f"expected one of [{expected_names}], got {type(action).__name__}")
 
     async def _reject(self, session: PlayerSession, reason: str) -> None:
         if session.is_ai():
             await self._send_to(session, "action_rejected", {"reason": reason})
+
+    def _connected_count(self, player_ids: list[str]) -> int:
+        return sum(1 for pid in player_ids if (session := self.table.get(pid)) is not None and session.connected)
 
     # -- game lifecycle -----------------------------------------------------------
 
@@ -181,7 +211,14 @@ class TableRunner:
     async def _run_pot(self, game: Game) -> None:
         pot = game.current_pot
         assert pot is not None
+        if self._connected_count(pot.active_participants()) < 2:
+            # Not enough live connections left to run a deal -- end the game
+            # rather than hang forever waiting on players who won't respond.
+            await self._send_events(game.force_end())
+            await self._broadcast_state_snapshot()
+            return
         while True:
+            discard_before = len(pot.deck.discard_pile)
             deal = await self._run_deal(pot, game)
             opened = deal.open()[0] if not deal.is_opened else None
             if opened is not None:
@@ -190,31 +227,84 @@ class TableRunner:
 
             loser_events = pot.resolve_losers(deal, losers)
             await self._send_events(loser_events)
+            resolution_events = list(loser_events)
             for event in loser_events:
                 if isinstance(event, ContinuePrompted):
-                    await self._handle_continue_prompt(pot, event.player_id)
+                    resolution_events += await self._handle_continue_prompt(pot, event.player_id)
 
             outcome_events = pot.finalize_deal()
             await self._send_events(outcome_events)
+            await self._send_deal_result(pot, deal, losers, resolution_events, outcome_events, discard_before)
+
             conclusion = next((e for e in outcome_events if isinstance(e, (PotWon, PotWipedOut))), None)
             if conclusion is not None:
+                await self._send_pot_result(pot, conclusion)
                 game_events = game.process_pot_outcome(conclusion)
                 await self._send_events(game_events)
                 await self._broadcast_state_snapshot()
                 return  # this pot is done; run() will start the next one (or stop)
 
-    async def _handle_continue_prompt(self, pot: Pot, player_id: str) -> None:
+    async def _handle_continue_prompt(self, pot: Pot, player_id: str) -> list:
         session = self.table.get(player_id)
-        if session is None:
-            pot.submit_continue_declare(player_id, False)
-            return
-        action = await self._prompt(session, "continue")
-        continue_playing = action.continue_playing if isinstance(action, ContinueDeclare) else False
+        if session is None or not session.connected:
+            events = pot.submit_continue_declare(player_id, False)
+            await self._send_events(events)
+            return events
+        action = await self._prompt(session, "continue", (ContinueDeclare,))
+        continue_playing = action.continue_playing if action is not None else False
         events = pot.submit_continue_declare(player_id, continue_playing)
         await self._send_events(events)
+        return events
+
+    async def _send_deal_result(
+        self,
+        pot: Pot,
+        deal: Deal,
+        losers: tuple[str, ...],
+        resolution_events: list,
+        outcome_events: list,
+        discard_before: int,
+    ) -> None:
+        all_losers = sorted(deal.disqualified | set(losers))
+        chips_paid = {e.player_id: e.amount for e in resolution_events if isinstance(e, ChipsPaid)}
+        left_pot = sorted(e.player_id for e in resolution_events if isinstance(e, PlayerLeftPot))
+        next_dealer = next((e.player_id for e in outcome_events if isinstance(e, DealerChanged)), None)
+
+        discard_now = pot.deck.discard_pile
+        # A reshuffle mid-deal clears and rebuilds discard_pile, invalidating
+        # the `discard_before` index -- fall back to the whole (post-
+        # reshuffle) pile in that case rather than slicing garbage.
+        new_discards = discard_now[discard_before:] if len(discard_now) >= discard_before else discard_now
+
+        payload = {
+            "losers": all_losers,
+            "chips_paid": chips_paid,
+            "left_pot": left_pot,
+            "chips_now": dict(pot.chips),
+            "next_dealer": next_dealer,
+            "discarded_cards": [
+                {
+                    "card": entry.card.value,
+                    "original_holder": entry.original_holder,
+                    "discarded_via": entry.discarded_via,
+                }
+                for entry in new_discards
+            ],
+        }
+        await self._broadcast("deal_result", lambda pid: payload)
+
+    async def _send_pot_result(self, pot: Pot, conclusion: PotWon | PotWipedOut) -> None:
+        if isinstance(conclusion, PotWon):
+            payload = {"result": "won", "winner": conclusion.winner, "amount": conclusion.amount, "chips_now": dict(pot.chips)}
+        else:
+            payload = {"result": "wiped_out", "amount": conclusion.amount, "chips_now": dict(pot.chips)}
+        await self._broadcast("pot_result", lambda pid: payload)
 
     async def _run_deal(self, pot: Pot, game: Game) -> Deal:
         deal = pot.start_next_deal()
+        # A reshuffle can happen during the initial deal-out itself if the
+        # shared deck was nearly exhausted; report it before deal_started.
+        await self._send_events(deal.take_pending_events())
         await self._broadcast(
             "deal_started",
             lambda pid: {
@@ -231,8 +321,8 @@ class TableRunner:
 
         if deal.cucco_declared_by is None:
             dealer_session = self.table.get(deal.dealer_id)
-            if dealer_session is not None:
-                await self._prompt(dealer_session, "dealer_ready")
+            if dealer_session is not None and dealer_session.connected:
+                await self._prompt(dealer_session, "dealer_ready", (DealerReady,))
 
         while deal.legal_actor() is not None and deal.cucco_declared_by is None:
             actor_id = deal.legal_actor()
@@ -242,29 +332,26 @@ class TableRunner:
             if deal.cucco_declared_by is not None:
                 break
             # After this atomic step, re-check every current holder (the
-            # exchange that just resolved may have changed who holds クク).
-            await self._cucco_window(deal, list(deal.current_cucco_holders()))
+            # exchange that just resolved may have changed who holds クク),
+            # in deterministic seat order (docs/protocol/design.md: "親か
+            # ら手番順に行う"), not set-iteration order.
+            current_holders = deal.current_cucco_holders()
+            await self._cucco_window(deal, [pid for pid in deal.order if pid in current_holders])
 
         game.note_deal_played()
         return deal
 
     async def _run_turn(self, deal: Deal, actor_id: str) -> list:
         session = self.table.get(actor_id)
-        if session is None:
+        if session is None or not session.connected:
             return deal.submit_no_change(actor_id, via_timeout=True)
 
-        action = await self._prompt(session, "turn")
+        action = await self._prompt(session, "turn", (CambioDeclare, NoChangeDeclare))
         if action is None:
             return deal.submit_no_change(actor_id, via_timeout=True)
-        try:
-            if isinstance(action, CambioDeclare):
-                return deal.submit_cambio(actor_id)
-            if isinstance(action, NoChangeDeclare):
-                return deal.submit_no_change(actor_id)
-            raise IllegalAction(f"expected cambio_declare/no_change_declare, got {type(action).__name__}")
-        except IllegalAction as exc:
-            await self._reject(session, str(exc))
-            return deal.submit_no_change(actor_id, via_timeout=True)
+        if isinstance(action, CambioDeclare):
+            return deal.submit_cambio(actor_id)
+        return deal.submit_no_change(actor_id)
 
     async def _cucco_window(self, deal: Deal, holder_ids: list[str]) -> None:
         for pid in holder_ids:
@@ -273,16 +360,13 @@ class TableRunner:
             if pid in deal.disqualified or deal.hands.get(pid) is not Rank.CUCCO:
                 continue
             session = self.table.get(pid)
-            if session is None:
+            if session is None or not session.connected:
                 continue
-            action = await self._prompt(session, "cucco_window")
+            action = await self._prompt(session, "cucco_window", (CuccoDeclare, CuccoPass))
             if action is None or isinstance(action, CuccoPass):
                 continue
-            if isinstance(action, CuccoDeclare):
-                try:
-                    events = deal.submit_cucco_declare(pid)
-                    await self._send_events(events)
-                except IllegalAction as exc:
-                    await self._reject(session, str(exc))
-            else:
-                await self._reject(session, "expected cucco_declare or cucco_pass")
+            try:
+                events = deal.submit_cucco_declare(pid)
+                await self._send_events(events)
+            except IllegalAction as exc:
+                await self._reject(session, str(exc))

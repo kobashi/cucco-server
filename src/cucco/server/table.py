@@ -7,6 +7,7 @@ live `Game` once it's running.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 from cucco.domain.config import GameConfig
@@ -24,6 +25,7 @@ class Table:
     finished: bool = False
     ready_ids: set[str] = field(default_factory=set)
     min_players: int = 2
+    ready_deadline_task: asyncio.Task | None = None
 
     def add_session(self, session: PlayerSession) -> None:
         self.sessions[session.player_id] = session
@@ -39,10 +41,3 @@ class Table:
 
     def get(self, player_id: str) -> PlayerSession | None:
         return self.sessions.get(player_id)
-
-    async def broadcast(self, send_fn, *, exclude: frozenset[str] = frozenset()) -> None:
-        """`send_fn(session) -> Awaitable[None]`, called for every connected
-        session not in `exclude`."""
-        for session in self.sessions.values():
-            if session.player_id not in exclude:
-                await send_fn(session)
