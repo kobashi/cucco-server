@@ -10,16 +10,12 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Callable, Literal
 
 from cucco.domain.cards import Rank, full_deck
+from cucco.domain.timeutil import now_iso
 
 DiscardedVia = Literal["open", "disqualification", "deck_draw", "dealer_swap"]
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass(frozen=True)
@@ -27,7 +23,7 @@ class DiscardEntry:
     card: Rank
     original_holder: str | None
     discarded_via: DiscardedVia
-    discarded_at: str = field(default_factory=now_iso)
+    discarded_at: str = field(default_factory=now_iso, compare=False)
 
 
 class Deck:
@@ -39,6 +35,18 @@ class Deck:
         self._rng.shuffle(self._draw)
         self.discard_pile: list[DiscardEntry] = []
         self.on_reshuffle: Callable[[], None] | None = None
+
+    @classmethod
+    def from_fixed_order(cls, cards: list[Rank], rng: random.Random | None = None) -> "Deck":
+        """Build a deck that draws `cards` in exactly the given order (cards[0]
+        drawn first). Bypasses shuffling entirely — intended for deterministic
+        tests, not production use."""
+        deck = cls.__new__(cls)
+        deck._rng = rng if rng is not None else random.Random(0)
+        deck._draw = list(reversed(cards))
+        deck.discard_pile = []
+        deck.on_reshuffle = None
+        return deck
 
     @property
     def remaining_count(self) -> int:
