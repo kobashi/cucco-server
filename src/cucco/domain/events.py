@@ -157,3 +157,23 @@ PotEvent = Union[
     PotWon,
     PotWipedOut,
 ]
+
+
+# -- Game-level events ------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PotStarted:
+    pot_number: int
+    dealer_id: str
+    participants: tuple[str, ...]
+    chips_now: dict[str, int]
+    entry_fee_waived: bool = False
+
+
+@dataclass(frozen=True)
+class GameEnded:
+    ranking: tuple[tuple[str, int], ...]  # (player_id, chips), highest first
+
+
+GameEvent = Union[PotEvent, PotStarted, GameEnded]
