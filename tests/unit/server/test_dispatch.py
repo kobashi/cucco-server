@@ -4,8 +4,11 @@ import random
 
 import pytest
 
+from cucco.domain.cards import Rank
 from cucco.domain.config import GameConfig
+from cucco.domain.deck import Deck
 from cucco.domain.game import Game
+from cucco.protocol.actions import CuccoPass, DealerReady, NoChangeDeclare
 from cucco.protocol.envelope import build_envelope
 from cucco.server.dispatch import ConnectionHandler, _start_game
 from cucco.server.registry import TableRegistry
@@ -20,6 +23,26 @@ class FakeConnection:
 
     async def send(self, message: str) -> None:
         self.sent.append(json.loads(message))
+
+
+class AutoRespondConnection:
+    """Answers every prompt immediately (no_change / cucco_pass) by pushing
+    straight into its own session's inbox -- enough to drive a deal to
+    "open" without a real client loop."""
+
+    def __init__(self):
+        self.sent: list[dict] = []
+        self.session: PlayerSession | None = None
+
+    async def send(self, message: str) -> None:
+        data = json.loads(message)
+        self.sent.append(data)
+        if data["type"] == "turn_prompt":
+            self.session.inbox.put_nowait(NoChangeDeclare())
+        elif data["type"] == "cucco_window":
+            self.session.inbox.put_nowait(CuccoPass())
+        elif data["type"] == "dealer_ready":
+            self.session.inbox.put_nowait(DealerReady())
 
 
 @pytest.mark.asyncio
@@ -125,11 +148,46 @@ async def test_ready_timeout_with_too_few_players_resets_for_a_retry():
     table = Table(room_id="ABC123", config=GameConfig(), creator_id="p1")
     table.add_session(PlayerSession(player_id="p1", name="p1", player_type="ai", session_token="p1", connection=FakeConnection()))
     table.ready_ids = set()  # nobody readied up in time
+    stale_task = asyncio.create_task(asyncio.sleep(0))
+    table.ready_deadline_task = stale_task  # simulates the just-fired watchdog
 
     await _start_game(table)
 
     assert table.game is None
     assert table.ready_ids == set()
+    # The fired watchdog's task reference must be cleared too, or a later
+    # `ready` would see a non-None task and never spawn a fresh watchdog --
+    # wedging the lobby forever after one failed retry.
+    assert table.ready_deadline_task is None
+    await stale_task
+
+
+@pytest.mark.asyncio
+async def test_ready_after_a_failed_timeout_retry_rearms_a_fresh_watchdog():
+    registry = TableRegistry()
+    handler = ConnectionHandler(FakeConnection(), registry)
+    await handler.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "ai"}))
+    await handler.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in handler.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    table = handler.table
+    table.min_players = 2  # a lone reader is never enough to start
+
+    await handler.handle_message(build_envelope("ready", {}))
+    first_watchdog = table.ready_deadline_task
+    assert first_watchdog is not None
+
+    # Simulate that watchdog firing with too few players ready.
+    await _start_game(table)
+    assert table.ready_deadline_task is None
+    first_watchdog.cancel()
+
+    # A later `ready` (e.g. a reconnect/retry) must spawn a new watchdog
+    # instead of silently doing nothing forever.
+    await handler.handle_message(build_envelope("ready", {}))
+    assert table.ready_deadline_task is not None
+    assert table.ready_deadline_task is not first_watchdog
+    table.ready_deadline_task.cancel()
 
 
 @pytest.mark.asyncio
@@ -149,3 +207,43 @@ async def test_force_end_fires_when_too_few_connected_players_remain_to_start_a_
 
     assert game.is_finished
     assert any(m["type"] == "game_ended" for m in conns["p1"].sent)
+
+
+@pytest.mark.asyncio
+async def test_wipeout_instant_win_after_carryover_sends_a_pot_result_aggregate():
+    # docs/protocol/design.md:159 -- when a wipeout carryover leaves exactly
+    # one solvent seat, Game resolves that instantly (no deal played) and
+    # this must still produce its own pot_result aggregate, not just the
+    # granular pot_won buried inside game_events.
+    config = GameConfig(starting_chips=25, end_condition="chips_zero")
+    game = Game(["A", "B"], config, random.Random(0))
+    game.start_first_pot()  # A: 24, B: 24
+    game.chips["B"] = 0  # B is already insolvent from an earlier pot
+
+    table = Table(room_id="ABC123", config=config, creator_id="A")
+    conns = {}
+    for pid in ("A", "B"):
+        conn = AutoRespondConnection()
+        session = PlayerSession(player_id=pid, name=pid, player_type="ai", session_token=pid, connection=conn)
+        conn.session = session
+        table.add_session(session)
+        conns[pid] = conn
+
+    pot = game.current_pot
+    pot.dealer_id = "A"  # deal order becomes [B, A] (dealer last)
+    pot.deal_number = 3  # next deal is 4 -- adult time, tie eliminates both
+    pot.deck = Deck.from_fixed_order([Rank.N5, Rank.N5], rng=random.Random(0))
+
+    runner = TableRunner(table)
+    await runner._run_pot(game)
+
+    pot_results = [m for m in conns["A"].sent if m["type"] == "pot_result"]
+    assert len(pot_results) == 2
+    assert pot_results[0]["payload"]["result"] == "wiped_out"
+    assert pot_results[1]["payload"] == {
+        "result": "won",
+        "winner": "A",
+        "amount": 2,
+        "chips_now": {"A": 26, "B": 0},
+    }
+    assert game.is_finished  # B is still at 0 chips (chips_zero end condition)

@@ -35,6 +35,11 @@ class Deck:
         self._rng.shuffle(self._draw)
         self.discard_pile: list[DiscardEntry] = []
         self.on_reshuffle: Callable[[], None] | None = None
+        # Bumped every time discard_pile is cleared and rebuilt into the
+        # draw pile -- lets callers detect "the discard_pile I was tracking
+        # got reset out from under me" without comparing lengths, which is
+        # ambiguous once the pile has grown back past its old length.
+        self.reshuffle_count = 0
 
     @classmethod
     def from_fixed_order(cls, cards: list[Rank], rng: random.Random | None = None) -> "Deck":
@@ -46,6 +51,7 @@ class Deck:
         deck._draw = list(reversed(cards))
         deck.discard_pile = []
         deck.on_reshuffle = None
+        deck.reshuffle_count = 0
         return deck
 
     @property
@@ -69,5 +75,6 @@ class Deck:
         self._draw = [entry.card for entry in self.discard_pile]
         self._rng.shuffle(self._draw)
         self.discard_pile = []
+        self.reshuffle_count += 1
         if self.on_reshuffle is not None:
             self.on_reshuffle()

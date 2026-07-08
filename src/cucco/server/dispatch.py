@@ -57,7 +57,12 @@ async def _start_game(table: Table) -> None:
     if len(participants) < table.min_players:
         # Not enough players readied up in time -- reset so a fresh round
         # of `ready` declarations can retry rather than wedging forever.
+        # The watchdog task that got us here has already fired (or is being
+        # cancelled by the caller); clear it too so the next `ready` spawns
+        # a fresh one instead of finding a stale non-None task and never
+        # re-arming.
         table.ready_ids.clear()
+        table.ready_deadline_task = None
         return
     table.game = Game(participants, table.config, random.Random())
     asyncio.create_task(_run_table_safely(table))

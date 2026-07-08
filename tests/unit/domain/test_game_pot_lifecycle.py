@@ -97,6 +97,27 @@ def test_wipeout_with_one_nonzero_survivor_wins_immediately_without_a_deal():
     assert not any(isinstance(e, PotStarted) for e in events)
 
 
+def test_wipeout_with_one_nonzero_survivor_ends_the_game_under_round_limit_too():
+    # Under "round_limit" this branch used to always call _start_new_pot
+    # with the full seat list and a real entry fee -- charging the two
+    # already-insolvent seats a fee they can't afford and sending them
+    # negative. A single solvent seat can't run a pot alone; this must end
+    # the game outright, exactly like the chips_zero case above.
+    config = GameConfig(end_condition="round_limit", round_limit=100)
+    game = make_game(["A", "B", "C"], config=config)
+    game.start_first_pot()
+    game.chips.update({"A": 0, "B": 0, "C": 10})
+
+    events = game.process_pot_outcome(PotWipedOut(amount=6))
+
+    won = next(e for e in events if isinstance(e, PotWon))
+    assert won.winner == "C"
+    assert game.chips == {"A": 0, "B": 0, "C": 16}
+    assert game.is_finished
+    assert any(isinstance(e, GameEnded) for e in events)
+    assert not any(isinstance(e, PotStarted) for e in events)
+
+
 def test_wipeout_with_zero_survivors_revives_everyone_at_adult_time_fee_waived():
     game = make_game(["A", "B", "C"])
     game.start_first_pot()

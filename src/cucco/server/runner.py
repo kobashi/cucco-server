@@ -164,7 +164,10 @@ class TableRunner:
         ignored rather than misapplied to this new prompt. A response that
         arrives during THIS window but doesn't match `expected_types` is
         rejected (so a buggy AI gets a diagnostic) and the wait continues
-        on the same deadline.
+        on the same deadline -- except a stray `CuccoDeclare`/`CuccoPass`,
+        which docs/protocol/design.md explicitly says must never be
+        `action_rejected` (a well-behaved AI would otherwise get spurious
+        rejections just from network-delay timing against a closed window).
         """
         while not session.inbox.empty():
             session.inbox.get_nowait()
@@ -185,6 +188,8 @@ class TableRunner:
                 return None
             if isinstance(action, expected_types):
                 return action
+            if isinstance(action, (CuccoDeclare, CuccoPass)):
+                continue
             expected_names = ", ".join(t.__name__ for t in expected_types)
             await self._reject(session, f"expected one of [{expected_names}], got {type(action).__name__}")
 
@@ -219,6 +224,7 @@ class TableRunner:
             return
         while True:
             discard_before = len(pot.deck.discard_pile)
+            reshuffle_count_before = pot.deck.reshuffle_count
             deal = await self._run_deal(pot, game)
             opened = deal.open()[0] if not deal.is_opened else None
             if opened is not None:
@@ -234,13 +240,22 @@ class TableRunner:
 
             outcome_events = pot.finalize_deal()
             await self._send_events(outcome_events)
-            await self._send_deal_result(pot, deal, losers, resolution_events, outcome_events, discard_before)
+            reshuffled = pot.deck.reshuffle_count != reshuffle_count_before
+            await self._send_deal_result(pot, deal, losers, resolution_events, outcome_events, discard_before, reshuffled)
 
             conclusion = next((e for e in outcome_events if isinstance(e, (PotWon, PotWipedOut))), None)
             if conclusion is not None:
-                await self._send_pot_result(pot, conclusion)
+                await self._send_pot_result(pot.chips, conclusion)
                 game_events = game.process_pot_outcome(conclusion)
                 await self._send_events(game_events)
+                # docs/protocol/design.md:159 -- after a wipeout carryover,
+                # if exactly one solvent seat remains, Game resolves that
+                # instantly (no deal played) and reports it as a PotWon
+                # among game_events rather than via Pot.finalize_deal(). It
+                # still needs its own pot_result aggregate.
+                instant_win = next((e for e in game_events if isinstance(e, PotWon)), None)
+                if instant_win is not None:
+                    await self._send_pot_result(game.chips, instant_win)
                 await self._broadcast_state_snapshot()
                 return  # this pot is done; run() will start the next one (or stop)
 
@@ -264,17 +279,21 @@ class TableRunner:
         resolution_events: list,
         outcome_events: list,
         discard_before: int,
+        reshuffled: bool,
     ) -> None:
         all_losers = sorted(deal.disqualified | set(losers))
         chips_paid = {e.player_id: e.amount for e in resolution_events if isinstance(e, ChipsPaid)}
         left_pot = sorted(e.player_id for e in resolution_events if isinstance(e, PlayerLeftPot))
         next_dealer = next((e.player_id for e in outcome_events if isinstance(e, DealerChanged)), None)
 
-        discard_now = pot.deck.discard_pile
         # A reshuffle mid-deal clears and rebuilds discard_pile, invalidating
         # the `discard_before` index -- fall back to the whole (post-
-        # reshuffle) pile in that case rather than slicing garbage.
-        new_discards = discard_now[discard_before:] if len(discard_now) >= discard_before else discard_now
+        # reshuffle) pile in that case rather than slicing against a stale
+        # offset (`Deck.reshuffle_count` is what actually tells us this
+        # happened; the pile's length alone is ambiguous once it's grown
+        # back past its old size).
+        discard_now = pot.deck.discard_pile
+        new_discards = discard_now if reshuffled else discard_now[discard_before:]
 
         payload = {
             "losers": all_losers,
@@ -293,11 +312,11 @@ class TableRunner:
         }
         await self._broadcast("deal_result", lambda pid: payload)
 
-    async def _send_pot_result(self, pot: Pot, conclusion: PotWon | PotWipedOut) -> None:
+    async def _send_pot_result(self, chips: dict[str, int], conclusion: PotWon | PotWipedOut) -> None:
         if isinstance(conclusion, PotWon):
-            payload = {"result": "won", "winner": conclusion.winner, "amount": conclusion.amount, "chips_now": dict(pot.chips)}
+            payload = {"result": "won", "winner": conclusion.winner, "amount": conclusion.amount, "chips_now": dict(chips)}
         else:
-            payload = {"result": "wiped_out", "amount": conclusion.amount, "chips_now": dict(pot.chips)}
+            payload = {"result": "wiped_out", "amount": conclusion.amount, "chips_now": dict(chips)}
         await self._broadcast("pot_result", lambda pid: payload)
 
     async def _run_deal(self, pot: Pot, game: Game) -> Deal:
