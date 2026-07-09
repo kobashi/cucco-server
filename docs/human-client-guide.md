@@ -1,9 +1,10 @@
 # 人間向けUI実装ガイド
 
-人間プレイヤー用のUI(Web/ネイティブ問わず、別プロジェクトとして実装予定。
-`docs/requirements.md`「人間は別途用意するUIを通じて手動で操作する」)がこの
-サーバーに接続するためのガイド。プロトコルの正式な定義は
-`docs/protocol/design.md`、ゲームルールは`docs/rules/final_rules.md`を参照。
+人間プレイヤー用のUI(`docs/requirements.md`「人間は別途用意するUIを通じて
+手動で操作する」。実装は`clients/web/`、操作手順は
+`docs/web-client-operations.md`を参照)がこのサーバーに接続するためのガイド。
+プロトコルの正式な定義は`docs/protocol/design.md`、ゲームルールは
+`docs/rules/final_rules.md`を参照。
 AIクライアント向けの`docs/ai-client-guide.md`と対になる文書で、プロトコルの
 実体は同一だが、判断を下すのがロジックではなく人間である点、および表示・UX
 上の要求が異なる点を中心にまとめる。
