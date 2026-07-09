@@ -125,3 +125,4 @@ Cucco(カンビオルール、グランペール版)の完全なルールは [`d
 | [`docs/protocol/design.md`](protocol/design.md) | 通信プロトコルの詳細設計(Fable5による7回のレビューを経て確定) |
 | [`docs/protocol/decisions.md`](protocol/decisions.md) | プロトコル設計に関する決定事項の経緯(変更履歴) |
 | [`docs/ai-client-guide.md`](ai-client-guide.md) | AIプレイヤー実装者向けガイド(接続手順・判断ポイント・メッセージフロー例) |
+| [`docs/ai-advanced-policies.md`](ai-advanced-policies.md) | 上位AIの実装案集(教材。サーバー側では実装せず、ゼミ生の設計ヒントとして提供) |
