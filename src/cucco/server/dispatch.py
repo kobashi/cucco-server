@@ -22,7 +22,7 @@ from pathlib import Path
 from cucco.domain.errors import IllegalAction
 from cucco.domain.game import Game
 from cucco.evaluation.runner import EvaluationRunner
-from cucco.persistence.action_log import ActionLogWriter
+from cucco.persistence.action_log import ActionLogWriter, open_for_game
 from cucco.persistence.results_store import ResultsStore
 from cucco.protocol.actions import (
     CambioDeclare,
@@ -94,31 +94,12 @@ async def _start_game(table: Table) -> None:
     # random.Random() with no seed draws from OS entropy and can't be
     # recovered after the fact.
     seed = random.SystemRandom().randrange(2**63)
-    action_log = _open_action_log(table)
+    action_log = open_for_game(table.action_log_dir, table.room_id) if table.action_log_dir is not None else None
     if action_log is not None:
         action_log.write_seed(seed)
 
     table.game = Game(participants, table.config, random.Random(seed))
     asyncio.create_task(_run_table_safely(table, action_log))
-
-
-def _open_action_log(table: Table) -> ActionLogWriter | None:
-    if table.action_log_dir is None:
-        return None
-    # Filename includes a per-game uuid, not just room_id: a room_id is
-    # unique only for this process's lifetime (TableRegistry never reuses
-    # one while running), but a *restarted* process reissues room_ids from
-    # scratch, and evaluation mode runs several games under the same
-    # table/room_id. Either would silently truncate an earlier game's log
-    # if the filename were room_id alone.
-    try:
-        return ActionLogWriter(table.action_log_dir / f"{table.room_id}-{uuid.uuid4().hex}.jsonl")
-    except OSError:
-        # Persistence is server-internal (docs/protocol/design.md); failing
-        # to open the replay log must not prevent the game itself from
-        # starting.
-        logger.exception("failed to open action log for table %s -- continuing without it", table.room_id)
-        return None
 
 
 async def _ready_timeout_watchdog(table: Table) -> None:
@@ -223,7 +204,16 @@ class ConnectionHandler:
     async def _handle_create_table(self, action: CreateTable) -> None:
         if self.session is None:
             raise ProtocolError("must identify before create_table")
-        config = create_table_to_config(action)
+        try:
+            config = create_table_to_config(action)
+        except ValueError as exc:
+            # GameConfig.__post_init__ validates cross-field invariants
+            # (e.g. round_limit required for that end_condition, game_count
+            # must be a positive int for evaluation mode) by raising
+            # ValueError -- outside the (ProtocolError, IllegalAction) net
+            # that handle_message() catches, so left alone this would crash
+            # the whole connection instead of just rejecting the request.
+            raise ProtocolError(str(exc)) from exc
         table = Table(
             room_id="",
             config=config,
@@ -269,6 +259,16 @@ class ConnectionHandler:
             raise ProtocolError("must join_table before ready")
         if self.session.player_type == "spectator":
             raise ProtocolError("spectators cannot declare ready")
+        if self.table.config.mode == "evaluation" and self.session.player_type != "ai":
+            # docs/protocol/design.md 「AI専用高速評価モード」: humans never
+            # play in evaluation mode. Rejecting outright (not just
+            # silently ignoring) prevents two real bugs a silent ignore
+            # would still allow: a human's `ready` counting toward the
+            # readiness threshold while never becoming a participant can
+            # either wedge the table (participants < min_players resets
+            # ready_ids, discarding AIs who already readied) or let the
+            # game start with fewer AIs than intended, silently.
+            raise ProtocolError("only AI players can declare ready on an evaluation table")
         table = self.table
         if table.game is not None or table.evaluation_started:
             return  # already started; later pots/games auto-include everyone eligible

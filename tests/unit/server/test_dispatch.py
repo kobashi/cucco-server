@@ -73,6 +73,30 @@ async def test_create_table_with_evaluation_mode_succeeds():
 
 
 @pytest.mark.asyncio
+async def test_create_table_with_nonpositive_game_count_is_rejected_not_crashed():
+    handler = ConnectionHandler(FakeConnection(), TableRegistry())
+    await handler.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "ai"}))
+    await handler.handle_message(build_envelope("create_table", {"mode": "evaluation", "game_count": 0}))
+    assert handler.connection.sent[-1]["type"] == "action_rejected"
+
+
+@pytest.mark.asyncio
+async def test_human_ready_on_an_evaluation_table_is_rejected():
+    # docs/protocol/design.md 「AI専用高速評価モード」: only AI players play.
+    # A human's `ready` must be rejected outright, not silently accepted --
+    # accepting it would let it count toward (and potentially distort) the
+    # readiness threshold without the human ever becoming a participant.
+    registry = TableRegistry()
+    handler = ConnectionHandler(FakeConnection(), registry)
+    await handler.handle_message(build_envelope("identify", {"name": "Dave", "player_type": "human"}))
+    await handler.handle_message(build_envelope("create_table", {"mode": "evaluation", "game_count": 2}))
+    room_id = next(m for m in handler.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    await handler.handle_message(build_envelope("ready", {}))
+    assert handler.connection.sent[-1]["type"] == "action_rejected"
+
+
+@pytest.mark.asyncio
 async def test_join_unknown_room_is_rejected():
     handler = ConnectionHandler(FakeConnection(), TableRegistry())
     await handler.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))

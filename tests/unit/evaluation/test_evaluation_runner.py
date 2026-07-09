@@ -4,6 +4,7 @@ import pytest
 
 from cucco.domain.config import GameConfig
 from cucco.evaluation.runner import EvaluationRunner
+from cucco.persistence.results_store import ResultsStore
 from cucco.protocol.actions import ContinueDeclare, CuccoPass, DealerReady, NoChangeDeclare
 from cucco.server.session import PlayerSession
 from cucco.server.table import Table
@@ -66,6 +67,7 @@ async def test_evaluation_runner_plays_game_count_games_and_sends_a_summary():
     assert len(summaries) == 1
     payload = summaries[0]["payload"]
     assert payload["game_count"] == 3
+    assert payload["games_played"] == 3
 
     assert set(payload["players"]) == {"A", "B", "C"}
     for pid, stats in payload["players"].items():
@@ -120,3 +122,95 @@ async def test_evaluation_runner_works_with_the_minimum_two_participants():
     payload = next(m for m in conns["A"].sent if m["type"] == "evaluation_summary")["payload"]
     assert set(payload["players"]) == {"A", "B"}
     assert payload["game_count"] == 2
+    assert payload["games_played"] == 2
+
+
+@pytest.mark.asyncio
+async def test_evaluation_runner_stops_early_instead_of_fabricating_stats_when_too_few_are_connected():
+    table, conns = make_table(game_count=5)
+    # A stays connected so it can actually receive the summary broadcast
+    # below (PlayerSession.send() is a no-op while disconnected); B and C
+    # dropping still leaves only 1 of 3 connected, below the 2-participant
+    # floor a game needs.
+    conns["B"].session.connected = False
+    conns["C"].session.connected = False
+
+    await EvaluationRunner(table, ["A", "B", "C"]).run()
+
+    payload = next(m for m in conns["A"].sent if m["type"] == "evaluation_summary")["payload"]
+    assert payload["game_count"] == 5
+    assert payload["games_played"] == 0
+    assert payload["players"] == {}
+    assert payload["seat_rotations"] == []
+    assert table.finished is True
+
+
+class DisconnectAfterFirstGameConnection(AutoRespondConnection):
+    """Behaves like AutoRespondConnection, except it drops its own session's
+    `connected` flag the moment it observes the first game_ended -- to
+    simulate an AI vanishing partway through a game_count run."""
+
+    async def send(self, message: str) -> None:
+        await super().send(message)
+        data = json.loads(message)
+        if data["type"] == "game_ended":
+            self.session.connected = False
+
+
+@pytest.mark.asyncio
+async def test_evaluation_runner_stops_after_a_mid_run_disconnect_without_fabricating_the_rest():
+    config = GameConfig(
+        mode="evaluation",
+        game_count=5,
+        end_condition="chips_zero",
+        starting_chips=5,
+        turn_timeout_ai_sec=0.05,
+        cucco_window_timeout_ai_sec=0.02,
+    )
+    table = Table(room_id="ABC123", config=config, creator_id="A")
+    conns: dict[str, AutoRespondConnection] = {}
+    for pid in ("A", "B"):
+        conn_cls = DisconnectAfterFirstGameConnection if pid == "B" else AutoRespondConnection
+        conn = conn_cls()
+        session = PlayerSession(player_id=pid, name=f"Player-{pid}", player_type="ai", session_token=pid, connection=conn)
+        conn.session = session
+        table.add_session(session)
+        conns[pid] = conn
+
+    await EvaluationRunner(table, ["A", "B"]).run()
+
+    payload = next(m for m in conns["A"].sent if m["type"] == "evaluation_summary")["payload"]
+    assert payload["game_count"] == 5
+    # B disconnects itself as soon as game 1's game_ended arrives, leaving
+    # only 1 connected participant (A) -- below MIN_CONNECTED_TO_CONTINUE,
+    # so the run must stop instead of playing (and reporting on) 4 more
+    # instantly-force_ended, meaningless games.
+    assert payload["games_played"] == 1
+    assert len(payload["seat_rotations"]) == 1
+    for stats in payload["players"].values():
+        assert stats["win_rate"] in (0.0, 1.0)  # exactly one game's worth, no fabricated fractional games
+
+
+@pytest.mark.asyncio
+async def test_evaluation_runner_persists_the_summary_alongside_the_per_game_rows(tmp_path):
+    # docs/protocol/design.md 「永続化・成績記録」: 評価モードの場合はゲーム
+    # ごとの記録に加えて集計結果も保存する.
+    table, conns = make_table(game_count=2)
+    results_store = ResultsStore(tmp_path / "results.db")
+    table.results_store = results_store
+    table.action_log_dir = tmp_path / "action_logs"
+
+    await EvaluationRunner(table, ["A", "B", "C"]).run()
+
+    games = results_store._conn.execute("SELECT mode FROM games").fetchall()
+    assert games == [("evaluation",), ("evaluation",)]  # one row per game, per the existing per-game path
+
+    summary_row = results_store._conn.execute(
+        "SELECT table_id, game_count, games_played, summary_json FROM evaluation_summaries"
+    ).fetchone()
+    assert summary_row[:3] == ("ABC123", 2, 2)
+    stored_summary = json.loads(summary_row[3])
+    broadcast_summary = next(m for m in conns["A"].sent if m["type"] == "evaluation_summary")["payload"]
+    assert stored_summary == broadcast_summary
+
+    results_store.close()

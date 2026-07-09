@@ -12,15 +12,22 @@ and observes the same domain events every other consumer sees.
 
 from __future__ import annotations
 
+import logging
 import random
-import uuid
 
 from cucco.domain.events import PlayerDisqualified, PotStarted
 from cucco.domain.game import Game
-from cucco.persistence.action_log import ActionLogWriter
+from cucco.persistence.action_log import ActionLogWriter, open_for_game
 from cucco.protocol.envelope import build_envelope
 from cucco.server.runner import TableRunner
 from cucco.server.table import Table
+
+logger = logging.getLogger("cucco.evaluation.runner")
+
+# Below this many still-connected participants, a game can't be dealt at
+# all (TableRunner._run_pot's own liveness check would force_end it
+# instantly, tying everyone at starting_chips-1 -- see run()'s pre-check).
+MIN_CONNECTED_TO_CONTINUE = 2
 
 
 class _StatsCollectingLog:
@@ -71,6 +78,7 @@ class EvaluationRunner:
         totals = {pid: _PlayerTotals() for pid in self.participants}
         seat_rotations = []
         seats = list(self.participants)
+        games_played = 0
 
         for game_number in range(1, game_count + 1):
             if game_number > 1:
@@ -83,22 +91,25 @@ class EvaluationRunner:
                 # this game's own freshly-seeded rng.
                 seats = seats[1:] + seats[:1]
 
+            if self._connected_count() < MIN_CONNECTED_TO_CONTINUE:
+                # Not enough live AI connections left to actually play --
+                # stop here instead of burning through the remaining games
+                # via TableRunner._run_pot's own force_end() liveness check,
+                # which would tie every seat at starting_chips-1 and quietly
+                # poison the aggregate stats with fabricated wins/ranks.
+                break
+
             seed = random.SystemRandom().randrange(2**63)
             game = Game(seats, config, random.Random(seed))
             self.table.game = game
 
-            real_log = None
-            if self.table.action_log_dir is not None:
-                try:
-                    real_log = ActionLogWriter(
-                        self.table.action_log_dir / f"{self.table.room_id}-{uuid.uuid4().hex}.jsonl"
-                    )
-                    real_log.write_seed(seed)
-                except OSError:
-                    real_log = None
+            real_log = open_for_game(self.table.action_log_dir, self.table.room_id) if self.table.action_log_dir else None
+            if real_log is not None:
+                real_log.write_seed(seed)
             stats_log = _StatsCollectingLog(real_log)
 
             await TableRunner(self.table, action_log=stats_log, results_store=self.table.results_store).run()
+            games_played += 1
 
             assert game.final_ranking is not None
             for rank, (pid, chips) in enumerate(game.final_ranking, start=1):
@@ -111,14 +122,33 @@ class EvaluationRunner:
 
         payload = {
             "game_count": game_count,
-            "players": {pid: totals[pid].summarize(self.table.get(pid), game_count) for pid in self.participants},
+            "games_played": games_played,
+            "players": {
+                pid: totals[pid].summarize(self.table.get(pid), games_played) for pid in self.participants
+            }
+            if games_played > 0
+            else {},
             "seat_rotations": seat_rotations,
         }
+        if self.table.results_store is not None:
+            try:
+                self.table.results_store.record_evaluation_summary(
+                    table_id=self.table.room_id, game_count=game_count, games_played=games_played, summary=payload
+                )
+            except Exception:
+                logger.exception("failed to record evaluation summary for table %s", self.table.room_id)
+
         envelope = build_envelope("evaluation_summary", payload, table_id=self.table.room_id)
         for session in list(self.table.sessions.values()):
-            await session.send(envelope)
+            try:
+                await session.send(envelope)
+            except Exception:
+                logger.exception("failed to send evaluation_summary to session %s", session.player_id)
 
         self.table.finished = True
+
+    def _connected_count(self) -> int:
+        return sum(1 for pid in self.participants if (s := self.table.get(pid)) is not None and s.connected)
 
 
 class _PlayerTotals:
@@ -136,14 +166,14 @@ class _PlayerTotals:
         if disqualified:
             self.disqualified_games += 1
 
-    def summarize(self, session, game_count: int) -> dict:
+    def summarize(self, session, games_played: int) -> dict:
         return {
             "name": session.name if session is not None else None,
-            "win_rate": self.wins / game_count,
-            "avg_rank": self.rank_sum / game_count,
-            "avg_final_chips": self.chips_sum / game_count,
+            "win_rate": self.wins / games_played,
+            "avg_rank": self.rank_sum / games_played,
+            "avg_final_chips": self.chips_sum / games_played,
             # Fraction of games in which this player was disqualified via a
             # special card (道化/人間/猫) at least once -- not a per-deal
             # rate, since not every game has the same number of deals.
-            "disqualification_rate": self.disqualified_games / game_count,
+            "disqualification_rate": self.disqualified_games / games_played,
         }

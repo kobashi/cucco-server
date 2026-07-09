@@ -132,7 +132,12 @@ class TableRunner:
         await session.send(build_envelope(type_, payload, table_id=self.table.room_id))
 
     async def _broadcast(self, type_: str, payload_for: "callable") -> None:
-        for session in self.table.sessions.values():
+        # Snapshot the session list before awaiting each send: a
+        # join_table arriving mid-broadcast (a different asyncio task)
+        # would otherwise mutate table.sessions while this loop iterates
+        # it and raise RuntimeError, aborting the broadcast (and, in
+        # evaluation mode, the whole game_count run) for everyone.
+        for session in list(self.table.sessions.values()):
             await self._send_to(session, type_, payload_for(session.player_id))
 
     async def _send_event(self, event) -> None:
@@ -151,7 +156,7 @@ class TableRunner:
             await self._send_event(event)
 
     async def _broadcast_state_snapshot(self) -> None:
-        for session in self.table.sessions.values():
+        for session in list(self.table.sessions.values()):
             snapshot = build_state_snapshot(self.table, session.player_id)
             await self._send_to(session, "state_snapshot", snapshot)
 

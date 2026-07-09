@@ -1,6 +1,7 @@
 """SQLite schema for the results store (docs/protocol/design.md
 「永続化・成績記録」). One row per completed game plus one row per
-participant's final standing in it.
+participant's final standing in it, plus one row per evaluation-mode
+table's aggregate summary.
 """
 
 from __future__ import annotations
@@ -27,6 +28,23 @@ CREATE TABLE IF NOT EXISTS participants (
 );
 
 CREATE INDEX IF NOT EXISTS idx_participants_game_id ON participants(game_id);
+
+-- One row per evaluation-mode table's game_count run. The individual
+-- games themselves are already recorded normally in `games`/`participants`
+-- (mode="evaluation") -- this table holds the *aggregate* the run computes
+-- on top of those (per-player win rate / avg rank / avg chips /
+-- disqualification rate, plus the seat-rotation breakdown), which isn't
+-- reconstructible from the per-game rows alone. Stored as a JSON blob
+-- rather than normalized further -- this is a research-analysis dump, not
+-- something queried relationally.
+CREATE TABLE IF NOT EXISTS evaluation_summaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    table_id TEXT NOT NULL,
+    game_count INTEGER NOT NULL,
+    games_played INTEGER NOT NULL,
+    recorded_at TEXT NOT NULL,
+    summary_json TEXT NOT NULL
+);
 """
 
 

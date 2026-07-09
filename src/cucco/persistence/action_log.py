@@ -10,11 +10,15 @@ here for replay and AI strategy analysis.
 from __future__ import annotations
 
 import json
+import logging
+import uuid
 from dataclasses import fields, is_dataclass
 from enum import Enum
 from pathlib import Path
 
 from cucco.domain.timeutil import now_iso
+
+logger = logging.getLogger("cucco.persistence.action_log")
 
 
 def _serialize(value):
@@ -57,3 +61,19 @@ class ActionLogWriter:
 
     def close(self) -> None:
         self._file.close()
+
+
+def open_for_game(action_log_dir: Path, room_id: str) -> ActionLogWriter | None:
+    """Best-effort: open a uniquely-named per-game log under
+    `action_log_dir`. Returns None (after logging why) instead of raising
+    -- persistence is server-internal (docs/protocol/design.md), so a
+    directory permission problem or full disk must never prevent a game
+    from starting. The uuid suffix (not just room_id) is required: a
+    room_id is only unique for one process's lifetime, and both a
+    restarted process and evaluation mode's multi-game-per-table loop
+    would otherwise collide on the same filename."""
+    try:
+        return ActionLogWriter(action_log_dir / f"{room_id}-{uuid.uuid4().hex}.jsonl")
+    except OSError:
+        logger.exception("failed to open action log under %s for table %s -- continuing without it", action_log_dir, room_id)
+        return None

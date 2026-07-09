@@ -29,3 +29,5 @@ class GameConfig:
             raise ValueError("round_limit is required when end_condition is 'round_limit'")
         if self.mode == "evaluation" and self.game_count is None:
             raise ValueError("game_count is required when mode is 'evaluation'")
+        if self.game_count is not None and self.game_count <= 0:
+            raise ValueError("game_count must be a positive integer")

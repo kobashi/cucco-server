@@ -5,6 +5,7 @@ entirely in memory -- this is the only thing that outlives the process.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,6 +53,16 @@ class ResultsStore:
                     chips,
                 ),
             )
+        self._conn.commit()
+
+    def record_evaluation_summary(
+        self, *, table_id: str, game_count: int, games_played: int, summary: dict
+    ) -> None:
+        self._conn.execute(
+            "INSERT INTO evaluation_summaries (table_id, game_count, games_played, recorded_at, summary_json) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (table_id, game_count, games_played, now_iso(), json.dumps(summary, ensure_ascii=False)),
+        )
         self._conn.commit()
 
     def close(self) -> None:

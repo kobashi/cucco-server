@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from cucco.persistence.results_store import PlayerInfo, ResultsStore
@@ -51,6 +52,27 @@ def test_record_game_ended_falls_back_to_player_id_for_an_unknown_participant(tm
 
     row = store._conn.execute("SELECT player_id, name, player_type FROM participants").fetchone()
     assert row == ("C", "C", "unknown")
+    store.close()
+
+
+def test_record_evaluation_summary_writes_a_row_with_the_full_payload_as_json(tmp_path):
+    store = make_store(tmp_path)
+    summary = {
+        "game_count": 5,
+        "games_played": 5,
+        "players": {"A": {"win_rate": 0.6}, "B": {"win_rate": 0.4}},
+        "seat_rotations": [{"game_number": 1, "seats": ["A", "B"], "dealer_id": "A"}],
+    }
+
+    store.record_evaluation_summary(table_id="EVAL01", game_count=5, games_played=5, summary=summary)
+
+    row = store._conn.execute(
+        "SELECT table_id, game_count, games_played, summary_json FROM evaluation_summaries"
+    ).fetchone()
+    assert row[:3] == ("EVAL01", 5, 5)
+    # The seat-rotation breakdown isn't reconstructible from games/
+    # participants rows, so the full payload must round-trip exactly.
+    assert json.loads(row[3]) == summary
     store.close()
 
 
