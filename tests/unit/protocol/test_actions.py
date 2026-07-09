@@ -108,6 +108,13 @@ def test_parse_create_table_with_neither_bulk_nor_per_cause_defaults_to_deferred
     assert action.cat_disclosure == "deferred"
 
 
+def test_parse_create_table_rejects_an_invalid_disclosure_value():
+    with pytest.raises(ProtocolError):
+        parse_action(env("create_table", {"disqualified_card_disclosure": "Immediate"}))  # wrong case
+    with pytest.raises(ProtocolError):
+        parse_action(env("create_table", {"joker_disclosure": "imediate"}))  # typo
+
+
 def test_parse_join_table():
     action = parse_action(env("join_table", {"room_id": "AB12CD"}))
     assert action == JoinTable(room_id="AB12CD", session_token=None)
