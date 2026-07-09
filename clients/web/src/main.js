@@ -10,7 +10,19 @@ import * as result from "./views/result.js";
 const appEl = document.getElementById("app");
 const { state, notify, subscribe } = createStore();
 
-const savedHost = localStorage.getItem("cucco_ws_host") || `${location.hostname || "localhost"}:8765`;
+// `?ws=host[:port]` lets a shared link auto-configure the connection target
+// (e.g. a Cloudflare Pages-hosted client pointing at a cloudflared-tunneled
+// server on a different, possibly-random, hostname). Persist it and strip it
+// from the URL so a later reload/share doesn't need the param repeated.
+const wsParam = new URLSearchParams(location.search).get("ws");
+if (wsParam) {
+  localStorage.setItem("cucco_ws_host", wsParam);
+  const url = new URL(location.href);
+  url.searchParams.delete("ws");
+  history.replaceState(null, "", url);
+}
+
+let savedHost = localStorage.getItem("cucco_ws_host") || `${location.hostname || "localhost"}:8765`;
 let conn = new CuccoConnection(wsUrlFor(savedHost));
 
 // -- rendering -----------------------------------------------------------
@@ -68,9 +80,11 @@ function showToast(text) {
 const actions = {
   setWsHost(host) {
     localStorage.setItem("cucco_ws_host", host);
+    savedHost = host;
     conn = new CuccoConnection(wsUrlFor(host));
     wireConnection();
     conn.connect();
+    update(() => (state.connectionStatus = "connecting"));
   },
 
   async identify(name, playerType) {
