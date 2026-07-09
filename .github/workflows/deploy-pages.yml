@@ -1,0 +1,35 @@
+name: Deploy web client to GitHub Pages
+
+# clients/web/ is a plain static site (no build step) that GitHub Pages can't
+# serve directly since it's nested under the repo root rather than at "/" or
+# "/docs" -- this workflow just uploads that directory as the Pages
+# artifact. Requires Settings > Pages > Source = "GitHub Actions" (one-time).
+on:
+  push:
+    branches: [main]
+    paths: ["clients/web/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: clients/web
+      - id: deployment
+        uses: actions/deploy-pages@v4
