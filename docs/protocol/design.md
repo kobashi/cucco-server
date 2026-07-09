@@ -83,9 +83,10 @@
   "end_condition": "chips_zero | round_limit",
   "round_limit": "number (end_conditionがround_limitの場合)",
   "starting_chips": "number (デフォルト25)",
-  "joker_disclosure": "immediate | deferred (道化による失格者のカード開示タイミング、デフォルトdeferred)",
-  "human_disclosure": "immediate | deferred (人間による失格者のカード開示タイミング、デフォルトdeferred)",
-  "cat_disclosure": "immediate | deferred (猫による失格者のカード開示タイミング、デフォルトdeferred)",
+  "disqualified_card_disclosure": "immediate | deferred (下記3つの一括設定。デフォルトdeferred)",
+  "joker_disclosure": "immediate | deferred (道化による失格者のカード開示タイミング。省略時はdisqualified_card_disclosureの値)",
+  "human_disclosure": "immediate | deferred (人間による失格者のカード開示タイミング。省略時はdisqualified_card_disclosureの値)",
+  "cat_disclosure": "immediate | deferred (猫による失格者のカード開示タイミング。省略時はdisqualified_card_disclosureの値)",
   "horse_house_reveal": "boolean (拒否時に馬か家かを開示するか)",
   "turn_timeout_human_sec": "number (デフォルト30)",
   "turn_timeout_ai_sec": "number (デフォルト10)",
@@ -93,6 +94,11 @@
   "cucco_window_timeout_ai_sec": "number (デフォルト2)"
 }
 ```
+
+`joker_disclosure` / `human_disclosure` / `cat_disclosure`は失格原因ごとに独立指定できるが、
+`disqualified_card_disclosure`を指定すると未指定の個別フィールドのデフォルト値として使われる
+(個別フィールドを明示した場合はそちらが優先される)。よくある「3つとも同じ設定でよい」場合は
+`disqualified_card_disclosure`だけ送れば済み、原因ごとに変えたい場合だけ個別フィールドを使う。
 
 ## イベント一覧(サーバー→クライアント)
 
