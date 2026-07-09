@@ -12,6 +12,7 @@ envelope, waits on the target session's inbox with a timeout, and returns
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from cucco.domain.cards import Rank
 from cucco.domain.deal import Deal
@@ -35,6 +36,8 @@ from cucco.protocol.wire_events import translate
 from cucco.server.session import PlayerSession
 from cucco.server.table import Table
 from cucco.server.timers import timeout_for
+
+logger = logging.getLogger("cucco.server.runner")
 
 
 def build_state_snapshot(table: Table, recipient_id: str | None) -> dict:
@@ -229,10 +232,24 @@ class TableRunner:
             self.table.finished = True
 
             if self.results_store is not None:
-                self._record_results(game)
+                # The game itself already finished successfully and every
+                # player has already received `game_ended` by this point --
+                # a persistence failure here must not surface to players as
+                # "this table has stopped" (that's what _run_table_safely's
+                # except-clause would do if this propagated).
+                try:
+                    self._record_results(game)
+                except Exception:
+                    logger.exception("failed to record results for table %s", self.table.room_id)
         finally:
             if self.action_log is not None:
-                self.action_log.close()
+                # Same reasoning as the results_store guard above: a close()
+                # failure (e.g. a flush error) must not masquerade as the
+                # table having crashed once the game already finished.
+                try:
+                    self.action_log.close()
+                except Exception:
+                    logger.exception("failed to close action log for table %s", self.table.room_id)
 
     def _record_results(self, game: Game) -> None:
         assert game.final_ranking is not None

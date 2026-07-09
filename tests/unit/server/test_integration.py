@@ -3,6 +3,7 @@ with fake in-memory connections standing in for real WebSockets."""
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -121,10 +122,21 @@ async def test_full_game_runs_to_completion_over_fake_connections():
 
 
 @pytest.mark.asyncio
-async def test_full_game_persists_a_results_row_and_a_replayable_action_log(tmp_path):
+async def test_full_game_persists_a_results_row_and_a_replayable_action_log(tmp_path, monkeypatch):
     registry = TableRegistry()
     results_store = ResultsStore(tmp_path / "results.db")
     action_log_dir = tmp_path / "action_logs"
+
+    # dispatch._start_game draws its RNG seed from OS entropy (by design,
+    # so it can't be predicted/replayed by an attacker) -- pin it here so
+    # this test's "at least one cucco_pass happens" assertion below isn't
+    # a statistical gamble. Seed 0 was verified (by direct experiment) to
+    # deal クク to someone before this 3-player/5-chip/chips_zero game ends.
+    class _FixedEntropy:
+        def randrange(self, _n):
+            return 0
+
+    monkeypatch.setattr("cucco.server.dispatch.random.SystemRandom", _FixedEntropy)
 
     creator, creator_conn = await _setup_player(registry, "Alice", results_store, action_log_dir)
     await creator.handle_message(
@@ -152,19 +164,27 @@ async def test_full_game_persists_a_results_row_and_a_replayable_action_log(tmp_
             task.cancel()
         await asyncio.gather(*responder_tasks, return_exceptions=True)
 
-    # The runner records results in the background as part of finishing the
-    # game_ended broadcast -- give that a moment to land.
+    # _record_results() runs synchronously right after game_ended is
+    # broadcast, in the same TableRunner task -- this sleep is a defensive
+    # margin against FakeConnection.send() ever gaining a real suspension
+    # point, not a required synchronization today.
     await asyncio.sleep(0.05)
 
-    games = results_store._conn.execute("SELECT table_id, mode FROM games").fetchall()
-    assert games == [(room_id, "normal")]
+    games = results_store._conn.execute("SELECT table_id, mode, action_log_path FROM games").fetchall()
+    assert len(games) == 1
+    assert games[0][:2] == (room_id, "normal")
     participants = results_store._conn.execute(
         "SELECT player_id, name, player_type, final_rank FROM participants ORDER BY final_rank"
     ).fetchall()
     assert {row[0] for row in participants} == {creator.session.player_id, bob.session.player_id, carol.session.player_id}
     assert [row[3] for row in participants] == [1, 2, 3]  # ranks 1..3, no gaps
 
-    log_path = action_log_dir / f"{room_id}.jsonl"
+    # The action log's filename includes a per-game uuid (not just room_id)
+    # so a room_id reissued after a restart, or multiple games under one
+    # table in evaluation mode, can never collide/truncate each other.
+    log_path = Path(games[0][2])
+    assert log_path.parent == action_log_dir
+    assert log_path.name.startswith(f"{room_id}-")
     assert log_path.exists()
     lines = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     assert lines[0]["kind"] == "seed"

@@ -35,7 +35,11 @@ class ActionLogWriter:
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._file = path.open("w", encoding="utf-8")
+        # Exclusive creation, not "w": the caller is expected to give every
+        # game a unique filename. If two games ever collided on one path,
+        # silently truncating (`"w"`) would destroy the earlier game's
+        # already-recorded log instead of failing loudly.
+        self._file = path.open("x", encoding="utf-8")
 
     def write_seed(self, seed: int) -> None:
         self._write({"kind": "seed", "seed": seed})

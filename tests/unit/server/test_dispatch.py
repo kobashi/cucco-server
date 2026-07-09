@@ -128,6 +128,37 @@ async def test_spectator_cannot_declare_ready():
 
 
 @pytest.mark.asyncio
+async def test_start_game_still_starts_if_the_action_log_cannot_be_created(tmp_path, monkeypatch):
+    # Persistence is server-internal (docs/protocol/design.md) -- a failure
+    # opening the replay log must never prevent the game itself from
+    # starting. Force that failure: action_log_dir needs to be a directory,
+    # but here it's a plain file, so ActionLogWriter's mkdir() raises.
+    blocked_path = tmp_path / "action_logs"
+    blocked_path.write_text("not a directory")
+
+    import cucco.server.dispatch as dispatch_module
+
+    ran_without_action_log = asyncio.Event()
+
+    async def fake_run_table_safely(table, action_log=None):
+        assert action_log is None
+        ran_without_action_log.set()
+
+    monkeypatch.setattr(dispatch_module, "_run_table_safely", fake_run_table_safely)
+
+    table = Table(room_id="ABC123", config=GameConfig(), creator_id="p1", action_log_dir=blocked_path)
+    for pid in ("p1", "p2"):
+        table.add_session(PlayerSession(player_id=pid, name=pid, player_type="ai", session_token=pid, connection=FakeConnection()))
+    table.ready_ids = {"p1", "p2"}
+
+    await _start_game(table)
+
+    assert table.game is not None
+    assert set(table.game.seats) == {"p1", "p2"}
+    await asyncio.wait_for(ran_without_action_log.wait(), timeout=1.0)
+
+
+@pytest.mark.asyncio
 async def test_ready_timeout_starts_game_with_only_the_players_who_readied():
     table = Table(room_id="ABC123", config=GameConfig(), creator_id="p1")
     for pid in ("p1", "p2", "p3"):

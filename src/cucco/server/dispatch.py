@@ -72,13 +72,26 @@ async def _start_game(table: Table) -> None:
     # random.Random() with no seed draws from OS entropy and can't be
     # recovered after the fact.
     seed = random.SystemRandom().randrange(2**63)
-    table.game = Game(participants, table.config, random.Random(seed))
 
     action_log = None
     if table.action_log_dir is not None:
-        action_log = ActionLogWriter(table.action_log_dir / f"{table.room_id}.jsonl")
-        action_log.write_seed(seed)
+        # Filename includes a per-game uuid, not just room_id: a room_id is
+        # unique only for this process's lifetime (TableRegistry never
+        # reuses one while running), but a *restarted* process reissues
+        # room_ids from scratch, and evaluation mode (game_count) will run
+        # several games under the same table/room_id. Either would silently
+        # truncate an earlier game's log if the filename were room_id alone.
+        try:
+            action_log = ActionLogWriter(table.action_log_dir / f"{table.room_id}-{uuid.uuid4().hex}.jsonl")
+            action_log.write_seed(seed)
+        except OSError:
+            # Persistence is server-internal (docs/protocol/design.md);
+            # failing to open the replay log must not prevent the game
+            # itself from starting.
+            logger.exception("failed to open action log for table %s -- continuing without it", table.room_id)
+            action_log = None
 
+    table.game = Game(participants, table.config, random.Random(seed))
     asyncio.create_task(_run_table_safely(table, action_log))
 
 
