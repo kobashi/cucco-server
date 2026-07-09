@@ -83,7 +83,9 @@
   "end_condition": "chips_zero | round_limit",
   "round_limit": "number (end_conditionがround_limitの場合)",
   "starting_chips": "number (デフォルト25)",
-  "disqualified_card_disclosure": "immediate | deferred",
+  "joker_disclosure": "immediate | deferred (道化による失格者のカード開示タイミング、デフォルトdeferred)",
+  "human_disclosure": "immediate | deferred (人間による失格者のカード開示タイミング、デフォルトdeferred)",
+  "cat_disclosure": "immediate | deferred (猫による失格者のカード開示タイミング、デフォルトdeferred)",
   "horse_house_reveal": "boolean (拒否時に馬か家かを開示するか)",
   "turn_timeout_human_sec": "number (デフォルト30)",
   "turn_timeout_ai_sec": "number (デフォルト10)",
@@ -165,7 +167,7 @@
 ルール上、クク宣言は自分の手番かどうかに関わらずディール中いつでも行える(`docs/rules/final_rules.md`)。物理卓ではリアルタイムの割り込みで成立するが、プロトコルでは以下の形式で実現する。
 
 - 1つのアトミックな処理(通常のカンビオ/ノンカンビオの宣言とその結果処理、連鎖交換の完結、など)が終わるたびに、サーバーはその時点でクク札を保持している全プレイヤーへ`cucco_window`を送信する
-- **途中失格したプレイヤーはクク札を保持していても対象外**とする。`disqualified_card_disclosure`が`deferred`(遅延公開)でカードがまだ手元にある状態でも、失格した時点で`cucco_window`の送信対象・宣言権を失う(`docs/rules/final_rules.md`)
+- **途中失格したプレイヤーはクク札を保持していても対象外**とする。該当する失格原因の開示設定(`joker_disclosure` / `human_disclosure` / `cat_disclosure`)が`deferred`(遅延公開)でカードがまだ手元にある状態でも、失格した時点で`cucco_window`の送信対象・宣言権を失う(`docs/rules/final_rules.md`)
 - 対象プレイヤーは、ウィンドウ中に`cucco_declare`を送信すればクク宣言が成立する。`cucco_pass`を送るか、何も送らずタイムアウトすれば通常通り次の手番へ進む
 - `cucco_window`専用のタイムアウト値(`cucco_window_timeout_human_sec` / `cucco_window_timeout_ai_sec`)を、通常の手番タイムアウトとは別に短めに設定する。`cucco_pass`によって即座に次へ進められるため、応答が速いAI同士やパスを返すクライアントでは実質的に遅延なく進行し、評価モードの高速性を損なわない
 - 複数人が同一ウィンドウで`cucco_declare`を送った場合、サーバーが受信した順で1件のみを処理する(結果はどちらが処理されても同一のため、実質的な競合は生じない。`docs/rules/final_rules.md`のクク宣言の効果を参照)
@@ -180,7 +182,7 @@
 | 他人の手札(ディール中) | 非公開 |
 | 捨て札(「オープン」で公開されたカード) | 全員に公開 |
 | カードの「元の持ち主」履歴(猫の効果用) | 全員に公開(常時参照可能) |
-| 途中失格者のカード(道化/人間/猫による失格) | 最終的には必ず捨て札として公開されるが、公開タイミング(即時 or ディール終了時)は設定による(`disqualified_card_disclosure`) |
+| 途中失格者のカード(道化/人間/猫による失格) | 最終的には必ず捨て札として公開されるが、公開タイミング(即時 or ディール終了時)は失格原因ごとに独立して設定による(`joker_disclosure` / `human_disclosure` / `cat_disclosure`) |
 | 馬/家による拒否時、どちらの札かの開示 | ゲーム開始時の設定による(`horse_house_reveal`)。都度の選択はしない |
 | 猫・人間による拒否 | 発動した時点で全員に判明(仕様上不可避) |
 | 各プレイヤーのチップ枚数 | 全員に公開(常に絶対値で通知) |

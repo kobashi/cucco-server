@@ -17,7 +17,13 @@ class GameConfig:
     end_condition: EndCondition = "chips_zero"
     round_limit: int | None = None  # required if end_condition == "round_limit"
     starting_chips: int = 25
-    disqualified_card_disclosure: DisqualifiedCardDisclosure = "deferred"
+    # Per-cause disqualified-card disclosure timing (docs/rules/final_rules.md
+    # 「設定可能なルール」). Independently selectable per table: e.g. reveal a
+    # 道化-caused disqualification immediately but keep 猫-caused ones hidden
+    # until the deal opens.
+    joker_disclosure: DisqualifiedCardDisclosure = "deferred"
+    human_disclosure: DisqualifiedCardDisclosure = "deferred"
+    cat_disclosure: DisqualifiedCardDisclosure = "deferred"
     horse_house_reveal: bool = False
     turn_timeout_human_sec: float = 30.0
     turn_timeout_ai_sec: float = 10.0

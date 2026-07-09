@@ -64,7 +64,9 @@ def test_parse_create_table_full_payload():
         "mode": "normal",
         "end_condition": "chips_zero",
         "starting_chips": 15,
-        "disqualified_card_disclosure": "immediate",
+        "joker_disclosure": "immediate",
+        "human_disclosure": "immediate",
+        "cat_disclosure": "deferred",
         "horse_house_reveal": True,
         "turn_timeout_human_sec": 20,
         "turn_timeout_ai_sec": 5,
@@ -73,7 +75,9 @@ def test_parse_create_table_full_payload():
     }
     action = parse_action(env("create_table", payload))
     assert action.starting_chips == 15
-    assert action.disqualified_card_disclosure == "immediate"
+    assert action.joker_disclosure == "immediate"
+    assert action.human_disclosure == "immediate"
+    assert action.cat_disclosure == "deferred"
     assert action.horse_house_reveal is True
     assert action.turn_timeout_human_sec == 20.0
 
@@ -124,7 +128,9 @@ def test_create_table_to_config_bridges_all_fields():
         end_condition="round_limit",
         round_limit=100,
         starting_chips=15,
-        disqualified_card_disclosure="immediate",
+        joker_disclosure="immediate",
+        human_disclosure="deferred",
+        cat_disclosure="immediate",
         horse_house_reveal=True,
         turn_timeout_human_sec=20.0,
         turn_timeout_ai_sec=5.0,
@@ -136,6 +142,8 @@ def test_create_table_to_config_bridges_all_fields():
     assert config.game_count == 50
     assert config.round_limit == 100
     assert config.starting_chips == 15
-    assert config.disqualified_card_disclosure == "immediate"
+    assert config.joker_disclosure == "immediate"
+    assert config.human_disclosure == "deferred"
+    assert config.cat_disclosure == "immediate"
     assert config.horse_house_reveal is True
     assert config.turn_timeout_ai_sec == 5.0

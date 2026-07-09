@@ -39,6 +39,17 @@ def _rotate_order_dealer_last(participants: list[str], dealer_id: str) -> list[s
     return participants[idx + 1 :] + participants[: idx + 1]
 
 
+# _disqualify's `cause` values, grouped by which of GameConfig's three
+# per-cause disclosure settings governs them.
+_DISCLOSURE_FIELD_BY_CAUSE = {
+    "received_joker": "joker_disclosure",
+    "human_refusal": "human_disclosure",
+    "human_deck_draw": "human_disclosure",
+    "cat_refusal": "cat_disclosure",
+    "cat_deck_draw": "cat_disclosure",
+}
+
+
 class Deal:
     def __init__(self, participants: list[str], dealer_id: str, deck: Deck, config: GameConfig) -> None:
         if dealer_id not in participants:
@@ -310,7 +321,8 @@ class Deal:
         self.disqualified.add(player_id)
         card = self.hands.pop(player_id)
         original_holder = self.provenance.pop(player_id, None)
-        if self.config.disqualified_card_disclosure == "immediate":
+        disclosure_field = _DISCLOSURE_FIELD_BY_CAUSE[cause]
+        if getattr(self.config, disclosure_field) == "immediate":
             self.deck.discard(card, original_holder=original_holder, via="disqualification")
             return [PlayerDisqualified(player_id=player_id, cause=cause, card=card)]
         self.deferred_discards.append(

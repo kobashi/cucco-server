@@ -69,7 +69,7 @@ class DeckDrawRefused:
 class PlayerDisqualified:
     player_id: str
     cause: str  # "received_joker" | "human_refusal" | "human_deck_draw" | "cat_refusal" | "cat_deck_draw"
-    card: Rank | None  # None when disqualified_card_disclosure is "deferred"
+    card: Rank | None  # None when this cause's GameConfig.*_disclosure is "deferred"
 
 
 @dataclass(frozen=True)

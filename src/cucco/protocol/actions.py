@@ -33,7 +33,9 @@ class CreateTable:
     end_condition: str = "chips_zero"
     round_limit: int | None = None
     starting_chips: int = 25
-    disqualified_card_disclosure: str = "deferred"
+    joker_disclosure: str = "deferred"
+    human_disclosure: str = "deferred"
+    cat_disclosure: str = "deferred"
     horse_house_reveal: bool = False
     turn_timeout_human_sec: float = 30.0
     turn_timeout_ai_sec: float = 10.0
@@ -157,9 +159,11 @@ def _parse_create_table(payload: dict) -> CreateTable:
     if end_condition == "round_limit" and round_limit is None:
         raise ProtocolError("'round_limit' is required when end_condition is 'round_limit'")
     starting_chips = _optional_int(payload, "starting_chips", default=25)
-    disclosure = _require_choice(
-        payload, "disqualified_card_disclosure", VALID_DISCLOSURES, default="deferred"
-    )
+    # Per-cause disqualified-card disclosure timing (docs/rules/final_rules.md
+    # 「設定可能なルール」) -- independently selectable per table.
+    joker_disclosure = _require_choice(payload, "joker_disclosure", VALID_DISCLOSURES, default="deferred")
+    human_disclosure = _require_choice(payload, "human_disclosure", VALID_DISCLOSURES, default="deferred")
+    cat_disclosure = _require_choice(payload, "cat_disclosure", VALID_DISCLOSURES, default="deferred")
     horse_house_reveal = payload.get("horse_house_reveal", False)
     if not isinstance(horse_house_reveal, bool):
         raise ProtocolError("'horse_house_reveal' must be a boolean")
@@ -169,7 +173,9 @@ def _parse_create_table(payload: dict) -> CreateTable:
         end_condition=end_condition,
         round_limit=round_limit,
         starting_chips=starting_chips,
-        disqualified_card_disclosure=disclosure,
+        joker_disclosure=joker_disclosure,
+        human_disclosure=human_disclosure,
+        cat_disclosure=cat_disclosure,
         horse_house_reveal=horse_house_reveal,
         turn_timeout_human_sec=_optional_number(payload, "turn_timeout_human_sec", 30.0),
         turn_timeout_ai_sec=_optional_number(payload, "turn_timeout_ai_sec", 10.0),
@@ -219,7 +225,9 @@ def create_table_to_config(action: CreateTable) -> GameConfig:
         end_condition=action.end_condition,
         round_limit=action.round_limit,
         starting_chips=action.starting_chips,
-        disqualified_card_disclosure=action.disqualified_card_disclosure,
+        joker_disclosure=action.joker_disclosure,
+        human_disclosure=action.human_disclosure,
+        cat_disclosure=action.cat_disclosure,
         horse_house_reveal=action.horse_house_reveal,
         turn_timeout_human_sec=action.turn_timeout_human_sec,
         turn_timeout_ai_sec=action.turn_timeout_ai_sec,

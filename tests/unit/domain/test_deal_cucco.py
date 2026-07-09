@@ -52,7 +52,7 @@ def test_disqualified_player_cannot_declare_cucco_even_if_still_holding_it_defer
     deal = build_deal(
         {"A": Rank.JOKER, "B": Rank.CUCCO, "C": Rank.N7},
         dealer_id="C",
-        config=GameConfig(disqualified_card_disclosure="deferred"),
+        config=GameConfig(joker_disclosure="deferred"),
     )
     # Manually disqualify B to simulate a disqualification while B still
     # physically "holds" クク under deferred disclosure.
