@@ -11,8 +11,10 @@ Three baseline policies, per the seminar's plan:
   number cards change at-or-below a per-player-count threshold).
 
 Every policy answers the four decision points from docs/ai-client-guide.md
-§2 (turn / cucco window / continue). Ranks are the wire strings (the
-`Rank` enum's Japanese values).
+§2 (turn / cucco window / continue). All baselines declare クク immediately
+on any cucco window (seminar decision; timing it for advantage is the
+advanced AIs' job). Ranks are the wire strings (the `Rank` enum's Japanese
+values).
 """
 
 from __future__ import annotations
@@ -62,7 +64,11 @@ class BasePolicy:
         raise NotImplementedError
 
     def decide_cucco_declare(self, own_rank: str, alive_count: int) -> bool:
-        return False  # pass; baselines never interrupt the deal
+        # Seminar decision: every baseline mock declares クク immediately.
+        # Timing the declaration for advantage (e.g. 温存 when nobody can
+        # snatch it before open) is an advanced-AI concern
+        # (docs/ai-advanced-policies.md 必須考慮事項6).
+        return True
 
     def decide_continue(self, chips: int, required_chips: int) -> bool:
         return True  # child-time loser: pay and stay whenever prompted
@@ -85,19 +91,12 @@ class AlwaysNoChange(BasePolicy):
 class MatrixPolicy(BasePolicy):
     name = "matrix"
 
-    def __init__(self, matrix: dict[int, frozenset[str]] | None = None, *, declare_cucco: bool = True) -> None:
+    def __init__(self, matrix: dict[int, frozenset[str]] | None = None) -> None:
         self.matrix = matrix if matrix is not None else DEFAULT_MATRIX
-        self.declare_cucco = declare_cucco
 
     def decide_change(self, own_rank: str, alive_count: int) -> bool:
         row = self.matrix.get(alive_count, DEFAULT_MATRIX_FALLBACK)
         return own_rank in row
-
-    def decide_cucco_declare(self, own_rank: str, alive_count: int) -> bool:
-        # Holding クク and declaring ends the deal immediately with the
-        # strongest card still in hand -- play_summary_granpere.md treats
-        # the declaration as the card's whole point.
-        return self.declare_cucco
 
 
 POLICIES: dict[str, type[BasePolicy] | type[MatrixPolicy]] = {

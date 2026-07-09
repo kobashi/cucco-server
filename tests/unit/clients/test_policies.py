@@ -62,11 +62,10 @@ def test_custom_matrix_overrides_the_default():
     assert policy.decide_change("3", 9) is True
 
 
-def test_matrix_declares_cucco_by_default_and_baselines_pass():
-    assert MatrixPolicy().decide_cucco_declare("クク", 4) is True
-    assert MatrixPolicy(declare_cucco=False).decide_cucco_declare("クク", 4) is False
-    assert AlwaysChange().decide_cucco_declare("クク", 4) is False
-    assert AlwaysNoChange().decide_cucco_declare("クク", 4) is False
+def test_every_baseline_policy_declares_cucco_immediately():
+    # Seminar decision: 低位のMockAIはクク宣言について即時宣言とする.
+    for policy in (MatrixPolicy(), AlwaysChange(), AlwaysNoChange()):
+        assert policy.decide_cucco_declare("クク", 4) is True, policy.name
 
 
 def test_make_policy_resolves_names_and_rejects_unknown():
