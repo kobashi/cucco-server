@@ -1,26 +1,99 @@
 # cucco-server
 
-カードゲーム「Cucco」のネット対戦サーバー。
+伝統的なトリックテイキング/賭博カードゲーム「Cucco」(グランペール版、通称
+Cambio)のネット対戦サーバー。ゲーム研究ゼミ内での運用を想定し、人間・AI
+プレイヤーの両方が同じWebSocketプロトコルで対局できる。
 
-## 概要
+## 特徴
 
-- ゲーム研究ゼミ内での運用を想定したCucco対戦サーバー
-- プレイヤーは人間・AIの両方に対応(AIは確定した通信プロトコルに従って対局する)
-- 開発当初はiMac上でローカル運用、安定後にCloudflare経由で限定公開
+- **ルールエンジン**: 22種×2枚(44枚)のカード、特殊札(道化・人間・馬・猫・家・
+  クク)の連鎖・失格・拒否ロジックを含む完全なドメイン層。I/Oを一切含まない
+  純粋な同期コードで、テストが容易([`docs/rules/final_rules.md`](docs/rules/final_rules.md))
+- **WebSocket/JSONプロトコル**: 人間・AIどちらのクライアントも同一プロトコルで
+  接続([`docs/protocol/design.md`](docs/protocol/design.md))
+- **AI専用高速評価モード**: `game_count`回のゲームを座席ローテーションしながら
+  自動連続実行し、勝率・平均順位・失格率などの集計結果を配信
+- **永続化**: ゲーム終了ごとの成績をSQLiteに記録。決定論的リプレイ用に
+  シャッフルシード+行動ログをJSON Linesで保存
+- **卓ごとの細かいルール設定**: 終了条件、特殊札ごとの失格カード開示タイミング、
+  馬/家の開示可否などを`create_table`時に卓単位で選択可能
+- **サンプルクライアント**: すぐ動かせるMock AI(3方策)と対話式Stubクライアント
+  ([`clients/`](clients/))
 
 ## 状態
 
-要求仕様・ゲームルール・通信プロトコル設計が確定。実装はこれから。
+ドメイン層・プロトコル層・サーバー層・永続化層・評価モード・サンプルクライアント
+まで実装済み、テスト206件全てパス。複数回のレビュー(Fable5)を経て主要な不具合は
+修正済み。人間向けUI(ブラウザ等)は別プロジェクトとして今後実装予定。
+
+## クイックスタート
+
+```bash
+# Python 3.11+ が必要。uv (https://docs.astral.sh/uv/) を使う場合:
+uv venv
+source .venv/bin/activate
+uv pip install -e ".[dev]"
+
+# 標準のvenv/pipでも可:
+# python -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
+
+# テスト実行
+pytest
+
+# サーバー起動 (ws://0.0.0.0:8765)
+python -m cucco.server.app
+```
+
+別ターミナルでMock AIを2体対戦させる例:
+
+```bash
+source .venv/bin/activate
+python -m clients.mock_ai.mock_ai --name Alice --create --policy matrix
+# 表示された room_id を使って2体目を参加させる
+python -m clients.mock_ai.mock_ai --name Bob --room <room_id> --policy always_change
+```
+
+対話式に1人で動作確認したい場合は`clients/stub/stub_client.py`を使う
+(`docs/ai-client-guide.md` §4のメッセージフロー例と突き合わせて確認できる)。
+
+## プロジェクト構成
+
+```
+src/cucco/
+  domain/       # ルールエンジン(純粋・同期・I/Oなし)
+  protocol/     # ワイヤーフォーマット(エンベロープ・アクション・イベント変換)
+  server/       # asyncio/WebSocketネットワーキング
+  persistence/  # SQLite成績記録 + JSON Lines行動ログ
+  evaluation/   # AI専用高速評価モード(game_countループ・座席ローテーション)
+clients/
+  common/       # クライアント共通のWebSocketラッパー
+  mock_ai/      # 自動対局クライアント(方策プラガブル)
+  stub/         # 対話式ターミナルクライアント
+tests/          # unit/ + integration/(実WebSocket経由の結合テスト)
+docs/           # 要求仕様・ルール・プロトコル設計・実装ガイド類
+```
 
 ## ドキュメント
 
 - [`docs/requirements.md`](docs/requirements.md) — 要求仕様書(全体像はここから)
 - [`docs/rules/final_rules.md`](docs/rules/final_rules.md) — 確定したゲームルール
 - [`docs/protocol/design.md`](docs/protocol/design.md) — 通信プロトコル設計
+- [`docs/protocol/decisions.md`](docs/protocol/decisions.md) — プロトコル設計の決定事項・変更履歴
 - [`docs/ai-client-guide.md`](docs/ai-client-guide.md) — AIプレイヤー実装ガイド
+- [`docs/ai-advanced-policies.md`](docs/ai-advanced-policies.md) — 上位AI実装案集(教材)
+- [`docs/human-client-guide.md`](docs/human-client-guide.md) — 人間向けUI実装ガイド(別プロジェクト向け)
 
 ## 開発方針
 
-- 言語: Python
+- 言語: Python 3.11+
 - 通信: WebSocket / JSON
 - 公開: Git管理、GitHubで公開
+- 運用想定: 開発当初はiMac上でローカル運用、安定後にCloudflare Tunnel経由で限定公開
+
+## 変更履歴
+
+[CHANGELOG.md](CHANGELOG.md)
+
+## ライセンス
+
+[MIT License](LICENSE)
