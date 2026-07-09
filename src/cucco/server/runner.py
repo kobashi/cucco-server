@@ -220,6 +220,10 @@ class TableRunner:
     # -- game lifecycle -----------------------------------------------------------
 
     async def run(self) -> None:
+        """Drives `self.table.game` to completion (one `game_ended`). Does
+        NOT mark `self.table.finished` -- that's the caller's call, since a
+        table can run several games back-to-back in evaluation mode and
+        only the caller knows whether this was the last one."""
         game = self.table.game
         assert game is not None
         try:
@@ -229,7 +233,6 @@ class TableRunner:
 
             while not game.is_finished:
                 await self._run_pot(game)
-            self.table.finished = True
 
             if self.results_store is not None:
                 # The game itself already finished successfully and every
@@ -263,7 +266,7 @@ class TableRunner:
             mode=self.table.config.mode,
             players=players,
             ranking=game.final_ranking,
-            action_log_path=str(self.action_log.path) if self.action_log is not None else None,
+            action_log_path=str(self.action_log.path) if self.action_log is not None and self.action_log.path is not None else None,
         )
 
     async def _run_pot(self, game: Game) -> None:

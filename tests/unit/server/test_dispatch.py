@@ -65,11 +65,11 @@ async def test_create_table_before_identify_is_rejected():
 
 
 @pytest.mark.asyncio
-async def test_create_table_with_evaluation_mode_is_rejected_until_implemented():
+async def test_create_table_with_evaluation_mode_succeeds():
     handler = ConnectionHandler(FakeConnection(), TableRegistry())
     await handler.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "ai"}))
     await handler.handle_message(build_envelope("create_table", {"mode": "evaluation", "game_count": 10}))
-    assert handler.connection.sent[-1]["type"] == "action_rejected"
+    assert handler.connection.sent[-1]["type"] == "table_created"
 
 
 @pytest.mark.asyncio

@@ -34,6 +34,14 @@ class Table:
     # call site. None in tests that don't care about persistence.
     results_store: ResultsStore | None = None
     action_log_dir: Path | None = None
+    # Evaluation-mode tables (docs/protocol/design.md 「AI専用高速評価
+    # モード」) don't set `game` synchronously in dispatch._start_game --
+    # EvaluationRunner assigns a fresh Game per game_count iteration from
+    # inside its own task. This flag is the re-entry guard that `game`
+    # itself serves for normal mode, so a redundant `ready` arriving after
+    # _start_game has already scheduled the evaluation task (but before its
+    # first Game exists) can't launch a second EvaluationRunner.
+    evaluation_started: bool = False
 
     def add_session(self, session: PlayerSession) -> None:
         self.sessions[session.player_id] = session

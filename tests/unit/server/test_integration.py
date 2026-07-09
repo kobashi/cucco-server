@@ -25,9 +25,12 @@ class FakeConnection:
         await self.queue.put(data)
 
 
-async def auto_respond(handler: ConnectionHandler, conn: FakeConnection, stop_event: asyncio.Event) -> None:
+async def auto_respond(
+    handler: ConnectionHandler, conn: FakeConnection, stop_event: asyncio.Event, stop_type: str = "game_ended"
+) -> None:
     """Always no-change / cucco-pass / continue=True -- the simplest
-    possible well-behaved client, enough to drive a game to completion."""
+    possible well-behaved client, enough to drive a game (or, with
+    stop_type="evaluation_summary", a whole game_count run) to completion."""
     while not stop_event.is_set():
         try:
             data = await asyncio.wait_for(conn.queue.get(), timeout=1.0)
@@ -43,7 +46,7 @@ async def auto_respond(handler: ConnectionHandler, conn: FakeConnection, stop_ev
             await handler.handle_message(build_envelope("cucco_pass", {}, table_id=table_id))
         elif type_ == "continue_prompt":
             await handler.handle_message(build_envelope("continue_declare", {"continue": True}, table_id=table_id))
-        elif type_ == "game_ended":
+        if type_ == stop_type:
             stop_event.set()
 
 
@@ -196,3 +199,71 @@ async def test_full_game_persists_a_results_row_and_a_replayable_action_log(tmp_
     assert any(line["kind"] == "event" and line["event_type"] == "GameEnded" for line in lines)
 
     results_store.close()
+
+
+@pytest.mark.asyncio
+async def test_evaluation_table_runs_game_count_games_and_excludes_a_human_observer():
+    registry = TableRegistry()
+
+    creator, creator_conn = await _setup_player(registry, "Alice")
+    await creator.handle_message(
+        build_envelope(
+            "create_table",
+            {
+                "mode": "evaluation",
+                "game_count": 2,
+                "end_condition": "chips_zero",
+                "starting_chips": 5,
+                "turn_timeout_ai_sec": 0.2,
+                "cucco_window_timeout_ai_sec": 0.05,
+            },
+        )
+    )
+    room_id = next(m for m in creator_conn.sent if m["type"] == "table_created")["payload"]["room_id"]
+
+    bob, bob_conn = await _setup_player(registry, "Bob")
+
+    # A human joins to watch -- per docs/protocol/design.md 「AI専用高速
+    # 評価モード」, humans never become game participants in evaluation
+    # mode, no matter what they do.
+    human_conn = FakeConnection("Dave")
+    human = ConnectionHandler(human_conn, registry)
+    await human.handle_message(build_envelope("identify", {"name": "Dave", "player_type": "human"}))
+
+    for handler in (creator, bob, human):
+        await handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    stop_event = asyncio.Event()
+    responder_tasks = [
+        asyncio.create_task(auto_respond(handler, conn, stop_event, stop_type="evaluation_summary"))
+        for handler, conn in [(creator, creator_conn), (bob, bob_conn)]
+    ]
+    # Only the two AI players ready up -- if the human's presence still
+    # counted toward the readiness threshold, this would hang until the
+    # ready-timeout watchdog (60s) instead of starting immediately.
+    for handler in (creator, bob):
+        await handler.handle_message(build_envelope("ready", {}))
+
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=10.0)
+    finally:
+        for task in responder_tasks:
+            task.cancel()
+        await asyncio.gather(*responder_tasks, return_exceptions=True)
+
+    summary = next(m for m in creator_conn.sent if m["type"] == "evaluation_summary")["payload"]
+    assert summary["game_count"] == 2
+    assert set(summary["players"]) == {creator.session.player_id, bob.session.player_id}
+    assert len(summary["seat_rotations"]) == 2
+
+    # The human never played, but did watch: they got the normal broadcast
+    # stream (your_hand always null) plus the final summary like everyone.
+    assert any(m["type"] == "deal_started" for m in human_conn.sent)
+    assert any(m["type"] == "evaluation_summary" for m in human_conn.sent)
+    for m in human_conn.sent:
+        if m["type"] == "deal_started":
+            assert m["payload"]["your_hand"] is None
+
+    # Two full games were played (chips reset each time), not one long one.
+    game_ended = [m for m in creator_conn.sent if m["type"] == "game_ended"]
+    assert len(game_ended) == 2

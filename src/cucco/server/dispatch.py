@@ -2,11 +2,13 @@
 either handle it directly (identify/create_table/join_table/ready) or hand
 it to the running TableRunner via the session's inbox queue.
 
-Note: `ready` currently gates only the table's FIRST pot. Once a game is
-running, later pots use the domain layer's built-in auto-revival (every
-seat rejoins automatically -- docs/rules/final_rules.md "次のポットへの
-参加"); per-pot re-ready-gating would require extending the domain Game
-API and is a known simplification of this implementation.
+Note: `ready` currently gates only the table's FIRST pot (normal mode) or
+the whole game_count run (evaluation mode -- docs/protocol/design.md
+「AI専用高速評価モード」: "1回のreadyで複数ゲームを自動連続実行"). Once a
+game is running, later pots use the domain layer's built-in auto-revival
+(every seat rejoins automatically -- docs/rules/final_rules.md "次のポッ
+トへの参加"); per-pot re-ready-gating would require extending the domain
+Game API and is a known simplification of this implementation.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from pathlib import Path
 
 from cucco.domain.errors import IllegalAction
 from cucco.domain.game import Game
+from cucco.evaluation.runner import EvaluationRunner
 from cucco.persistence.action_log import ActionLogWriter
 from cucco.persistence.results_store import ResultsStore
 from cucco.protocol.actions import (
@@ -53,10 +56,20 @@ READY_TIMEOUT_SEC = 60.0
 logger = logging.getLogger("cucco.server.dispatch")
 
 
+def _eligible_participant_ids(table: Table) -> list[str]:
+    """Who can actually become a game participant. In evaluation mode only
+    AI players count -- humans/spectators may join to watch, but per
+    docs/protocol/design.md 「AI専用高速評価モード」 they never play."""
+    ids = table.player_ids()
+    if table.config.mode == "evaluation":
+        ids = [pid for pid in ids if (session := table.get(pid)) is not None and session.player_type == "ai"]
+    return ids
+
+
 async def _start_game(table: Table) -> None:
-    if table.game is not None:
+    if table.game is not None or table.evaluation_started:
         return
-    participants = [pid for pid in table.player_ids() if pid in table.ready_ids]
+    participants = [pid for pid in _eligible_participant_ids(table) if pid in table.ready_ids]
     if len(participants) < table.min_players:
         # Not enough players readied up in time -- reset so a fresh round
         # of `ready` declarations can retry rather than wedging forever.
@@ -67,38 +80,66 @@ async def _start_game(table: Table) -> None:
         table.ready_ids.clear()
         table.ready_deadline_task = None
         return
+
+    if table.config.mode == "evaluation":
+        # EvaluationRunner assigns table.game itself, once per game_count
+        # iteration -- this flag is the re-entry guard in the meantime
+        # (see Table.evaluation_started's docstring).
+        table.evaluation_started = True
+        asyncio.create_task(_run_evaluation_safely(table, participants))
+        return
+
     # Recorded up front (docs/protocol/design.md 「永続化・成績記録」) so the
     # game is deterministically replayable from the action log alone --
     # random.Random() with no seed draws from OS entropy and can't be
     # recovered after the fact.
     seed = random.SystemRandom().randrange(2**63)
-
-    action_log = None
-    if table.action_log_dir is not None:
-        # Filename includes a per-game uuid, not just room_id: a room_id is
-        # unique only for this process's lifetime (TableRegistry never
-        # reuses one while running), but a *restarted* process reissues
-        # room_ids from scratch, and evaluation mode (game_count) will run
-        # several games under the same table/room_id. Either would silently
-        # truncate an earlier game's log if the filename were room_id alone.
-        try:
-            action_log = ActionLogWriter(table.action_log_dir / f"{table.room_id}-{uuid.uuid4().hex}.jsonl")
-            action_log.write_seed(seed)
-        except OSError:
-            # Persistence is server-internal (docs/protocol/design.md);
-            # failing to open the replay log must not prevent the game
-            # itself from starting.
-            logger.exception("failed to open action log for table %s -- continuing without it", table.room_id)
-            action_log = None
+    action_log = _open_action_log(table)
+    if action_log is not None:
+        action_log.write_seed(seed)
 
     table.game = Game(participants, table.config, random.Random(seed))
     asyncio.create_task(_run_table_safely(table, action_log))
 
 
+def _open_action_log(table: Table) -> ActionLogWriter | None:
+    if table.action_log_dir is None:
+        return None
+    # Filename includes a per-game uuid, not just room_id: a room_id is
+    # unique only for this process's lifetime (TableRegistry never reuses
+    # one while running), but a *restarted* process reissues room_ids from
+    # scratch, and evaluation mode runs several games under the same
+    # table/room_id. Either would silently truncate an earlier game's log
+    # if the filename were room_id alone.
+    try:
+        return ActionLogWriter(table.action_log_dir / f"{table.room_id}-{uuid.uuid4().hex}.jsonl")
+    except OSError:
+        # Persistence is server-internal (docs/protocol/design.md); failing
+        # to open the replay log must not prevent the game itself from
+        # starting.
+        logger.exception("failed to open action log for table %s -- continuing without it", table.room_id)
+        return None
+
+
 async def _ready_timeout_watchdog(table: Table) -> None:
     await asyncio.sleep(READY_TIMEOUT_SEC)
-    if table.game is None:
+    if table.game is None and not table.evaluation_started:
         await _start_game(table)
+
+
+async def _notify_table_crashed(table: Table) -> None:
+    table.finished = True
+    for session in list(table.sessions.values()):
+        try:
+            await session.send(
+                build_envelope(
+                    "action_rejected",
+                    {"reason": "internal server error -- this table has stopped"},
+                    table_id=table.room_id,
+                )
+            )
+        except Exception:
+            logger.exception("failed to notify session %s of table crash", session.player_id)
 
 
 async def _run_table_safely(table: Table, action_log: ActionLogWriter | None = None) -> None:
@@ -107,20 +148,20 @@ async def _run_table_safely(table: Table, action_log: ActionLogWriter | None = N
     leave the table permanently hung with no explanation to its players."""
     try:
         await TableRunner(table, action_log=action_log, results_store=table.results_store).run()
+        table.finished = True
     except Exception:
         logger.exception("TableRunner crashed for table %s", table.room_id)
-        table.finished = True
-        for session in list(table.sessions.values()):
-            try:
-                await session.send(
-                    build_envelope(
-                        "action_rejected",
-                        {"reason": "internal server error -- this table has stopped"},
-                        table_id=table.room_id,
-                    )
-                )
-            except Exception:
-                logger.exception("failed to notify session %s of table crash", session.player_id)
+        await _notify_table_crashed(table)
+
+
+async def _run_evaluation_safely(table: Table, participants: list[str]) -> None:
+    """Same fire-and-forget crash-resilience as `_run_table_safely`, for
+    the evaluation-mode game_count loop."""
+    try:
+        await EvaluationRunner(table, participants).run()
+    except Exception:
+        logger.exception("EvaluationRunner crashed for table %s", table.room_id)
+        await _notify_table_crashed(table)
 
 
 class ConnectionHandler:
@@ -183,12 +224,6 @@ class ConnectionHandler:
         if self.session is None:
             raise ProtocolError("must identify before create_table")
         config = create_table_to_config(action)
-        if config.mode == "evaluation":
-            # docs/protocol/design.md's AI専用高速評価モード (game_count loop,
-            # seat rotation, evaluation_summary) has no server-side runner
-            # yet -- accepting the table would silently behave like a single
-            # normal game instead. Reject until cucco.evaluation exists.
-            raise ProtocolError("mode 'evaluation' is not yet implemented")
         table = Table(
             room_id="",
             config=config,
@@ -235,12 +270,12 @@ class ConnectionHandler:
         if self.session.player_type == "spectator":
             raise ProtocolError("spectators cannot declare ready")
         table = self.table
-        if table.game is not None:
-            return  # first pot already started; later pots auto-include everyone
+        if table.game is not None or table.evaluation_started:
+            return  # already started; later pots/games auto-include everyone eligible
         table.ready_ids.add(self.session.player_id)
         if table.ready_deadline_task is None:
             table.ready_deadline_task = asyncio.create_task(_ready_timeout_watchdog(table))
-        if len(table.ready_ids) >= max(table.min_players, len(table.players())):
+        if len(table.ready_ids) >= max(table.min_players, len(_eligible_participant_ids(table))):
             table.ready_deadline_task.cancel()
             await _start_game(table)
 
