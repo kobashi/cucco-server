@@ -36,6 +36,7 @@ from cucco.protocol.actions import (
     NoChangeDeclare,
     Ready,
     create_table_to_config,
+    folded_name,
     parse_action,
 )
 from cucco.protocol.envelope import build_envelope, check_protocol_version, parse_envelope
@@ -257,10 +258,13 @@ class ConnectionHandler:
         # multi-seat/collusion prevention still requires authentication and
         # organizer oversight (docs/security-notes.md). Spectators are exempt
         # (no seat, no hand, so a name clash there is harmless).
-        if self.session.player_type != "spectator" and any(
-            s.player_id != self.session.player_id and s.name == self.session.name for s in table.players()
-        ):
-            raise ProtocolError("that name is already taken at this table")
+        if self.session.player_type != "spectator":
+            folded = folded_name(self.session.name)
+            if any(
+                s.player_id != self.session.player_id and folded_name(s.name) == folded
+                for s in table.players()
+            ):
+                raise ProtocolError("that name is already taken at this table")
 
         self.session.room_id = table.room_id
         table.add_session(self.session)

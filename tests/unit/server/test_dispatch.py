@@ -122,6 +122,24 @@ async def test_duplicate_player_name_at_a_table_is_rejected():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("clashing_name", ["ALICE", "alice", "Ａlice"])
+async def test_case_and_width_variant_names_are_treated_as_duplicates(clashing_name):
+    # NFKC + casefold folding (docs/security-notes.md) so full-width and
+    # letter-case variants can't sneak past the duplicate-name deterrent.
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    clash = ConnectionHandler(FakeConnection(), registry)
+    await clash.handle_message(build_envelope("identify", {"name": clashing_name, "player_type": "human"}))
+    await clash.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    assert clash.connection.sent[-1]["type"] == "action_rejected"
+
+
+@pytest.mark.asyncio
 async def test_duplicate_name_is_allowed_for_spectators():
     # Spectators hold no seat or hand, so a name clash there is harmless and
     # must not be blocked.

@@ -132,6 +132,16 @@ def _require_name(payload: dict) -> str:
     return name
 
 
+def folded_name(name: str) -> str:
+    """Fold a display name for collision detection (docs/security-notes.md):
+    NFKC normalization + casefold so full-width/half-width, other Unicode
+    compatibility variants, and letter-case differences of the same name
+    collide (e.g. "Ａlice", "ALICE", "alice" all match "Alice"). This raises
+    the bar on label impersonation; cross-script homoglyphs (Latin "a" vs
+    Cyrillic "а") are NOT caught and remain a documented residual risk."""
+    return unicodedata.normalize("NFKC", name).casefold()
+
+
 def _require_bool(payload: dict, key: str) -> bool:
     value = payload.get(key)
     if not isinstance(value, bool):
