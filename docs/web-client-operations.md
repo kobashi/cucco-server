@@ -74,15 +74,19 @@ AIは参加後すぐに自動で「準備完了」を送るため、人間側が
 | 観戦 | 「観戦者として参加」で同じプレイルームIDから参加する | 手札欄・操作ボタンが一切出ないこと |
 | ポット/ゲーム終了 | 誰かのチップが0枚になる、または既定ディール数に達するまで対局する | ポット結果・最終順位画面が表示され、「ロビーに戻る」で最初からやり直せること |
 
-## 5. 学外公開しての試験運用(trycloudflare.com + Cloudflare Pages)
+## 5. 学外公開しての試験運用(GitHub Pages + trycloudflare.com)
 
 サーバーは変更不要(`src/cucco/server/app.py`はOriginチェックをしていないため、
-別ドメインでホストしたクライアントからの接続をそのまま受け付ける)。以下の
-構成で試験運用できる。
+別ドメインでホストしたクライアントからの接続をそのまま受け付ける)。**実際に
+稼働させている構成**は以下(Cloudflare Pagesではなく最終的にGitHub Pagesを採用)。
 
-- **クライアント(`clients/web/`)**: Cloudflare Pagesで静的公開する。ビルド
-  コマンドは不要、ルートディレクトリを`clients/web`に指定してGitHub連携
-  するだけでよい(`main`へのpushで自動デプロイされる)
+- **クライアント(`clients/web/`)**: GitHub Pagesで静的公開
+  (`https://kobashi.github.io/cucco-server/`)。`clients/web/`はリポジトリ
+  ルートでも`/docs`でもないため、GitHub Pagesの標準UI(ブランチ+フォルダ選択)
+  では配信できない。`.github/workflows/deploy-pages.yml`(GitHub Actions、
+  `clients/web/**`変更時に`main`へのpushで自動実行)がその中身をPagesの
+  アーティファクトとしてアップロード・デプロイする。リポジトリ設定は
+  Settings → Pages → Source を「GitHub Actions」にしておく(一度だけ)
 - **サーバー(`cucco.server.app`、8765番)**: ゼミのマシン上で起動したうえで、
   `cloudflared`の一時トンネル(trycloudflare.com、アカウント不要)で公開する:
   ```bash
@@ -91,13 +95,13 @@ AIは参加後すぐに自動で「準備完了」を送るため、人間側が
   実行するとランダムな`https://xxxx.trycloudflare.com`が発行される
   (`cloudflared`を再起動するたびにドメインは変わる)
 
-クライアント(Pages上のドメイン)とサーバー(trycloudflare.comのドメイン)は
+クライアント(github.ioドメイン)とサーバー(trycloudflare.comドメイン)は
 別ドメインになるため、クライアントに接続先を明示的に教える必要がある。
 共有するURLに`?ws=`パラメータを付ける(1回開けば`localStorage`に保存され、
 以後そのブラウザでは省略できる):
 
 ```
-https://<Pagesのドメイン>/?ws=xxxx.trycloudflare.com
+https://kobashi.github.io/cucco-server/?ws=xxxx.trycloudflare.com
 ```
 
 `cloudflared`を再起動してドメインが変わった場合は、上記URLの`ws=`部分だけ
@@ -105,7 +109,49 @@ https://<Pagesのドメイン>/?ws=xxxx.trycloudflare.com
 最初の名前入力画面下部の「接続先を変更(通常は不要)」からも設定できる
 (`?ws=`を使えない・忘れた場合の予備手段)。
 
-## 6. 既知の制約
+セキュリティ面(無認証公開・多重着席・トークン漏洩・DoS無防備など)は
+[`docs/security-notes.md`](security-notes.md)にまとめてあるので、公開範囲を
+広げる前に必ず目を通すこと。
+
+## 6. セットアップ時に踏んだ落とし穴
+
+このMac(ゼミ室サーバー)でGitHub Pages + cloudflaredを構築した際に実際に
+つまずいた点。同じ構成を作り直す・別マシンに移す際の参考に残す。
+
+- **`cloudflared`はHomebrewで入れる**(`brew install cloudflared`)。GitHub
+  リリースから手動でバイナリを配置する方法もあるが、複数箇所(`~/bin`等)に
+  重複させるとPATHのどちらが優先されるか分かりにくくなる。1系統に統一する
+  こと
+- **Homebrewのシェル初期化(`brew shellenv`)は`~/.zprofile`にしか入らないと、
+  非ログインシェル(スクリプト実行・自動化ツール等)から`brew`/`cloudflared`/
+  `gh`が見えない**。ログインシェルの対話ターミナルでは動くのに、自動化スクリプト
+  からは`command not found`になる、という食い違いが起きたら、`~/.zshenv`にも
+  同じ`eval "$(/opt/homebrew/bin/brew shellenv)"`を足すか、都度フルパス
+  (`/opt/homebrew/bin/cloudflared`等)で呼び出す
+- **`gh`のバイナリを入れ替える(手動配置→Homebrew)と、`~/.gitconfig`の
+  `credential.helper`が古いパス(例:`~/bin/gh`)を指したままになり、
+  `git push`が`No such file or directory`で失敗する**ことがある。この時、
+  `~/.gitconfig`自体は編集せず、そのパスにHomebrew版へのシンボリックリンクを
+  張って解決する方法もある(`ln -sf $(which gh の実体) ~/bin/gh`)
+- **`.github/workflows/`配下のファイルをpushするには、`gh`が発行した資格情報に
+  `workflow`スコープが必要**。無いと「refusing to allow an OAuth App to
+  create or update workflow ... without `workflow` scope」でリモートに拒否
+  される。`gh auth refresh -h github.com -s workflow`をブラウザ認可付きで
+  実行して解決する(この操作は実行したマシンのトークンのみに影響し、他の
+  マシンでの`gh`セッションには影響しない)
+- **GitHub Actionsのワークフローファイル自体をpushしても、そのワークフローが
+  `on.push.paths`で絞っている対象(例:`clients/web/**`)に変更が無ければ
+  自動実行されない**。初回デプロイなど手動できっかけを作りたい場合は
+  `gh workflow run <ファイル名>`で明示的にトリガーする
+- **quick tunnel(`cloudflared tunnel --url`)とnamed tunnel
+  (`cloudflared tunnel login`+`create`)は別物**。ログイン状態は前者の挙動
+  (ランダムURL・アカウント非連携)に一切影響しない。Cloudflareダッシュボードでの
+  接続状況モニタリングもnamed tunnel限定で、quick tunnelは表示されない
+- ダッシュボードの「Install and run a connector」に出る接続コマンドは
+  トークンを含む長い文字列(`eyJ...`)であり、トンネルの**UUID(ID)とは別物**。
+  コピー先を間違えやすいので注意
+
+## 7. 既知の制約
 
 `clients/web/README.md`「既知の制約」を参照(成績・統計閲覧UIや評価モード
 専用ダッシュボードは未実装、現在の手番表示はベストエフォート推測、

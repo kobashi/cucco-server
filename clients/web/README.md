@@ -23,7 +23,7 @@
 ホストする構成など)は、`?ws=host[:port]` クエリパラメータ付きのURLを開く
 (初回だけでよく、`localStorage`に保存されてURLからは自動的に取り除かれる)か、
 名前入力画面下部の「接続先を変更」から設定する。学外公開しての試験運用
-(Cloudflare Pages + trycloudflare.com)の具体的な手順は
+(GitHub Pages + trycloudflare.com)の具体的な手順・セットアップ時の注意点は
 `docs/web-client-operations.md`を参照。
 
 ## 動作確認
