@@ -37,6 +37,40 @@ def test_parse_identify_rejects_missing_name():
         parse_action(env("identify", {"player_type": "human"}))
 
 
+def test_parse_identify_trims_surrounding_whitespace():
+    action = parse_action(env("identify", {"name": "  Alice  ", "player_type": "human"}))
+    assert action == Identify(name="Alice", player_type="human")
+
+
+def test_parse_identify_rejects_whitespace_only_name():
+    with pytest.raises(ProtocolError):
+        parse_action(env("identify", {"name": "   ", "player_type": "human"}))
+
+
+def test_parse_identify_rejects_overlong_name():
+    with pytest.raises(ProtocolError):
+        parse_action(env("identify", {"name": "x" * 25, "player_type": "human"}))
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "Ali\nce",  # newline (Cc)
+        "Ali\tce",  # tab (Cc)
+        "Alice‮",  # right-to-left override (Cf) -- display spoofing
+        "Ali​ce",  # zero-width space (Cf)
+    ],
+)
+def test_parse_identify_rejects_control_and_format_chars(bad_name):
+    with pytest.raises(ProtocolError):
+        parse_action(env("identify", {"name": bad_name, "player_type": "human"}))
+
+
+def test_parse_identify_allows_plain_unicode_name():
+    action = parse_action(env("identify", {"name": "たろう", "player_type": "human"}))
+    assert action == Identify(name="たろう", player_type="human")
+
+
 def test_parse_create_table_defaults():
     action = parse_action(env("create_table", {}))
     assert action == CreateTable()

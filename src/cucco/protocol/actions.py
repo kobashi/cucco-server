@@ -7,6 +7,7 @@ its `payload`, raising `ProtocolError` on anything malformed.
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from typing import Callable, Union
 
@@ -18,6 +19,15 @@ VALID_PLAYER_TYPES = ("human", "ai", "spectator")
 VALID_MODES = ("normal", "evaluation")
 VALID_END_CONDITIONS = ("chips_zero", "round_limit")
 VALID_DISCLOSURES = ("immediate", "deferred")
+
+# Display names are attacker-controlled and broadcast to every client via
+# state_snapshot (seats[].name), so they must be bounded and sanitized at the
+# protocol boundary -- the browser client's maxlength=24 doesn't apply to a
+# hand-crafted WebSocket client. Rejecting control (Cc) and format (Cf) code
+# points blocks display-spoofing (RTL override, zero-width) and stops raw
+# clients from smuggling markup/newlines into any viewer that forgets to
+# escape. See docs/security-notes.md.
+MAX_NAME_LENGTH = 24
 
 
 @dataclass(frozen=True)
@@ -108,6 +118,20 @@ def _require_str(payload: dict, key: str) -> str:
     return value
 
 
+def _require_name(payload: dict) -> str:
+    value = payload.get("name")
+    if not isinstance(value, str):
+        raise ProtocolError("'name' must be a string")
+    name = value.strip()
+    if not name:
+        raise ProtocolError("'name' must be a non-empty string")
+    if len(name) > MAX_NAME_LENGTH:
+        raise ProtocolError(f"'name' must be at most {MAX_NAME_LENGTH} characters")
+    if any(unicodedata.category(c) in ("Cc", "Cf") for c in name):
+        raise ProtocolError("'name' must not contain control or formatting characters")
+    return name
+
+
 def _require_bool(payload: dict, key: str) -> bool:
     value = payload.get(key)
     if not isinstance(value, bool):
@@ -144,7 +168,7 @@ def _optional_number(payload: dict, key: str, default: float) -> float:
 
 
 def _parse_identify(payload: dict) -> Identify:
-    name = _require_str(payload, "name")
+    name = _require_name(payload)
     player_type = _require_choice(payload, "player_type", VALID_PLAYER_TYPES)
     return Identify(name=name, player_type=player_type)
 

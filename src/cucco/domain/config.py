@@ -9,6 +9,12 @@ DisqualifiedCardDisclosure = Literal["immediate", "deferred"]
 EndCondition = Literal["chips_zero", "round_limit"]
 TableMode = Literal["normal", "evaluation"]
 
+# Upper bound on any per-prompt timeout. A table creator's config is
+# attacker-controlled input (docs/security-notes.md); an unbounded timeout
+# lets a griefer set a multi-hour deadline that wedges everyone else at the
+# table on a single prompt. One hour is far beyond any legitimate human turn.
+MAX_TIMEOUT_SEC = 3600.0
+
 
 @dataclass(frozen=True)
 class GameConfig:
@@ -37,3 +43,19 @@ class GameConfig:
             raise ValueError("game_count is required when mode is 'evaluation'")
         if self.game_count is not None and self.game_count <= 0:
             raise ValueError("game_count must be a positive integer")
+        # Numeric bounds on attacker-controlled create_table fields
+        # (docs/security-notes.md): reject values that would produce a broken
+        # or grief-inducing game rather than letting them reach the engine.
+        if self.starting_chips < 1:
+            raise ValueError("starting_chips must be a positive integer")
+        if self.round_limit is not None and self.round_limit < 1:
+            raise ValueError("round_limit must be a positive integer")
+        for field_name in (
+            "turn_timeout_human_sec",
+            "turn_timeout_ai_sec",
+            "cucco_window_timeout_human_sec",
+            "cucco_window_timeout_ai_sec",
+        ):
+            value = getattr(self, field_name)
+            if not (0 < value <= MAX_TIMEOUT_SEC):
+                raise ValueError(f"{field_name} must be between 0 and {MAX_TIMEOUT_SEC} seconds")

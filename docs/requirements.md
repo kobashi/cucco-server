@@ -105,8 +105,9 @@ Cucco(カンビオルール、グランペール版)の完全なルールは [`d
 
 ### 3.4 セキュリティ方針
 
-- プレイルームへの不正参加対策・認証等のセキュリティは、本プロジェクトの規模・用途では考慮しない
+- プレイルームへの不正参加対策・認証等のセキュリティは、当初は学内LAN運用前提で考慮しない方針とした
 - プロトコルの精度は、AI実装側のバグ(不正な操作の送信等)への対処で十分とする
+- **Cloudflare Tunnel等でインターネットに公開して運用する場合は前提が変わる**。クライアント送信データの検証・チート・情報漏洩・DoSに関するリスクと対処状況は [`docs/security-notes.md`](security-notes.md) に整理する
 
 ## 4. 開発・検証方針
 
@@ -128,3 +129,4 @@ Cucco(カンビオルール、グランペール版)の完全なルールは [`d
 | [`docs/ai-advanced-policies.md`](ai-advanced-policies.md) | 上位AIの実装案集(教材。サーバー側では実装せず、ゼミ生の設計ヒントとして提供) |
 | [`docs/human-client-guide.md`](human-client-guide.md) | 人間向けUI実装者向けガイド(表示要件・UX上の注意点) |
 | [`docs/web-client-operations.md`](web-client-operations.md) | ブラウザクライアント(`clients/web/`)の操作手順書 |
+| [`docs/security-notes.md`](security-notes.md) | セキュリティ運用メモ(公開運用時の残存リスクと対処済み範囲) |

@@ -105,6 +105,40 @@ async def test_join_unknown_room_is_rejected():
 
 
 @pytest.mark.asyncio
+async def test_duplicate_player_name_at_a_table_is_rejected():
+    # Best-effort deterrent against one person taking several seats and
+    # against label impersonation (docs/security-notes.md #2).
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    clash = ConnectionHandler(FakeConnection(), registry)
+    await clash.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await clash.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    assert clash.connection.sent[-1]["type"] == "action_rejected"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_name_is_allowed_for_spectators():
+    # Spectators hold no seat or hand, so a name clash there is harmless and
+    # must not be blocked.
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Watcher", "player_type": "spectator"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    other = ConnectionHandler(FakeConnection(), registry)
+    await other.handle_message(build_envelope("identify", {"name": "Watcher", "player_type": "spectator"}))
+    await other.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    assert other.connection.sent[-1]["type"] == "state_snapshot"
+
+
+@pytest.mark.asyncio
 async def test_reconnect_with_session_token_restores_your_hand():
     registry = TableRegistry()
 

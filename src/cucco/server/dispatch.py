@@ -249,6 +249,18 @@ class ConnectionHandler:
             raise ProtocolError("table is full")
         if self.session.player_type == "spectator" and len(table.spectators()) >= MAX_SPECTATORS_PER_TABLE:
             raise ProtocolError("too many spectators")
+        # Best-effort deterrent against one person quietly occupying several
+        # seats to see multiple hands, and against impersonating another
+        # player's on-screen label: reject a display name already held by a
+        # different player at this table. This is NOT a real defense -- a
+        # determined cheater just picks distinct names -- so true
+        # multi-seat/collusion prevention still requires authentication and
+        # organizer oversight (docs/security-notes.md). Spectators are exempt
+        # (no seat, no hand, so a name clash there is harmless).
+        if self.session.player_type != "spectator" and any(
+            s.player_id != self.session.player_id and s.name == self.session.name for s in table.players()
+        ):
+            raise ProtocolError("that name is already taken at this table")
 
         self.session.room_id = table.room_id
         table.add_session(self.session)
