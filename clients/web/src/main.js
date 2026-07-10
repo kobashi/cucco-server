@@ -2,6 +2,7 @@ import { CuccoConnection, wsUrlFor } from "./connection.js";
 import { createStore, pushLog, seatName } from "./state.js";
 import { loadSession, saveSession, clearSession } from "./persistence.js";
 import { turnOrderFor, advanceTurn } from "./deriveTurn.js";
+import { sanitizeWsHost } from "./utils.js";
 import * as lobby from "./views/lobby.js";
 import * as waitingRoom from "./views/waiting_room.js";
 import * as table from "./views/table.js";
@@ -11,12 +12,12 @@ const appEl = document.getElementById("app");
 const { state, notify, subscribe } = createStore();
 
 // `?ws=host[:port]` lets a shared link auto-configure the connection target
-// (e.g. a Cloudflare Pages-hosted client pointing at a cloudflared-tunneled
+// (e.g. a GitHub Pages-hosted client pointing at a cloudflared-tunneled
 // server on a different, possibly-random, hostname). Persist it and strip it
 // from the URL so a later reload/share doesn't need the param repeated.
 const wsParam = new URLSearchParams(location.search).get("ws");
 if (wsParam) {
-  localStorage.setItem("cucco_ws_host", wsParam);
+  localStorage.setItem("cucco_ws_host", sanitizeWsHost(wsParam));
   const url = new URL(location.href);
   url.searchParams.delete("ws");
   history.replaceState(null, "", url);
@@ -78,7 +79,8 @@ function showToast(text) {
 // -- actions exposed to views ---------------------------------------------
 
 const actions = {
-  setWsHost(host) {
+  setWsHost(rawHost) {
+    const host = sanitizeWsHost(rawHost);
     localStorage.setItem("cucco_ws_host", host);
     savedHost = host;
     conn = new CuccoConnection(wsUrlFor(host));

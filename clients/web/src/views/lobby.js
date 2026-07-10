@@ -31,7 +31,7 @@ function renderName(el, state, actions) {
         <summary>接続先を変更(通常は不要)</summary>
         <p class="muted">現在の接続先: ${esc(localStorage.getItem("cucco_ws_host") || `${location.hostname}:8765`)}</p>
         <form id="ws-host-form">
-          <label>ホスト名(:ポート省略時は443/wss扱い) <input id="ws-host-input" placeholder="ws.example.trycloudflare.com"></label>
+          <label>ホスト名のみ(URL全体は不可。:ポート省略時は443/wss扱い) <input id="ws-host-input" placeholder="ws.example.trycloudflare.com"></label>
           <button type="submit" class="secondary">接続先を保存</button>
         </form>
       </details>
