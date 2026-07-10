@@ -18,15 +18,16 @@ export function render(el, state, actions) {
       ${
         isSpectator
           ? `<p class="muted">観戦者として参加しています。ゲーム開始をお待ちください。</p>`
-          : `<button id="ready-btn">準備完了</button><p class="muted">全員が準備完了するとポットが始まります。</p>`
+          : state.readySent
+            ? `<button id="ready-btn" disabled>準備完了ずみ・開始をお待ちください</button><p class="muted">全員が準備完了するとポットが始まります。</p>`
+            : `<button id="ready-btn">準備完了</button><p class="muted">全員が準備完了するとポットが始まります。</p>`
       }
       ${state.error ? `<p class="error">${esc(state.error)}</p>` : ""}
     </div>
   `;
   el.querySelector("#copy-btn").addEventListener("click", () => navigator.clipboard?.writeText(state.roomId));
-  el.querySelector("#ready-btn")?.addEventListener("click", (e) => {
-    actions.sendReady();
-    e.target.disabled = true;
-    e.target.textContent = "準備完了ずみ・開始をお待ちください";
-  });
+  // Ready-state lives in `state` (not just the DOM): the 3s waiting-room
+  // resync poll re-renders this screen, which would otherwise silently
+  // re-enable a button the player already pressed.
+  el.querySelector("#ready-btn")?.addEventListener("click", () => actions.sendReady());
 }

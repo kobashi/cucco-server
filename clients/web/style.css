@@ -74,7 +74,24 @@ button:disabled { opacity: 0.5; cursor: default; }
 .seat-list li { padding: 0.3rem 0; }
 
 .table-screen { max-width: 720px; margin: 0 auto; padding: 1rem; }
-.table-header { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 0.8rem; }
+.table-header { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.3rem 1rem; font-weight: bold; margin-bottom: 0.8rem; }
+.pot-chips { color: var(--accent); }
+
+.status-bar {
+  padding: 0.7rem 1rem;
+  margin-bottom: 0.8rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  font-size: 1.05rem;
+  text-align: center;
+}
+.status-bar.status-mine {
+  border-color: var(--urgent);
+  color: var(--urgent);
+  font-weight: bold;
+  animation: pulse 1.2s infinite;
+}
 
 .seats { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 1rem; }
 .seat {
@@ -89,6 +106,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .seat.disconnected { border-style: dashed; }
 .seat-name { font-weight: bold; }
 .seat-flag { font-size: 0.8em; color: var(--urgent); }
+.seat-turn-flag { font-size: 0.8em; color: var(--accent); font-weight: bold; }
 
 .your-hand { margin: 1rem 0; }
 .hand-card {

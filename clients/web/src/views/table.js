@@ -1,6 +1,13 @@
 import { esc, secondsLeft } from "../utils.js";
 import { seatName } from "../state.js";
 
+// Countdown digits live in [data-deadline] spans so the ticker in main.js can
+// update them in place -- re-rendering the whole screen 4x/second to move a
+// number is what made the buttons feel unresponsive.
+function countdown(deadline) {
+  return `<span data-deadline="${deadline}">${secondsLeft(deadline)}</span>`;
+}
+
 export function render(el, state, actions) {
   const t = state.table;
   if (!t) return;
@@ -11,9 +18,11 @@ export function render(el, state, actions) {
       <header class="table-header">
         <span>卓 ${esc(state.roomId)}</span>
         <span>ポット ${t.pot_number}・ディール ${t.deal_number}</span>
+        <span class="pot-chips">💰 ポット ${state.potChips}枚</span>
         <span>残り山札: ${t.deck_remaining_count}枚</span>
       </header>
 
+      ${renderStatusBar(state, isSpectator)}
       ${renderSeats(t, state)}
       ${isSpectator ? "" : renderHand(state)}
       ${renderDiscardPile(t)}
@@ -35,10 +44,39 @@ export function render(el, state, actions) {
   el.querySelector("#cucco-pass-btn")?.addEventListener("click", actions.sendCuccoPass);
   el.querySelector("#continue-yes-btn")?.addEventListener("click", () => actions.sendContinue(true));
   el.querySelector("#continue-no-btn")?.addEventListener("click", () => actions.sendContinue(false));
-  el.querySelector("#next-pot-btn")?.addEventListener("click", (e) => {
-    actions.sendReady();
-    e.target.disabled = true;
-  });
+}
+
+// One always-visible line answering "who/what are we waiting on right now".
+// For bystanders this is best-effort: the dealer's どうぞ, turn prompts and
+// cucco windows are unicast (runner.py sends them only to the addressee), so
+// the deal phase is reconstructed from the broadcast resolution events.
+function statusFor(state, isSpectator) {
+  if (!isSpectator) {
+    if (state.dealerReadyPrompt) return { text: "あなたが親です — 手札を確認して「どうぞ」を宣言してください", mine: true };
+    if (state.turnPrompt) return { text: "あなたの手番です — カンビオ / ノンカンビオを選んでください", mine: true };
+    if (state.cuccoWindow) return { text: "クク宣言のチャンス!", mine: true };
+    if (state.continuePrompt) return { text: "続行するかどうか選んでください", mine: true };
+  }
+  const waitingContinue = [...(state.pendingContinueIds ?? [])].filter((id) => id !== state.playerId);
+  if (waitingContinue.length) {
+    return { text: `${waitingContinue.map((id) => seatName(state, id)).join("、")} さんの続行確認を待っています…`, mine: false };
+  }
+  if (state.lastPotResult) return { text: "まもなく次のポットが始まります…", mine: false };
+  if (state.lastDealResult || state.lastDealOpened) return { text: "まもなく次のディールが始まります…", mine: false };
+  const dealer = state.table?.dealer_seat;
+  const iAmDealer = dealer === state.playerId;
+  if (!state.firstActionSeen && !(iAmDealer && state.dozoSent) && dealer) {
+    return { text: `親(${seatName(state, dealer)})の「どうぞ」を待っています…`, mine: false };
+  }
+  if (state.currentTurnSeat) {
+    return { text: `${seatName(state, state.currentTurnSeat)} さんの手番です…`, mine: false };
+  }
+  return { text: "進行中…", mine: false };
+}
+
+function renderStatusBar(state, isSpectator) {
+  const { text, mine } = statusFor(state, isSpectator);
+  return `<div class="status-bar ${mine ? "status-mine" : ""}">${esc(text)}</div>`;
 }
 
 function renderSeats(t, state) {
@@ -57,6 +95,7 @@ function renderSeats(t, state) {
             <div class="${classes.join(" ")}">
               <div class="seat-name">${esc(s.name)}${isDealer ? " 👑" : ""}</div>
               <div class="seat-chips">${s.chips} チップ</div>
+              ${isTurn ? '<div class="seat-turn-flag">⏳ 手番</div>' : ""}
               ${!s.in_current_pot ? '<div class="seat-flag">脱落中</div>' : ""}
               ${!s.connected ? '<div class="seat-flag">切断中</div>' : ""}
             </div>
@@ -154,11 +193,14 @@ function renderDealResult(state) {
 function renderPotResult(state, isSpectator) {
   const r = state.lastPotResult;
   if (!r) return "";
+  // No button here on purpose: after the first pot the server auto-enrolls
+  // everyone in the next one (dispatch.py -- `ready` only gates the FIRST
+  // pot), so a "next pot" button would be a no-op that looks broken.
   return `
     <section class="callout highlight">
       <h2>ポット結果</h2>
-      ${r.result === "won" ? `<p>${esc(seatName(state, r.winner))} が ${r.amount} チップを獲得!</p>` : `<p>このポットは持ち越しになりました。</p>`}
-      ${isSpectator ? "" : `<button id="next-pot-btn">次のポットへ</button>`}
+      ${r.result === "won" ? `<p>${esc(seatName(state, r.winner))} が ${r.amount} チップを獲得!</p>` : `<p>このポット(${r.amount}枚)は次のポットへ持ち越しになりました。</p>`}
+      <p class="muted">まもなく次のポットが自動的に始まります。</p>
     </section>
   `;
 }
@@ -167,7 +209,7 @@ function renderActionArea(state, actions) {
   if (state.dealerReadyPrompt) {
     return `
       <section class="action-area urgent">
-        <p>あなたが親です。手札を確認してから「どうぞ」を宣言してください。(残り${secondsLeft(state.dealerReadyPrompt.deadline)}秒)</p>
+        <p>あなたが親です。手札を確認してから「どうぞ」を宣言してください。(残り${countdown(state.dealerReadyPrompt.deadline)}秒)</p>
         <button id="dealer-ready-btn">どうぞ</button>
       </section>
     `;
@@ -175,7 +217,7 @@ function renderActionArea(state, actions) {
   if (state.turnPrompt) {
     return `
       <section class="action-area urgent">
-        <p>あなたの手番です。(残り${secondsLeft(state.turnPrompt.deadline)}秒)</p>
+        <p>あなたの手番です。(残り${countdown(state.turnPrompt.deadline)}秒)</p>
         <button id="cambio-btn">カンビオ(交換する)</button>
         <button id="no-change-btn" class="secondary">ノンカンビオ(交換しない)</button>
       </section>
@@ -191,7 +233,7 @@ function renderCuccoModal(state) {
       <div class="modal cucco-modal">
         <h2>クク宣言のチャンス!</h2>
         <p>あなたはクク札を持っています。今すぐ宣言してディールを終了させますか?</p>
-        <p class="countdown">残り ${secondsLeft(state.cuccoWindow.deadline)} 秒</p>
+        <p class="countdown">残り ${countdown(state.cuccoWindow.deadline)} 秒</p>
         <button id="cucco-declare-btn">クク宣言する</button>
         <button id="cucco-pass-btn" class="secondary">今は宣言しない</button>
       </div>
@@ -207,7 +249,7 @@ function renderContinueModal(state) {
         <h2>続行しますか?</h2>
         <p>必要チップ: ${c.requiredChips}枚</p>
         <p>あなたの現在のチップ: ${state.table.seats.find((s) => s.player_id === state.playerId)?.chips ?? "?"}枚</p>
-        <p class="countdown">残り ${secondsLeft(c.deadline)} 秒</p>
+        <p class="countdown">残り ${countdown(c.deadline)} 秒</p>
         <button id="continue-yes-btn">続行する</button>
         <button id="continue-no-btn" class="secondary">離脱する</button>
       </div>

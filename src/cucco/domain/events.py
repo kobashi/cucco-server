@@ -169,6 +169,10 @@ class PotStarted:
     participants: tuple[str, ...]
     chips_now: dict[str, int]
     entry_fee_waived: bool = False
+    # Chips sitting in the pot at start (entry fees + any wiped-out carryover).
+    # Public information at a physical table -- the pot is in plain sight --
+    # so it's broadcast for clients to display.
+    pot_chips: int = 0
 
 
 @dataclass(frozen=True)

@@ -140,6 +140,7 @@ class Game:
                 participants=tuple(participants),
                 chips_now=dict(self.chips),
                 entry_fee_waived=waive_entry_fee,
+                pot_chips=pot_chips,
             )
         ]
 

@@ -108,7 +108,7 @@
 | `table_created` | `create_table`への応答。発行されたプレイルームIDを含む |
 | `state_snapshot` | 現在の全体状況。内容は「公開ゲーム状態」を参照。参加時・再接続時・観戦開始時に送信 |
 | `action_rejected` | AIプレイヤーが送った操作が現在の状態で不正だった場合の拒否通知(デバッグ用。人間向けUIでは基本的に発生しない) |
-| `pot_started` | 新しいポット開始。参加者・各自の現在チップ数(絶対値)・最初の親(`dealer_seat`) |
+| `pot_started` | 新しいポット開始。参加者・各自の現在チップ数(絶対値)・最初の親(`dealer_seat`)・ポットの初期チップ数(`pot_chips`: 参加費+持ち越し分) |
 | `deal_started` | 新しいディール開始。宛先プレイヤーには自分の手札を含める。残り山札枚数を含む |
 | `deck_reshuffled` | ポット途中で山札が尽き、捨て札から再構築されたことを通知。再構築後の残り枚数を含む |
 | `cucco_window` | 直前のアトミックな処理が完了し、次の手番に進む前に、クク保持者に宣言の機会を与える通知(「クク宣言の機会」参照) |
@@ -119,7 +119,7 @@
 | `exchange_result` | 交換要求の結果(成立/拒否/連鎖/特殊効果の発動)。関係者本人には交換されたカードの値を含める |
 | `player_disqualified` | 途中失格イベント(誰が、どの効果で)。カードが即時公開の設定なら捨て札への追加(カード内容)も併せて通知 |
 | `deal_opened` | 全員の手札を公開し、最弱者を判定した結果。公開された全員のカードを含む |
-| `deal_result` | そのディールの敗者・支払ったチップ枚数・**各プレイヤーの現在チップ数(絶対値)**・次の親・捨て札に加わったカード一覧 |
+| `deal_result` | そのディールの敗者・支払ったチップ枚数・**各プレイヤーの現在チップ数(絶対値)**・敗者支払い後のポット枚数(`pot_chips`)・次の親・捨て札に加わったカード一覧 |
 | `continue_prompt` | 子供の時間の敗者に、継続するか確認を要求 |
 | `player_left_pot` | プレイヤーがそのポットから抜けたことを通知(復活辞退/支払い不能/大人の時間の脱落のいずれか、理由を含む) |
 | `pot_result` | ポットの決着(勝者・総取り、または持ち越し)。**各プレイヤーの現在チップ数(絶対値)** |
@@ -142,6 +142,7 @@
   "current_turn_seat": "player_id | null",
   "pot_number": "number",
   "deal_number": "number",
+  "pot_chips": "number (現在ポットに積まれているチップ枚数。物理卓では常に見えている公開情報)",
   "deck_remaining_count": "number",
   "discard_pile": [
     { "card": "string(ランク名)", "original_holder": "player_id | null", "discarded_via": "open | disqualification | deck_draw | dealer_swap", "discarded_at": "ISO8601" }

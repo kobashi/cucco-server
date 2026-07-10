@@ -20,10 +20,18 @@ export function createStore() {
     // public game state (state_snapshot + incremental updates)
     table: null, // { table_id, mode, seats, spectators, dealer_seat, pot_number, ... }
     currentTurnSeat: null, // best-effort, see deriveTurn.js -- not authoritative
+    potChips: 0, // chips currently in the pot (pot_started/deal_result/snapshot absolute + chips_paid increments)
     yourHand: null,
     disqualifiedThisDeal: false,
     disqualifiedIdsThisDeal: new Set(), // every player disqualified so far this deal, for turn-order inference
     requiredChipsByPlayer: {}, // player_id -> required_chips, from continue_prompted (broadcast, precedes the unicast continue_prompt)
+    pendingContinueIds: new Set(), // players whose 続行/離脱 answer we're waiting on (continue_prompted -> chips_paid/player_left_pot)
+    readySent: false, // "準備完了" already clicked (survives the waiting-room resync re-render)
+    dozoSent: false, // I am the dealer and already declared どうぞ this deal (my own view only)
+    // Whether any turn has resolved this deal. Until then the dealer's どうぞ
+    // (and the first player's prompt) are unicast and invisible to
+    // bystanders, so the status bar can only say "waiting on the dealer".
+    firstActionSeen: false,
 
     // active prompts (only ever set when *this* session is the addressee)
     dealerReadyPrompt: null, // { timeoutSec, deadline }

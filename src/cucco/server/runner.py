@@ -54,6 +54,7 @@ def build_state_snapshot(table: Table, recipient_id: str | None) -> dict:
             current_turn_seat=None,
             pot_number=0,
             deal_number=0,
+            pot_chips=0,
             deck_remaining_count=0,
             discard_pile=[],
             provenance_map={},
@@ -72,6 +73,7 @@ def build_state_snapshot(table: Table, recipient_id: str | None) -> dict:
         current_turn_seat=(deal.legal_actor() if deal is not None and not deal.is_opened else None),
         pot_number=game.pot_number,
         deal_number=pot.deal_number if pot is not None else 0,
+        pot_chips=pot.pot_chips if pot is not None else 0,
         deck_remaining_count=pot.deck.remaining_count if pot is not None else 0,
         discard_pile=(
             [
@@ -299,10 +301,17 @@ class TableRunner:
                 if isinstance(event, ContinuePrompted):
                     resolution_events += await self._handle_continue_prompt(pot, event.player_id)
 
+            # Captured before finalize_deal(), which pays the pot out to a
+            # winner (zeroing pot_chips) when the deal concludes the pot --
+            # deal_result should show the pot as it stands after the losers
+            # paid in, i.e. what's physically on the table before any scoop.
+            pot_chips_after_payments = pot.pot_chips
             outcome_events = pot.finalize_deal()
             await self._send_events(outcome_events)
             reshuffled = pot.deck.reshuffle_count != reshuffle_count_before
-            await self._send_deal_result(pot, deal, losers, resolution_events, outcome_events, discard_before, reshuffled)
+            await self._send_deal_result(
+                pot, deal, losers, resolution_events, outcome_events, discard_before, reshuffled, pot_chips_after_payments
+            )
 
             conclusion = next((e for e in outcome_events if isinstance(e, (PotWon, PotWipedOut))), None)
             if conclusion is not None:
@@ -341,6 +350,7 @@ class TableRunner:
         outcome_events: list,
         discard_before: int,
         reshuffled: bool,
+        pot_chips: int,
     ) -> None:
         all_losers = sorted(deal.disqualified | set(losers))
         chips_paid = {e.player_id: e.amount for e in resolution_events if isinstance(e, ChipsPaid)}
@@ -361,6 +371,7 @@ class TableRunner:
             "chips_paid": chips_paid,
             "left_pot": left_pot,
             "chips_now": dict(pot.chips),
+            "pot_chips": pot_chips,
             "next_dealer": next_dealer,
             "discarded_cards": [
                 {

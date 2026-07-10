@@ -184,6 +184,7 @@ def translate(event: DealEvent | PotEvent | GameEvent) -> WireEvent | None:
                 "participants": list(event.participants),
                 "chips_now": dict(event.chips_now),
                 "entry_fee_waived": event.entry_fee_waived,
+                "pot_chips": event.pot_chips,
             },
         )
 

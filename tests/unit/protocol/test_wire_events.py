@@ -144,11 +144,14 @@ def test_pot_level_events():
 
 def test_game_level_events():
     started = translate(
-        PotStarted(pot_number=2, dealer_id="B", participants=("A", "B", "C"), chips_now={"A": 24, "B": 24, "C": 24})
+        PotStarted(
+            pot_number=2, dealer_id="B", participants=("A", "B", "C"), chips_now={"A": 24, "B": 24, "C": 24}, pot_chips=3
+        )
     )
     assert started.type == "pot_started"
     assert started.for_recipient(None)["participants"] == ["A", "B", "C"]
     assert started.for_recipient(None)["entry_fee_waived"] is False
+    assert started.for_recipient(None)["pot_chips"] == 3
 
     ended = translate(GameEnded(ranking=(("B", 30), ("A", 10))))
     assert ended.type == "game_ended"

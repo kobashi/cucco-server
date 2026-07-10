@@ -42,20 +42,34 @@ function update(mutator) {
 }
 
 // -- countdown ticking (display only; the server enforces the real deadline) --
-// Also clears prompts whose deadline has passed: the server never notifies a
+// Clears prompts whose deadline has passed: the server never notifies a
 // unicast-prompt timeout beyond turn_prompt (turn_timeout_consumed) and
 // cucco_window (silently drops to the next holder) -- without this, an
 // expired modal would keep overlaying whatever comes next.
+//
+// Countdown digits are updated IN PLACE via [data-deadline] spans rather than
+// through notify(): a full innerHTML re-render 4x/second tears down and
+// rebuilds every button while the user is trying to click it, which is what
+// made the UI feel unresponsive. notify() fires only on an actual state
+// change (a prompt expiring).
 setInterval(() => {
   const now = Date.now();
-  let changed = false;
+  let expired = false;
   for (const key of ["dealerReadyPrompt", "turnPrompt", "cuccoWindow", "continuePrompt"]) {
     if (state[key] && state[key].deadline <= now) {
       state[key] = null;
-      changed = true;
+      expired = true;
     }
   }
-  if (changed || state.dealerReadyPrompt || state.turnPrompt || state.cuccoWindow || state.continuePrompt) notify();
+  if (expired) {
+    notify();
+    return;
+  }
+  for (const el of document.querySelectorAll("[data-deadline]")) {
+    const remaining = Math.max(0, Math.ceil((Number(el.dataset.deadline) - now) / 1000));
+    const text = String(remaining);
+    if (el.textContent !== text) el.textContent = text;
+  }
 }, 250);
 
 // The server only sends `state_snapshot` to the session that just joined
@@ -157,10 +171,14 @@ const actions = {
 
   sendReady() {
     conn.send("ready", {});
+    update(() => (state.readySent = true));
   },
   sendDealerReady() {
     conn.send("dealer_ready", {});
-    update(() => (state.dealerReadyPrompt = null));
+    update(() => {
+      state.dealerReadyPrompt = null;
+      state.dozoSent = true;
+    });
   },
   sendCambio() {
     conn.send("cambio_declare", {});
@@ -213,6 +231,8 @@ function applySnapshot(snapshot) {
   state.table = snapshot;
   state.yourHand = snapshot.your_hand;
   state.currentTurnSeat = snapshot.current_turn_seat;
+  state.potChips = snapshot.pot_chips ?? 0;
+  state.firstActionSeen = (snapshot.declarations_this_deal ?? []).length > 0;
   const potRunning = snapshot.dealer_seat != null;
   if (state.playerType === "spectator") {
     state.screen = potRunning ? "table" : "waiting";
@@ -275,16 +295,18 @@ function handleEvent(type, p) {
         if (!state.table) return;
         state.table.dealer_seat = p.dealer_id;
         state.table.pot_number = p.pot_number;
+        state.table.deal_number = 0;
         state.table.deck_remaining_count = 44;
         state.table.discard_pile = [];
         state.table.provenance_map = {};
         state.table.declarations_this_deal = [];
         mergeChips(p.chips_now);
+        state.potChips = p.pot_chips ?? 0;
         state.lastDealResult = null;
         state.lastPotResult = null;
         state.lastDealOpened = null;
         state.screen = "table";
-        pushLog(state, `ポット ${p.pot_number} 開始(親: ${seatName(state, p.dealer_id)})`);
+        pushLog(state, `ポット ${p.pot_number} 開始(親: ${seatName(state, p.dealer_id)}、ポット${state.potChips}枚)`);
       });
       return;
 
@@ -298,6 +320,9 @@ function handleEvent(type, p) {
         state.disqualifiedThisDeal = false;
         state.disqualifiedIdsThisDeal = new Set();
         state.requiredChipsByPlayer = {};
+        state.pendingContinueIds = new Set();
+        state.dozoSent = false;
+        state.firstActionSeen = false;
         state._discardPileLenAtDealStart = state.table.discard_pile.length;
         state.lastDealOpened = null;
         state.lastDealResult = null;
@@ -331,6 +356,7 @@ function handleEvent(type, p) {
       // that follows for the affected player only carries timeout_sec.
       update(() => {
         state.requiredChipsByPlayer[p.player_id] = p.required_chips;
+        state.pendingContinueIds.add(p.player_id);
       });
       return;
 
@@ -348,6 +374,7 @@ function handleEvent(type, p) {
     case "turn_timeout_consumed":
       update(() => {
         if (!state.table) return;
+        state.firstActionSeen = true;
         state.table.declarations_this_deal.push({
           player_id: p.player_id,
           action: "no_change",
@@ -363,7 +390,10 @@ function handleEvent(type, p) {
       return;
 
     case "exchange_result":
-      update(() => handleExchangeResult(p));
+      update(() => {
+        state.firstActionSeen = true;
+        handleExchangeResult(p);
+      });
       return;
 
     case "deck_reshuffled":
@@ -379,6 +409,7 @@ function handleEvent(type, p) {
 
     case "cucco_declared":
       update(() => {
+        state.firstActionSeen = true;
         state.turnPrompt = null;
         state.cuccoWindow = null;
         pushLog(state, `${seatName(state, p.player_id)} がクク宣言!`);
@@ -420,6 +451,11 @@ function handleEvent(type, p) {
         if (!state.table) return;
         const seat = state.table.seats.find((s) => s.player_id === p.player_id);
         if (seat) seat.chips = p.chips_now;
+        state.pendingContinueIds.delete(p.player_id); // paying to stay answers the continue prompt
+        // Increment only; pot_started/deal_result/state_snapshot carry the
+        // absolute pot_chips and re-sync any drift.
+        state.potChips += p.amount ?? 0;
+        pushLog(state, `${seatName(state, p.player_id)} が ${p.amount} 枚をポットへ(計${state.potChips}枚)`);
       });
       return;
 
@@ -428,6 +464,7 @@ function handleEvent(type, p) {
         if (!state.table) return;
         const seat = state.table.seats.find((s) => s.player_id === p.player_id);
         if (seat) seat.in_current_pot = false;
+        state.pendingContinueIds.delete(p.player_id); // declining/insolvency also answers it
         pushLog(state, `${seatName(state, p.player_id)} がポットを抜けました(${p.reason})`);
       });
       return;
@@ -443,6 +480,7 @@ function handleEvent(type, p) {
       update(() => {
         state.lastDealResult = p;
         mergeChips(p.chips_now);
+        if (p.pot_chips !== undefined) state.potChips = p.pot_chips;
         if (state.table) {
           // Replace (not append to) this deal's slice of the pile with the
           // server's authoritative list -- it supersedes any live guesses
@@ -464,7 +502,13 @@ function handleEvent(type, p) {
       update(() => {
         state.lastPotResult = p;
         mergeChips(p.chips_now);
-        pushLog(state, p.result === "won" ? `${seatName(state, p.winner)} がポットを獲得!` : "このポットは持ち越しになりました");
+        if (p.result === "won") state.potChips = 0; // wiped_out keeps the carryover on the table
+        pushLog(
+          state,
+          p.result === "won"
+            ? `${seatName(state, p.winner)} が ${p.amount} 枚を獲得!`
+            : `このポット(${p.amount}枚)は次のポットへ持ち越しになりました`
+        );
       });
       return;
 

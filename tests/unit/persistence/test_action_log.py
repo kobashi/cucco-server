@@ -83,6 +83,7 @@ def test_write_event_serializes_nested_dict_and_bool_fields(tmp_path):
         "participants": ["A", "B", "C"],
         "chips_now": {"A": 10, "B": 0, "C": 20},
         "entry_fee_waived": True,
+        "pot_chips": 0,
     }
 
 
