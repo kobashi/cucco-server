@@ -27,10 +27,10 @@ export function render(el, state, actions) {
       ${isSpectator ? "" : renderHand(state)}
       ${renderDiscardPile(t)}
       ${renderDeclarations(t, state)}
-      ${renderDealOpened(state)}
-      ${renderDealResult(state)}
+      ${renderDealSummary(state)}
       ${renderPotResult(state, isSpectator)}
       ${isSpectator ? "" : renderActionArea(state, actions)}
+      ${renderPrevDealSummary(state)}
       ${renderLog(state)}
     </div>
     ${!isSpectator && state.cuccoWindow ? renderCuccoModal(state) : ""}
@@ -157,35 +157,92 @@ function renderDeclarations(t, state) {
   `;
 }
 
-function renderDealOpened(state) {
-  const o = state.lastDealOpened;
-  if (!o) return "";
-  return `
-    <section class="callout">
-      <h2>オープン</h2>
-      <ul>
-        ${Object.entries(o.hands)
-          .map(([pid, card]) => {
-            const elevated = o.elevated_joker_holders?.includes(pid);
-            return `<li>${esc(seatName(state, pid))}: ${esc(card)}${elevated ? " (最強扱い)" : ""}</li>`;
-          })
-          .join("")}
-      </ul>
-    </section>
-  `;
+const CAUSE_LABELS = {
+  received_joker: "道化を受け取った",
+  human_refusal: "人間に拒否された",
+  human_deck_draw: "山札から人間",
+  cat_refusal: "猫の効果",
+  cat_deck_draw: "山札から猫の効果",
+};
+
+// Per-player summary table shown at deal open/result: card, outcome,
+// payment, chips, and whether they stay for the next deal. Replaces the old
+// two prose callouts, which made players reconstruct the situation from the
+// log.
+function renderDealSummary(state) {
+  if (state.lastDealOpened || state.lastDealResult) {
+    return summaryTable(state, state.lastDealOpened, state.lastDealResult, state.disqualifiedInfo, null);
+  }
+  return "";
 }
 
-function renderDealResult(state) {
-  const r = state.lastDealResult;
-  if (!r) return "";
+// The previous deal's table, shown lower on the screen while the next deal
+// is already underway (the server deals again immediately, so this is the
+// only chance to actually read the result).
+function renderPrevDealSummary(state) {
+  if (state.lastDealOpened || state.lastDealResult) return ""; // live one is showing
+  const prev = state.prevDealSummary;
+  if (!prev) return "";
+  return summaryTable(state, prev.opened, prev.result, prev.disqualifiedInfo, prev.dealNumber);
+}
+
+function summaryTable(state, opened, result, disqualifiedInfo, prevDealNumber) {
+  const t = state.table;
+  const losers = new Set([...(opened?.losers ?? []), ...(result?.losers ?? [])]);
+  const leftPot = new Set(result?.left_pot ?? []);
+  const paid = result?.chips_paid ?? {};
+
+  const rows = t.seats.map((s) => {
+    const pid = s.player_id;
+    const dq = disqualifiedInfo[pid];
+    const openedCard = opened?.hands?.[pid];
+    const card = openedCard ?? dq?.card ?? null;
+    const elevated = opened?.elevated_joker_holders?.includes(pid);
+
+    let outcome;
+    if (dq) outcome = `途中失格(${CAUSE_LABELS[dq.cause] ?? dq.cause})`;
+    else if (losers.has(pid)) outcome = "敗者";
+    else if (openedCard !== undefined) outcome = "生存";
+    else if (!s.in_current_pot) outcome = "ポット外";
+    else outcome = "—";
+
+    let next;
+    if (!result) next = "";
+    else if (leftPot.has(pid)) next = "脱落";
+    else if (paid[pid] !== undefined) next = "復帰(継続)";
+    else if (!s.in_current_pot) next = "—";
+    else next = "続行";
+
+    const cls = [];
+    if (dq || losers.has(pid)) cls.push("row-loser");
+    if (!s.in_current_pot) cls.push("row-out");
+    return `
+      <tr class="${cls.join(" ")}">
+        <td>${esc(s.name)}${pid === state.playerId ? " (あなた)" : ""}</td>
+        <td class="cell-card">${card ? esc(card) + (elevated ? " ↑最強扱い" : "") : '<span class="muted">非公開</span>'}</td>
+        <td>${esc(outcome)}</td>
+        <td>${paid[pid] !== undefined ? `${paid[pid]}枚` : ""}</td>
+        <td>${s.chips}枚</td>
+        <td>${esc(next)}</td>
+      </tr>`;
+  });
+
+  const isPrev = prevDealNumber != null;
+  const title = isPrev
+    ? `前のディール(ディール${prevDealNumber})の結果`
+    : result
+      ? "ディール結果"
+      : "オープン";
   return `
-    <section class="callout">
-      <h2>ディール結果</h2>
-      <p>敗者: ${r.losers.length ? r.losers.map((id) => esc(seatName(state, id))).join(", ") : "なし"}</p>
-      ${Object.entries(r.chips_paid)
-        .map(([pid, amt]) => `<p>${esc(seatName(state, pid))} が ${amt} チップ支払い</p>`)
-        .join("")}
-      ${r.left_pot.length ? `<p>脱落: ${r.left_pot.map((id) => esc(seatName(state, id))).join(", ")}</p>` : ""}
+    <section class="callout ${isPrev ? "prev-summary" : ""}">
+      <h2>${esc(title)}</h2>
+      <div class="summary-scroll">
+        <table class="deal-summary">
+          <thead><tr><th>プレイヤー</th><th>カード</th><th>結果</th><th>支払い</th><th>所持チップ</th><th>次ディール</th></tr></thead>
+          <tbody>${rows.join("")}</tbody>
+        </table>
+      </div>
+      ${result && !isPrev ? `<p class="muted">ポット: ${result.pot_chips ?? state.potChips}枚</p>` : ""}
     </section>
   `;
 }

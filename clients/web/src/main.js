@@ -305,6 +305,16 @@ function handleEvent(type, p) {
     case "pot_started":
       update(() => {
         if (!state.table) return;
+        if (state.lastDealOpened || state.lastDealResult) {
+          // Keep the pot's final deal reviewable into the next pot -- its
+          // deal_started stash never fires because we clear the fields here.
+          state.prevDealSummary = {
+            opened: state.lastDealOpened,
+            result: state.lastDealResult,
+            disqualifiedInfo: state.disqualifiedInfo,
+            dealNumber: state.table.deal_number,
+          };
+        }
         state.table.dealer_seat = p.dealer_id;
         state.table.pot_number = p.pot_number;
         state.table.deal_number = 0;
@@ -325,12 +335,21 @@ function handleEvent(type, p) {
     case "deal_started":
       update(() => {
         if (!state.table) return;
+        if (state.lastDealOpened || state.lastDealResult) {
+          state.prevDealSummary = {
+            opened: state.lastDealOpened,
+            result: state.lastDealResult,
+            disqualifiedInfo: state.disqualifiedInfo,
+            dealNumber: state.table.deal_number,
+          };
+        }
         state.yourHand = p.your_hand;
         state.table.deck_remaining_count = p.deck_remaining_count;
         state.table.declarations_this_deal = [];
         state.table.deal_number = (state.table.deal_number || 0) + 1;
         state.disqualifiedThisDeal = false;
         state.disqualifiedIdsThisDeal = new Set();
+        state.disqualifiedInfo = {};
         state.requiredChipsByPlayer = {};
         state.pendingContinueIds = new Set();
         state.dozoSent = false;
@@ -432,6 +451,7 @@ function handleEvent(type, p) {
       update(() => {
         pushLog(state, `${seatName(state, p.player_id)} が失格(${p.cause})`);
         state.disqualifiedIdsThisDeal.add(p.player_id);
+        state.disqualifiedInfo[p.player_id] = { cause: p.cause, card: p.card ?? null };
         if (p.card && state.table) {
           // Immediate-disclosure setting: this card is already public --
           // reflect it in the live discard pile now rather than waiting for

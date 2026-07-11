@@ -24,6 +24,7 @@ export function createStore() {
     yourHand: null,
     disqualifiedThisDeal: false,
     disqualifiedIdsThisDeal: new Set(), // every player disqualified so far this deal, for turn-order inference
+    disqualifiedInfo: {}, // player_id -> {cause, card|null} this deal, for the deal-summary table
     requiredChipsByPlayer: {}, // player_id -> required_chips, from continue_prompted (broadcast, precedes the unicast continue_prompt)
     pendingContinueIds: new Set(), // players whose 続行/離脱 answer we're waiting on (continue_prompted -> chips_paid/player_left_pot)
     readySent: false, // "準備完了" already clicked (survives the waiting-room resync re-render)
@@ -42,6 +43,10 @@ export function createStore() {
     // last aggregate results, for the result screens
     lastDealOpened: null,
     lastDealResult: null,
+    // The previous deal's summary, kept visible through the next deal: the
+    // server starts dealing again immediately after deal_result, so without
+    // this the result table would flash for milliseconds at most.
+    prevDealSummary: null, // {opened, result, disqualifiedInfo, dealNumber}
     lastPotResult: null,
     gameEnded: null,
 

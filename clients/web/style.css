@@ -151,6 +151,15 @@ button:disabled { opacity: 0.5; cursor: default; }
 
 .ranking { font-size: 1.1rem; }
 
+.summary-scroll { overflow-x: auto; }
+.deal-summary { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+.deal-summary th, .deal-summary td { padding: 0.35rem 0.6rem; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.deal-summary .cell-card { font-weight: bold; }
+.deal-summary .row-loser td { color: var(--urgent); }
+.deal-summary .row-out td { opacity: 0.55; }
+.prev-summary { opacity: 0.85; }
+.prev-summary h2 { font-size: 1rem; color: var(--muted); }
+
 #toast {
   position: fixed;
   left: 50%;
