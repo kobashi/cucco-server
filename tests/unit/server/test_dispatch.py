@@ -373,6 +373,37 @@ async def test_start_pot_before_enough_players_ready_is_rejected_without_clearin
 
 
 @pytest.mark.asyncio
+async def test_stale_disconnect_after_reconnect_does_not_mark_the_session_disconnected():
+    # Page-reload race: the new connection's session_token rebind can finish
+    # BEFORE the old connection's close is detected (tunnel close lag). The
+    # old handler's on_disconnect must not flip `connected` back to False on
+    # a session that has already moved to a newer connection -- that silently
+    # mutes all sends to the player and makes the runner treat them as gone.
+    registry = TableRegistry()
+    old_handler = ConnectionHandler(FakeConnection(), registry)
+    await old_handler.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await old_handler.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in old_handler.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await old_handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    token = old_handler.session.session_token
+
+    # Reload: a brand-new connection rebinds the session via the token.
+    new_handler = ConnectionHandler(FakeConnection(), registry)
+    await new_handler.handle_message(build_envelope("join_table", {"room_id": room_id, "session_token": token}))
+    session = new_handler.session
+    assert session is old_handler.session  # same PlayerSession, rebound
+    assert session.connected is True
+
+    # The OLD connection's close arrives late -- must be a no-op now.
+    await old_handler.on_disconnect()
+    assert session.connected is True
+
+    # A close of the CURRENT connection must still mark it disconnected.
+    await new_handler.on_disconnect()
+    assert session.connected is False
+
+
+@pytest.mark.asyncio
 async def test_state_snapshot_includes_creator_id_and_ready_ids():
     registry = TableRegistry()
     creator = ConnectionHandler(FakeConnection(), registry)

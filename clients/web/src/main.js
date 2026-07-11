@@ -33,6 +33,15 @@ function render() {
   const screens = { name: lobby, lobby: lobby, create: lobby, join: lobby, waiting: waitingRoom, table, result: table, ended: result };
   const view = screens[state.screen] ?? lobby;
   view.render(appEl, state, actions);
+  if (state.connectionStatus === "reconnecting" || state.connectionStatus === "disconnected") {
+    const banner = document.createElement("div");
+    banner.className = "conn-banner";
+    banner.textContent =
+      state.connectionStatus === "reconnecting"
+        ? "サーバーとの接続が切れました — 再接続しています…"
+        : "サーバーに接続できません。ページを再読み込みしてください。";
+    appEl.prepend(banner);
+  }
 }
 subscribe(render);
 

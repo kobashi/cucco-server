@@ -325,5 +325,14 @@ class ConnectionHandler:
         self.session.inbox.put_nowait(action)
 
     async def on_disconnect(self) -> None:
-        if self.session is not None:
+        # Only mark the session disconnected if it is still bound to THIS
+        # handler's connection. On a page reload the browser's new connection
+        # can complete its session_token rebind (join_table) before the old
+        # connection's close is even detected -- especially through a tunnel,
+        # where the close can lag by seconds. Without this identity check the
+        # stale close then flips `connected` back to False on the freshly
+        # rebound session, silently muting all sends to that player and
+        # making the runner treat them as gone (auto no-change, auto-decline,
+        # force_end once fewer than 2 players look connected).
+        if self.session is not None and self.session.connection is self.connection:
             self.session.connected = False
