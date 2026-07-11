@@ -1,5 +1,6 @@
 import { esc, secondsLeft } from "../utils.js";
 import { seatName } from "../state.js";
+import { RANK_ORDER } from "../cards.js";
 
 // Countdown digits live in [data-deadline] spans so the ticker in main.js can
 // update them in place -- re-rendering the whole screen 4x/second to move a
@@ -120,22 +121,20 @@ function renderHand(state) {
 
 function renderDiscardPile(t) {
   if (!t.discard_pile?.length) return `<section><h2>捨て札</h2><p class="muted">まだありません</p></section>`;
+  // Original holder is deliberately omitted here (per-card provenance stays
+  // in provenance_map for the 猫 effect, not this list) -- grouped counts
+  // sorted by rank are what's actually useful for counting cards.
+  const counts = new Map();
+  for (const d of t.discard_pile) counts.set(d.card, (counts.get(d.card) ?? 0) + 1);
+  const sorted = [...counts.entries()].sort(([a], [b]) => RANK_ORDER.indexOf(a) - RANK_ORDER.indexOf(b));
   return `
     <section>
-      <h2>捨て札</h2>
+      <h2>捨て札(${t.discard_pile.length}枚)</h2>
       <ul class="discard-list">
-        ${t.discard_pile
-          .map((d) => {
-            return `<li>${esc(d.card)}${d.original_holder ? ` <span class="muted">(元の持ち主: ${esc(seatIdToName(t, d.original_holder))})</span>` : ""}</li>`;
-          })
-          .join("")}
+        ${sorted.map(([card, count]) => `<li>${esc(card)}${count > 1 ? ` <span class="muted">× ${count}</span>` : ""}</li>`).join("")}
       </ul>
     </section>
   `;
-}
-
-function seatIdToName(t, id) {
-  return t.seats.find((s) => s.player_id === id)?.name ?? id;
 }
 
 function renderDeclarations(t, state) {
