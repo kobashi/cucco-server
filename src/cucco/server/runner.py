@@ -46,6 +46,8 @@ def build_state_snapshot(table: Table, recipient_id: str | None) -> dict:
         "table_id": table.room_id,
         "mode": table.config.mode,
         "spectators": [s.player_id for s in table.spectators()],
+        "creator_id": table.creator_id,
+        "ready_ids": sorted(table.ready_ids),
     }
     if game is None:
         base.update(

@@ -71,6 +71,7 @@
 | `cucco_declare` | クク札所持者 | 自分の手番かどうかに関わらず宣言可能。ディール即終了 | `{}` |
 | `cucco_pass` | クク札所持者 | `cucco_window`中に「今は宣言しない」ことを明示的に即答する(タイムアウトを待たずに次へ進めるため) | `{}` |
 | `continue_declare` | 子供の時間の敗者 | 規定チップを払って次ディールに参加継続するか、辞退するか | `{continue: boolean}` |
+| `start_pot` | 卓の作成者のみ | 準備完了済みの参加者だけで今すぐポットを開始する(最小人数以上必要)。全員が`ready`するのを待たずに開始できる | `{}` |
 
 補足: 交換相手は常に「自分の右隣のプレイヤー」に固定されるため、`cambio_declare`に対象プレイヤーの指定は不要。馬・家の開示方法はゲーム開始時の設定(`create_table`のpayload)で決まるため、都度の選択アクションは存在しない。
 
@@ -138,6 +139,8 @@
     { "player_id": "string", "name": "string", "player_type": "human | ai", "chips": "number", "in_current_pot": "boolean", "connected": "boolean" }
   ],
   "spectators": ["player_id", "..."],
+  "creator_id": "player_id (卓の作成者。start_potを送信できるのはこのプレイヤーのみ)",
+  "ready_ids": ["player_id", "... (現時点でreadyを宣言済みの参加者一覧)"],
   "dealer_seat": "player_id",
   "current_turn_seat": "player_id | null",
   "pot_number": "number",

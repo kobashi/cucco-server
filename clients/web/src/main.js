@@ -173,6 +173,9 @@ const actions = {
     conn.send("ready", {});
     update(() => (state.readySent = true));
   },
+  sendStartPot() {
+    conn.send("start_pot", {});
+  },
   sendDealerReady() {
     conn.send("dealer_ready", {});
     update(() => {

@@ -94,6 +94,11 @@ class ContinueDeclare:
     continue_playing: bool
 
 
+@dataclass(frozen=True)
+class StartPot:
+    pass
+
+
 Action = Union[
     Identify,
     CreateTable,
@@ -105,6 +110,7 @@ Action = Union[
     CuccoDeclare,
     CuccoPass,
     ContinueDeclare,
+    StartPot,
 ]
 
 
@@ -245,6 +251,7 @@ _PARSERS: dict[str, Callable[[dict], Action]] = {
     "cucco_declare": lambda payload: CuccoDeclare(),
     "cucco_pass": lambda payload: CuccoPass(),
     "continue_declare": _parse_continue_declare,
+    "start_pot": lambda payload: StartPot(),
 }
 
 

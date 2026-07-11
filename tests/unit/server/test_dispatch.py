@@ -12,7 +12,7 @@ from cucco.protocol.actions import CuccoPass, DealerReady, NoChangeDeclare
 from cucco.protocol.envelope import build_envelope
 from cucco.server.dispatch import ConnectionHandler, _start_game
 from cucco.server.registry import TableRegistry
-from cucco.server.runner import TableRunner
+from cucco.server.runner import TableRunner, build_state_snapshot
 from cucco.server.session import PlayerSession
 from cucco.server.table import Table
 
@@ -295,6 +295,102 @@ async def test_ready_after_a_failed_timeout_retry_rearms_a_fresh_watchdog():
     assert table.ready_deadline_task is not None
     assert table.ready_deadline_task is not first_watchdog
     table.ready_deadline_task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_creator_can_start_pot_early_once_enough_players_are_ready():
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    p2 = ConnectionHandler(FakeConnection(), registry)
+    await p2.handle_message(build_envelope("identify", {"name": "Bob", "player_type": "human"}))
+    await p2.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    p3 = ConnectionHandler(FakeConnection(), registry)
+    await p3.handle_message(build_envelope("identify", {"name": "Carol", "player_type": "human"}))
+    await p3.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    await creator.handle_message(build_envelope("ready", {}))
+    await p2.handle_message(build_envelope("ready", {}))
+    # p3 never readies
+
+    await creator.handle_message(build_envelope("start_pot", {}))
+    table = registry.get(room_id)
+    assert table.game is not None
+    assert set(table.game.seats) == {creator.session.player_id, p2.session.player_id}
+
+
+@pytest.mark.asyncio
+async def test_non_creator_cannot_start_pot():
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    p2 = ConnectionHandler(FakeConnection(), registry)
+    await p2.handle_message(build_envelope("identify", {"name": "Bob", "player_type": "human"}))
+    await p2.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    await creator.handle_message(build_envelope("ready", {}))
+    await p2.handle_message(build_envelope("ready", {}))
+
+    await p2.handle_message(build_envelope("start_pot", {}))
+    assert p2.connection.sent[-1]["type"] == "action_rejected"
+
+
+@pytest.mark.asyncio
+async def test_start_pot_before_enough_players_ready_is_rejected_without_clearing_ready_ids():
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    p2 = ConnectionHandler(FakeConnection(), registry)
+    await p2.handle_message(build_envelope("identify", {"name": "Bob", "player_type": "human"}))
+    await p2.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    await creator.handle_message(build_envelope("ready", {}))
+
+    await creator.handle_message(build_envelope("start_pot", {}))
+    assert creator.connection.sent[-1]["type"] == "action_rejected"
+
+    table = registry.get(room_id)
+    assert table.game is None
+    assert creator.session.player_id in table.ready_ids
+
+    # a subsequent successful start_pot still works once enough are ready
+    await p2.handle_message(build_envelope("ready", {}))
+    await creator.handle_message(build_envelope("start_pot", {}))
+    assert table.game is not None
+
+
+@pytest.mark.asyncio
+async def test_state_snapshot_includes_creator_id_and_ready_ids():
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    p2 = ConnectionHandler(FakeConnection(), registry)
+    await p2.handle_message(build_envelope("identify", {"name": "Bob", "player_type": "human"}))
+    await p2.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    await creator.handle_message(build_envelope("ready", {}))
+
+    table = registry.get(room_id)
+    snapshot = build_state_snapshot(table, p2.session.player_id)
+    assert snapshot["creator_id"] == creator.session.player_id
+    assert snapshot["ready_ids"] == [creator.session.player_id]
 
 
 @pytest.mark.asyncio

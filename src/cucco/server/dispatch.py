@@ -35,6 +35,7 @@ from cucco.protocol.actions import (
     JoinTable,
     NoChangeDeclare,
     Ready,
+    StartPot,
     create_table_to_config,
     folded_name,
     parse_action,
@@ -48,11 +49,14 @@ from cucco.server.table import Table
 
 QUEUE_ROUTED = (DealerReady, CambioDeclare, NoChangeDeclare, CuccoDeclare, CuccoPass, ContinueDeclare)
 
-# A generous fixed window for players to join and declare `ready` before the
-# first pot starts anyway (docs/protocol/design.md: "ready"のタイムアウトは
-# そのポットに参加しない扱いになる). Not tied to turn_timeout_* since this
-# is a lobby-wide wait, not a single player's per-action budget.
-READY_TIMEOUT_SEC = 60.0
+# A generous safety-net window for players to join and declare `ready`
+# before the first pot starts anyway (docs/protocol/design.md: "ready"の
+# タイムアウトはそのポットに参加しない扱いになる). Not tied to turn_timeout_*
+# since this is a lobby-wide wait, not a single player's per-action budget.
+# The table creator can also force an earlier start via `start_pot` once
+# enough players are ready, so this is a fallback rather than the primary
+# mechanism -- hence the generous 10-minute window.
+READY_TIMEOUT_SEC = 600.0
 
 logger = logging.getLogger("cucco.server.dispatch")
 
@@ -179,6 +183,8 @@ class ConnectionHandler:
                 await self._handle_join_table(action)
             elif isinstance(action, Ready):
                 await self._handle_ready()
+            elif isinstance(action, StartPot):
+                await self._handle_start_pot()
             elif isinstance(action, QUEUE_ROUTED):
                 await self._route_to_inbox(action)
             else:
@@ -294,6 +300,24 @@ class ConnectionHandler:
         if len(table.ready_ids) >= max(table.min_players, len(_eligible_participant_ids(table))):
             table.ready_deadline_task.cancel()
             await _start_game(table)
+
+    async def _handle_start_pot(self) -> None:
+        if self.session is None or self.table is None:
+            raise ProtocolError("must join_table before start_pot")
+        table = self.table
+        if table.creator_id != self.session.player_id:
+            raise ProtocolError("only the table creator can start the pot")
+        if table.config.mode != "normal":
+            raise ProtocolError("start_pot is only available on normal-mode tables")
+        if table.game is not None or table.evaluation_started:
+            return  # already started; no-op
+        participants = [pid for pid in _eligible_participant_ids(table) if pid in table.ready_ids]
+        if len(participants) < table.min_players:
+            raise ProtocolError(f"not enough players are ready yet (need at least {table.min_players})")
+        if table.ready_deadline_task is not None:
+            table.ready_deadline_task.cancel()
+            table.ready_deadline_task = None
+        await _start_game(table)
 
     async def _route_to_inbox(self, action) -> None:
         if self.session is None or self.table is None:
