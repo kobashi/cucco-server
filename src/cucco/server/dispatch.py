@@ -134,7 +134,15 @@ async def _run_table_safely(table: Table, action_log: ActionLogWriter | None = N
     leave the table permanently hung with no explanation to its players."""
     try:
         await TableRunner(table, action_log=action_log, results_store=table.results_store).run()
-        table.finished = True
+        # A normal-mode room outlives its game: reset to the waiting state so
+        # the same room (same room_id, same and/or new players) can ready up
+        # and start another game with fresh chips, instead of becoming a
+        # zombie that silently swallows every `ready`.
+        table.game = None
+        table.ready_ids.clear()
+        if table.ready_deadline_task is not None:
+            table.ready_deadline_task.cancel()
+            table.ready_deadline_task = None
     except Exception:
         logger.exception("TableRunner crashed for table %s", table.room_id)
         await _notify_table_crashed(table)
@@ -323,7 +331,7 @@ class ConnectionHandler:
         if self.session is None or self.table is None:
             raise ProtocolError("must join_table before start_pot")
         table = self.table
-        if table.creator_id != self.session.player_id:
+        if table.effective_creator_id() != self.session.player_id:
             raise ProtocolError("only the table creator can start the pot")
         if table.config.mode != "normal":
             raise ProtocolError("start_pot is only available on normal-mode tables")

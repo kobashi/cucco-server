@@ -57,3 +57,21 @@ class Table:
 
     def get(self, player_id: str) -> PlayerSession | None:
         return self.sessions.get(player_id)
+
+    def effective_creator_id(self) -> str:
+        """Who currently holds the organizer role (start_pot rights).
+
+        The original creator, unless they are gone/disconnected -- then the
+        earliest-joined connected player (dict insertion order = join order)
+        inherits it, so a room is never stuck unable to start because its
+        creator left. The role snaps back to the creator when they return;
+        evaluated lazily on demand so a brief reload doesn't permanently
+        bounce the role around.
+        """
+        creator = self.sessions.get(self.creator_id)
+        if creator is not None and creator.connected:
+            return self.creator_id
+        for session in self.players():
+            if session.connected:
+                return session.player_id
+        return self.creator_id

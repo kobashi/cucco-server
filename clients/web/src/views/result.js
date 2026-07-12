@@ -11,8 +11,12 @@ export function render(el, state, actions) {
           .map(([pid, chips]) => `<li>${esc(seatName(state, pid))} — ${chips} チップ</li>`)
           .join("")}
       </ol>
-      <button id="lobby-btn">ロビーに戻る</button>
+      <p class="muted">この部屋はそのまま残っています。同じメンバー(途中参加も可)で
+        もう一度遊ぶか、部屋を出るか選んでください。チップは新しいゲームでリセットされます。</p>
+      <button id="stay-btn">この部屋で続けて遊ぶ</button>
+      <button id="leave-btn" class="secondary">部屋を出る</button>
     </div>
   `;
-  el.querySelector("#lobby-btn").addEventListener("click", () => actions.backToLobby());
+  el.querySelector("#stay-btn").addEventListener("click", () => actions.stayInRoom());
+  el.querySelector("#leave-btn").addEventListener("click", () => actions.leaveRoom());
 }

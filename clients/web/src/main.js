@@ -223,12 +223,31 @@ const actions = {
     update(() => (state.continuePrompt = null));
   },
 
-  backToLobby() {
+  // Stay at the same table after game_ended: the server has already reset
+  // the room to its waiting state, so re-fetch the roster and re-enter the
+  // ready/start flow (chips start fresh; newcomers can join with the same
+  // room ID meanwhile).
+  stayInRoom() {
+    update(() => {
+      state.gameEnded = null;
+      state.readySent = false;
+      state.lastPotResult = null;
+      state.lastDealResult = null;
+      state.lastDealOpened = null;
+      state.prevDealSummary = null;
+      state.screen = "waiting";
+    });
+    actions.resync();
+  },
+
+  leaveRoom() {
+    clearSession();
     update(() => {
       state.screen = "lobby";
       state.table = null;
       state.roomId = null;
       state.gameEnded = null;
+      state.savedSession = null;
     });
   },
 
@@ -283,10 +302,10 @@ function applySnapshot(snapshot) {
   state.firstActionSeen = (snapshot.declarations_this_deal ?? []).length > 0;
   if (snapshot.game_finished) {
     // The game_ended broadcast can predate our reconnect -- the snapshot is
-    // then our only notice that this table is over.
+    // then our only notice that this table is over. The session is kept:
+    // the room lives on for another game (the ended screen offers 続ける).
     state.gameEnded = { ranking: snapshot.final_ranking ?? [] };
     state.screen = "ended";
-    clearSession();
     return;
   }
   const potRunning = snapshot.dealer_seat != null;
@@ -587,7 +606,9 @@ function handleEvent(type, p) {
       update(() => {
         state.gameEnded = p;
         state.screen = "ended";
-        clearSession();
+        // Session deliberately kept: the room resets server-side and the
+        // ended screen offers 続ける (another game at the same table).
+        state.readySent = false;
       });
       return;
 

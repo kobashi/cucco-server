@@ -53,7 +53,10 @@ def build_state_snapshot(table: Table, recipient_id: str | None) -> dict:
         "table_id": table.room_id,
         "mode": table.config.mode,
         "spectators": [s.player_id for s in table.spectators()],
-        "creator_id": table.creator_id,
+        # The EFFECTIVE organizer: falls to the earliest-joined connected
+        # player while the original creator is gone (Table.effective_creator_id),
+        # so clients always render a working start button somewhere.
+        "creator_id": table.effective_creator_id(),
         "ready_ids": sorted(table.ready_ids),
         # A reconnect can land AFTER game_ended was broadcast (e.g. the game
         # force-ended while this player was mid-reload); without these the
