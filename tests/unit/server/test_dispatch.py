@@ -429,6 +429,87 @@ async def test_stale_disconnect_after_reconnect_does_not_mark_the_session_discon
 
 
 @pytest.mark.asyncio
+async def test_reconnect_resends_the_outstanding_prompt_with_remaining_time():
+    # A player who reloads mid-turn lost the prompt envelope with their old
+    # connection; the rebind must re-send it (with the remaining seconds) or
+    # they sit promptless until the server times them out.
+    registry = TableRegistry()
+    handler = ConnectionHandler(FakeConnection(), registry)
+    await handler.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await handler.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in handler.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    session = handler.session
+    table = registry.get(room_id)
+
+    from cucco.protocol.actions import CambioDeclare as _Cambio, NoChangeDeclare as _NoChange
+    from cucco.server.runner import TableRunner as _Runner
+
+    runner = _Runner(table)
+    prompt_task = asyncio.create_task(runner._prompt(session, "turn", (_Cambio, _NoChange)))
+    await asyncio.sleep(0.01)  # let the prompt send and register itself
+    assert session.outstanding_prompt is not None
+
+    reconnecting = ConnectionHandler(FakeConnection(), registry)
+    await reconnecting.handle_message(
+        build_envelope("join_table", {"room_id": room_id, "session_token": session.session_token})
+    )
+    resent = [m for m in reconnecting.connection.sent if m["type"] == "turn_prompt"]
+    assert len(resent) == 1
+    assert 0 < resent[0]["payload"]["timeout_sec"] <= 30.0
+
+    session.inbox.put_nowait(_NoChange())
+    action = await prompt_task
+    assert isinstance(action, _NoChange)
+    assert session.outstanding_prompt is None  # cleared once the prompt resolves
+
+
+@pytest.mark.asyncio
+async def test_pot_start_waits_for_a_reconnecting_player_instead_of_force_ending(monkeypatch):
+    # A reload spanning a pot boundary used to force_end the game instantly
+    # (connected_count < 2 with zero grace); the reconnect then landed on an
+    # already-finished game.
+    import cucco.server.runner as runner_module
+
+    monkeypatch.setattr(runner_module, "RECONNECT_GRACE_SEC", 1.0)
+    table = Table(room_id="ABC123", config=GameConfig(), creator_id="p1")
+    for pid in ("p1", "p2"):
+        table.add_session(PlayerSession(player_id=pid, name=pid, player_type="ai", session_token=pid, connection=FakeConnection()))
+    table.get("p2").connected = False  # mid-reload at pot start
+
+    import random as _random
+
+    from cucco.domain.pot import Pot
+
+    pot = Pot(["p1", "p2"], "p1", {"p1": 24, "p2": 24}, table.config, _random.Random(0))
+    runner = TableRunner(table)
+
+    async def reconnect_soon():
+        await asyncio.sleep(0.2)
+        table.get("p2").connected = True
+
+    task = asyncio.create_task(reconnect_soon())
+    await runner._await_reconnections(pot)
+    await task
+    assert runner._connected_count(pot.active_participants()) == 2
+
+
+@pytest.mark.asyncio
+async def test_snapshot_reports_a_finished_game_to_late_reconnects():
+    table = Table(room_id="ABC123", config=GameConfig(), creator_id="p1")
+    for pid in ("p1", "p2"):
+        table.add_session(PlayerSession(player_id=pid, name=pid, player_type="ai", session_token=pid, connection=FakeConnection()))
+    table.game = Game(["p1", "p2"], table.config, random.Random(0))
+    list(table.game.start_first_pot())
+    table.game.force_end()
+
+    snapshot = build_state_snapshot(table, "p1")
+    assert snapshot["game_finished"] is True
+    assert snapshot["final_ranking"] is not None
+    assert {pid for pid, _ in snapshot["final_ranking"]} == {"p1", "p2"}
+
+
+@pytest.mark.asyncio
 async def test_state_snapshot_includes_creator_id_and_ready_ids():
     registry = TableRegistry()
     creator = ConnectionHandler(FakeConnection(), registry)
@@ -450,7 +531,10 @@ async def test_state_snapshot_includes_creator_id_and_ready_ids():
 
 
 @pytest.mark.asyncio
-async def test_force_end_fires_when_too_few_connected_players_remain_to_start_a_pot():
+async def test_force_end_fires_when_too_few_connected_players_remain_to_start_a_pot(monkeypatch):
+    import cucco.server.runner as runner_module
+
+    monkeypatch.setattr(runner_module, "RECONNECT_GRACE_SEC", 0.05)  # don't wait the real 60s grace in a test
     config = GameConfig()
     table = Table(room_id="ABC123", config=config, creator_id="p1")
     conns = {pid: FakeConnection() for pid in ("p1", "p2")}

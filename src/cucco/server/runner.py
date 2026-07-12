@@ -39,6 +39,13 @@ from cucco.server.timers import timeout_for
 
 logger = logging.getLogger("cucco.server.runner")
 
+# How long a pot start waits for disconnected players to come back before
+# force-ending the game for lack of connected players. A page reload through
+# the tunnel can easily span a pot boundary; without this grace the game
+# dies the instant a reload straddles it (the reconnect then lands on an
+# already-finished game).
+RECONNECT_GRACE_SEC = 60.0
+
 
 def build_state_snapshot(table: Table, recipient_id: str | None) -> dict:
     game = table.game
@@ -48,6 +55,15 @@ def build_state_snapshot(table: Table, recipient_id: str | None) -> dict:
         "spectators": [s.player_id for s in table.spectators()],
         "creator_id": table.creator_id,
         "ready_ids": sorted(table.ready_ids),
+        # A reconnect can land AFTER game_ended was broadcast (e.g. the game
+        # force-ended while this player was mid-reload); without these the
+        # rejoining client would show a live-looking table forever.
+        "game_finished": game is not None and game.is_finished,
+        "final_ranking": (
+            [[pid, chips] for pid, chips in game.final_ranking]
+            if game is not None and game.final_ranking is not None
+            else None
+        ),
     }
     if game is None:
         base.update(
@@ -201,23 +217,31 @@ class TableRunner:
         timeout = timeout_for(self.table.config, prompt_type, session.player_type)
         payload = dict(extra_payload or {})
         payload["timeout_sec"] = timeout
-        await self._send_to(session, self._WIRE_EVENT_TYPE[prompt_type], payload)
-
+        wire_type = self._WIRE_EVENT_TYPE[prompt_type]
         deadline = asyncio.get_event_loop().time() + timeout
-        while True:
-            remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:
-                return None
-            try:
-                action = await asyncio.wait_for(session.inbox.get(), timeout=remaining)
-            except asyncio.TimeoutError:
-                return None
-            if isinstance(action, expected_types):
-                return action
-            if isinstance(action, (CuccoDeclare, CuccoPass)):
-                continue
-            expected_names = ", ".join(t.__name__ for t in expected_types)
-            await self._reject(session, f"expected one of [{expected_names}], got {type(action).__name__}")
+        # Published so a reconnect (dispatch._handle_join_table) can re-send
+        # this prompt with the remaining time -- the original envelope went
+        # to a connection that may be dead by the time the player is back.
+        session.outstanding_prompt = {"type": wire_type, "payload": payload, "deadline": deadline}
+        try:
+            await self._send_to(session, wire_type, payload)
+
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    return None
+                try:
+                    action = await asyncio.wait_for(session.inbox.get(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    return None
+                if isinstance(action, expected_types):
+                    return action
+                if isinstance(action, (CuccoDeclare, CuccoPass)):
+                    continue
+                expected_names = ", ".join(t.__name__ for t in expected_types)
+                await self._reject(session, f"expected one of [{expected_names}], got {type(action).__name__}")
+        finally:
+            session.outstanding_prompt = None
 
     async def _reject(self, session: PlayerSession, reason: str) -> None:
         if session.is_ai():
@@ -281,6 +305,8 @@ class TableRunner:
     async def _run_pot(self, game: Game) -> None:
         pot = game.current_pot
         assert pot is not None
+        if self._connected_count(pot.active_participants()) < 2:
+            await self._await_reconnections(pot)
         if self._connected_count(pot.active_participants()) < 2:
             # Not enough live connections left to run a deal -- end the game
             # rather than hang forever waiting on players who won't respond.
@@ -392,6 +418,17 @@ class TableRunner:
             ],
         }
         await self._broadcast("deal_result", lambda pid: payload)
+
+    async def _await_reconnections(self, pot: Pot) -> None:
+        # Evaluation mode has no humans to wait for; a dead AI is a bug in
+        # that AI, not something to stall the whole run over.
+        if self.table.config.mode == "evaluation":
+            return
+        deadline = asyncio.get_event_loop().time() + RECONNECT_GRACE_SEC
+        while asyncio.get_event_loop().time() < deadline:
+            if self._connected_count(pot.active_participants()) >= 2:
+                return
+            await asyncio.sleep(1.0)
 
     async def _result_pause(self) -> None:
         # Evaluation mode explicitly omits human-pacing waits

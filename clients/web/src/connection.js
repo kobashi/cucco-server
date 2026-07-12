@@ -4,7 +4,10 @@
 // the Python reference client doesn't need (it's not a long-lived human UI).
 
 const PROTOCOL_VERSION = "1.0";
-const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 4000, 4000]; // fixed short backoff, max 5 tries
+// Backoff caps at the last value and never gives up: a tunnel blip or a
+// laptop waking from sleep routinely outlasts any fixed retry budget, and a
+// client that has quietly stopped retrying looks identical to a working one.
+const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000];
 
 export class CuccoConnection extends EventTarget {
   constructor(url) {
@@ -54,11 +57,7 @@ export class CuccoConnection extends EventTarget {
   }
 
   _scheduleReconnect() {
-    if (this._reconnectAttempt >= RECONNECT_DELAYS_MS.length) {
-      this.dispatchEvent(new CustomEvent("reconnect_failed"));
-      return;
-    }
-    const delay = RECONNECT_DELAYS_MS[this._reconnectAttempt];
+    const delay = RECONNECT_DELAYS_MS[Math.min(this._reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)];
     this._reconnectAttempt += 1;
     this.dispatchEvent(new CustomEvent("reconnecting", { detail: { attempt: this._reconnectAttempt, delay } }));
     setTimeout(() => this.connect(), delay);

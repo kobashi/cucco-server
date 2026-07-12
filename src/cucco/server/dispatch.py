@@ -248,6 +248,7 @@ class ConnectionHandler:
             existing.connected = True
             self.session = existing
             await self._send_raw("state_snapshot", build_state_snapshot(table, existing.player_id))
+            await self._resend_outstanding_prompt(existing)
             return
 
         if self.session is None:
@@ -275,6 +276,23 @@ class ConnectionHandler:
         self.session.room_id = table.room_id
         table.add_session(self.session)
         await self._send_raw("state_snapshot", build_state_snapshot(table, self.session.player_id))
+
+    async def _resend_outstanding_prompt(self, session: PlayerSession) -> None:
+        # The runner's prompt envelope went to the pre-reconnect connection;
+        # without a re-send the returning player has no buttons and just
+        # waits out the server-side timeout (docs/human-client-guide.md
+        # expects reconnection to be practical, not merely possible). The
+        # runner keeps awaiting the ORIGINAL deadline -- only the remaining
+        # seconds are advertised here.
+        prompt = session.outstanding_prompt
+        if prompt is None:
+            return
+        remaining = prompt["deadline"] - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            return
+        payload = dict(prompt["payload"])
+        payload["timeout_sec"] = round(remaining, 1)
+        await session.send(build_envelope(prompt["type"], payload, table_id=self.table.room_id if self.table else None))
 
     async def _handle_ready(self) -> None:
         if self.session is None or self.table is None:

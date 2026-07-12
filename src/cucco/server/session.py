@@ -30,6 +30,13 @@ class PlayerSession:
     # Incoming parsed actions land here; the runner awaits from this queue
     # when it needs a specific response from this player.
     inbox: "asyncio.Queue" = field(default_factory=asyncio.Queue)
+    # The prompt the runner is currently awaiting from this player, if any:
+    # {"type": wire event type, "payload": dict, "deadline": loop-time}.
+    # A reconnect re-sends it (with the remaining time) -- the original went
+    # to the now-dead connection, so without this a player who reloads
+    # mid-turn just stares at a promptless screen until the server times
+    # them out.
+    outstanding_prompt: dict | None = None
 
     async def send(self, message: str) -> None:
         if self.connection is not None and self.connected:

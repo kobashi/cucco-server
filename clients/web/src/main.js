@@ -166,8 +166,18 @@ const actions = {
         applySnapshot(snapshot);
       });
     } catch (err) {
-      clearSession();
-      update(() => (state.error = `再接続に失敗しました: ${err.message}`));
+      if (isDeadSessionError(err)) {
+        // Only discard the saved session when the server explicitly says
+        // it's dead -- clearing it on a transient network failure would
+        // destroy the player's only way back in.
+        clearSession();
+        update(() => {
+          state.savedSession = null;
+          state.error = `復帰できませんでした: ${err.message}(卓が終了したか、サーバーが再起動された可能性があります)`;
+        });
+      } else {
+        update(() => (state.error = `再接続に失敗しました: ${err.message} — もう一度「再接続する」を押してください`));
+      }
     }
   },
 
@@ -224,9 +234,35 @@ const actions = {
 
   resync() {
     if (!state.roomId || !state.sessionToken) return;
-    conn.joinTable(state.roomId, state.sessionToken).then((snapshot) => update(() => applySnapshot(snapshot)));
+    conn
+      .joinTable(state.roomId, state.sessionToken)
+      .then((snapshot) => update(() => applySnapshot(snapshot)))
+      .catch((err) => {
+        if (isDeadSessionError(err)) {
+          // The server no longer knows this session (e.g. it restarted and
+          // in-memory state was lost) -- retrying the same token is futile.
+          clearSession();
+          update(() => {
+            state.error = "サーバー側のセッションが失われたため復帰できませんでした(サーバー再起動など)。もう一度参加し直してください。";
+            state.savedSession = null;
+            state.screen = "name";
+          });
+        } else {
+          // Transient (timed out / socket dropped mid-join): try again --
+          // a silently abandoned resync leaves a connected-looking client
+          // that the server rejects with "must join_table first" forever.
+          setTimeout(() => actions.resync(), 3000);
+        }
+      });
   },
 };
+
+// Rejections whose reason means the session/table is gone server-side
+// (restart wiped in-memory state, or the room never existed) -- retrying
+// with the same token can never succeed.
+function isDeadSessionError(err) {
+  return /session_token|no such table/i.test(err?.message ?? "");
+}
 
 function persist() {
   saveSession({
@@ -245,12 +281,16 @@ function applySnapshot(snapshot) {
   state.currentTurnSeat = snapshot.current_turn_seat;
   state.potChips = snapshot.pot_chips ?? 0;
   state.firstActionSeen = (snapshot.declarations_this_deal ?? []).length > 0;
-  const potRunning = snapshot.dealer_seat != null;
-  if (state.playerType === "spectator") {
-    state.screen = potRunning ? "table" : "waiting";
-  } else {
-    state.screen = potRunning ? "table" : "waiting";
+  if (snapshot.game_finished) {
+    // The game_ended broadcast can predate our reconnect -- the snapshot is
+    // then our only notice that this table is over.
+    state.gameEnded = { ranking: snapshot.final_ranking ?? [] };
+    state.screen = "ended";
+    clearSession();
+    return;
   }
+  const potRunning = snapshot.dealer_seat != null;
+  state.screen = potRunning ? "table" : "waiting";
   state.dealerReadyPrompt = null;
   state.turnPrompt = null;
   state.cuccoWindow = null;
@@ -276,7 +316,6 @@ function wireConnection() {
     if (state.roomId && state.sessionToken) actions.resync();
   });
   conn.addEventListener("reconnecting", () => update(() => (state.connectionStatus = "reconnecting")));
-  conn.addEventListener("reconnect_failed", () => update(() => (state.connectionStatus = "disconnected")));
   conn.addEventListener("close", () => {
     if (state.connectionStatus === "open") update(() => (state.connectionStatus = "reconnecting"));
   });

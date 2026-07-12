@@ -142,6 +142,8 @@
   "spectators": ["player_id", "..."],
   "creator_id": "player_id (卓の作成者。start_potを送信できるのはこのプレイヤーのみ)",
   "ready_ids": ["player_id", "... (現時点でreadyを宣言済みの参加者一覧)"],
+  "game_finished": "boolean (ゲームが終了済みか。game_ended配信後に再接続したクライアントへの通知手段)",
+  "final_ranking": "[[player_id, chips], ...] | null (game_finishedがtrueの場合の最終順位)",
   "dealer_seat": "player_id",
   "current_turn_seat": "player_id | null",
   "pot_number": "number",
@@ -209,8 +211,8 @@
 
 `docs/protocol/decisions.md`を参照。
 
-- 手番(`cambio_declare`/`no_change_declare`)タイムアウトと切断はノーチェンジ扱い、再接続で復帰
-- 次ポット時の人数不足はゲーム終了+チップ順位判定
+- 手番(`cambio_declare`/`no_change_declare`)タイムアウトと切断はノーチェンジ扱い、再接続で復帰。再接続時、応答待ちのプロンプト(`turn_prompt`等)が残っていれば残り秒数付きで再送される
+- 次ポット時の人数不足はゲーム終了+チップ順位判定。ただし通常モードでは、接続中のプレイヤーが2人未満になっても最大60秒間は再接続を待ってから終了判定する(リロードがポット境界をまたいだ場合の即死を防ぐ)
 - 不正な操作: 人間向けUIはそもそも不正な操作を送信できない設計にする。AIには`action_rejected`で通知する
 - 手番タイムアウト秒数はサーバー設定値。人間/AIで別々の値を持つ(`turn_timeout_human_sec` / `turn_timeout_ai_sec`)
 - 手番以外のプロンプト(`ready`, `dealer_ready`, `continue_prompt`, `cucco_window`)にもタイムアウトのデフォルト動作を設ける。いずれもタイムアウトの計測は、対応する直前のイベントを受信した時点から始まる
