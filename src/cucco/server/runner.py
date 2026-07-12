@@ -15,7 +15,7 @@ import asyncio
 import logging
 
 from cucco.domain.cards import Rank
-from cucco.domain.deal import Deal
+from cucco.domain.deal import DECLARABLE_RANKS, Deal
 from cucco.domain.errors import IllegalAction
 from cucco.domain.events import ChipsPaid, ContinuePrompted, DealerChanged, PlayerLeftPot, PotWipedOut, PotWon
 from cucco.domain.game import Game
@@ -29,6 +29,8 @@ from cucco.protocol.actions import (
     CuccoDeclare,
     CuccoPass,
     DealerReady,
+    EffectDeclare,
+    EffectPass,
     NoChangeDeclare,
 )
 from cucco.protocol.envelope import build_envelope
@@ -196,6 +198,7 @@ class TableRunner:
         "continue": "continue_prompt",
         "dealer_ready": "dealer_ready",
         "cucco_window": "cucco_window",
+        "effect_window": "effect_window",
     }
 
     async def _prompt(
@@ -245,7 +248,10 @@ class TableRunner:
                     return None
                 if isinstance(action, expected_types):
                     return action
-                if isinstance(action, (CuccoDeclare, CuccoPass)):
+                if isinstance(action, (CuccoDeclare, CuccoPass, EffectDeclare, EffectPass)):
+                    # Late answers to an already-closed window are pure
+                    # network-delay timing; never action_rejected for these
+                    # (docs/protocol/design.md).
                     continue
                 expected_names = ", ".join(t.__name__ for t in expected_types)
                 await self._reject(session, f"expected one of [{expected_names}], got {type(action).__name__}")
@@ -526,8 +532,36 @@ class TableRunner:
         if action is None:
             return deal.submit_no_change(actor_id, via_timeout=True)
         if isinstance(action, CambioDeclare):
+            if self.table.config.effect_declaration == "declared":
+                return await self._run_declared_cambio(deal, actor_id)
             return deal.submit_cambio(actor_id)
         return deal.submit_no_change(actor_id)
+
+    async def _run_declared_cambio(self, deal: Deal, requester: str) -> list:
+        """effect_declaration="declared": walk the exchange one target at a
+        time, giving each declarable-card holder an effect_window before the
+        swap happens. Silence (pass / timeout / disconnected) means the
+        effect does NOT fire and the exchange succeeds -- so unlike the base
+        rules, holding 猫 or 人間 no longer protects you automatically.
+        The whole walk is one atomic exchange: no cucco windows in between.
+        """
+        events, target = deal.begin_cambio(requester)
+        while target is not None:
+            declared = False
+            if deal.hands.get(target) in DECLARABLE_RANKS:
+                session = self.table.get(target)
+                if session is not None and session.connected:
+                    answer = await self._prompt(
+                        session, "effect_window", (EffectDeclare, EffectPass), {"requester": requester}
+                    )
+                    declared = isinstance(answer, EffectDeclare)
+            if declared:
+                step_events, target = deal.resolve_effect_declared(requester, target)
+                events += step_events
+            else:
+                events += deal.resolve_exchange_accept(requester, target)
+                target = None
+        return events
 
     async def _cucco_window(self, deal: Deal, holder_ids: list[str]) -> None:
         for pid in holder_ids:

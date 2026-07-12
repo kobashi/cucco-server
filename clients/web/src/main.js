@@ -3,6 +3,7 @@ import { createStore, pushLog, seatName } from "./state.js";
 import { loadSession, saveSession, clearSession } from "./persistence.js";
 import { turnOrderFor, advanceTurn } from "./deriveTurn.js";
 import { sanitizeWsHost } from "./utils.js";
+import { CAUSE_LABELS, REFUSAL_LABELS } from "./cards.js";
 import * as lobby from "./views/lobby.js";
 import * as waitingRoom from "./views/waiting_room.js";
 import * as table from "./views/table.js";
@@ -64,7 +65,7 @@ function update(mutator) {
 setInterval(() => {
   const now = Date.now();
   let expired = false;
-  for (const key of ["dealerReadyPrompt", "turnPrompt", "cuccoWindow", "continuePrompt", "resultPause"]) {
+  for (const key of ["dealerReadyPrompt", "turnPrompt", "cuccoWindow", "continuePrompt", "resultPause", "effectWindow"]) {
     if (state[key] && state[key].deadline <= now) {
       state[key] = null;
       expired = true;
@@ -225,6 +226,14 @@ const actions = {
   sendResultAck() {
     conn.send("result_ack", {});
     update(() => (state.resultPause = null));
+  },
+  sendEffectDeclare() {
+    conn.send("effect_declare", {});
+    update(() => (state.effectWindow = null));
+  },
+  sendEffectPass() {
+    conn.send("effect_pass", {});
+    update(() => (state.effectWindow = null));
   },
 
   // Stay at the same table after game_ended: the server has already reset
@@ -427,6 +436,14 @@ function handleEvent(type, p) {
         state.dozoSent = false;
         state.firstActionSeen = false;
         state.resultPause = null;
+        state.effectWindow = null;
+        // Fresh deal: everyone's card was just dealt to themselves. Kept in
+        // sync with each exchange below -- snapshots only arrive at pot
+        // boundaries/reconnects, so the 猫-effect provenance view has to be
+        // tracked incrementally between them.
+        state.table.provenance_map = Object.fromEntries(
+          state.table.seats.filter((s) => s.in_current_pot !== false).map((s) => [s.player_id, s.player_id])
+        );
         state._discardPileLenAtDealStart = state.table.discard_pile.length;
         state.lastDealOpened = null;
         state.lastDealResult = null;
@@ -452,6 +469,14 @@ function handleEvent(type, p) {
     case "cucco_window":
       update(() => {
         state.cuccoWindow = { timeoutSec: p.timeout_sec, deadline: Date.now() + p.timeout_sec * 1000 };
+      });
+      return;
+
+    case "effect_window":
+      // Declared-effects rule: I'm being asked to exchange while holding a
+      // declarable special card -- declare its effect or let the swap happen.
+      update(() => {
+        state.effectWindow = { requester: p.requester, deadline: Date.now() + p.timeout_sec * 1000 };
       });
       return;
 
@@ -531,8 +556,9 @@ function handleEvent(type, p) {
 
     case "player_disqualified":
       update(() => {
-        pushLog(state, `${seatName(state, p.player_id)} が失格(${p.cause})`);
+        pushLog(state, `${seatName(state, p.player_id)} が失格(${CAUSE_LABELS[p.cause] ?? p.cause})`);
         state.disqualifiedIdsThisDeal.add(p.player_id);
+        delete state.table.provenance_map?.[p.player_id]; // their card left play
         state.disqualifiedInfo[p.player_id] = { cause: p.cause, card: p.card ?? null };
         if (p.card && state.table) {
           // Immediate-disclosure setting: this card is already public --
@@ -550,6 +576,7 @@ function handleEvent(type, p) {
           state.turnPrompt = null;
           state.cuccoWindow = null;
           state.dealerReadyPrompt = null;
+          state.effectWindow = null;
         }
       });
       return;
@@ -659,25 +686,32 @@ function handleExchangeResult(p) {
   if (!state.table) return;
   const me = state.playerId;
   let turnOwner = null;
+  const prov = state.table.provenance_map ?? (state.table.provenance_map = {});
   switch (p.result) {
     case "accepted":
       if (p.requester === me || p.target === me) state.yourHand = p.your_new_card;
+      // The cards swapped, so their origins swap with them (猫 effect input).
+      [prov[p.requester], prov[p.target]] = [prov[p.target] ?? p.target, prov[p.requester] ?? p.requester];
       pushLog(state, `${seatName(state, p.requester)} が ${seatName(state, p.target)} とカンビオ`);
       turnOwner = p.requester;
       break;
     case "deck_exchange_accepted":
       if (p.actor === me) state.yourHand = p.new_card;
+      prov[p.actor] = null; // a deck-drawn card has no original holder
       // Both cards are public: the deck draw happens in the open and the
       // given-up card lands face-up in the discard pile.
       pushLog(state, `${seatName(state, p.actor)} が山札とカンビオ(引いた: ${p.new_card} / 出した: ${p.given_up_card})`);
       turnOwner = p.actor;
       break;
     case "refused":
-      pushLog(state, `${seatName(state, p.target)} が拒否(${p.reason}${p.revealed_rank ? ": " + p.revealed_rank : ""})`);
+      pushLog(
+        state,
+        `${seatName(state, p.target)} が拒否 — ${REFUSAL_LABELS[p.reason] ?? p.reason}${p.revealed_rank ? `(${p.revealed_rank})` : ""}`
+      );
       turnOwner = p.requester;
       break;
     case "deck_draw_refused":
-      pushLog(state, `山札が拒否(${p.reason}${p.drawn_rank ? ": " + p.drawn_rank : ""})`);
+      pushLog(state, `山札から ${p.drawn_rank ?? "?"} — ${REFUSAL_LABELS[p.reason] ?? p.reason}`);
       turnOwner = p.actor;
       break;
   }
@@ -686,6 +720,9 @@ function handleExchangeResult(p) {
     advanceTurn(state, turnOwner);
   }
   if (turnOwner === me) state.turnPrompt = null;
+  // Any exchange_result naming me as the target means my effect window (if
+  // one was open) has been resolved server-side.
+  if (p.target === me || p.requester === me || p.actor === me) state.effectWindow = null;
 }
 
 // -- boot -------------------------------------------------------------------

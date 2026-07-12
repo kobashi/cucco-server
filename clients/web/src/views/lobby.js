@@ -96,6 +96,12 @@ function renderCreate(el, state, actions) {
           </select>
         </label>
         <label><input type="checkbox" id="horse-house-reveal"> 馬/家どちらの拒否か公開する</label>
+        <label>特殊札の効果(道化を除く)
+          <select id="effect-declaration">
+            <option value="auto" selected>自動で発動(標準ルール)</option>
+            <option value="declared">宣言式 — 持ち主が宣言しないと発動せず交換成立</option>
+          </select>
+        </label>
         <label>結果確認の待機時間(秒。全員が確認ボタンを押せば短縮)
           <input id="result-pause" type="number" min="0" max="60" step="1" value="15">
         </label>
@@ -124,6 +130,7 @@ function renderCreate(el, state, actions) {
       starting_chips: Math.round(Number(el.querySelector("#starting-chips").value)),
       disqualified_card_disclosure: el.querySelector("#disclosure").value,
       horse_house_reveal: el.querySelector("#horse-house-reveal").checked,
+      effect_declaration: el.querySelector("#effect-declaration").value,
       result_pause_sec: Math.max(0, Math.min(60, Number(el.querySelector("#result-pause").value) || 0)),
     });
   });

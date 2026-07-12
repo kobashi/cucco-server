@@ -8,6 +8,12 @@ from typing import Literal
 DisqualifiedCardDisclosure = Literal["immediate", "deferred"]
 EndCondition = Literal["chips_zero", "round_limit"]
 TableMode = Literal["normal", "evaluation"]
+# "auto": special-card refusals fire by themselves (base rules).
+# "declared": 人間/馬/猫/家 only take effect if their holder actively
+# declares when asked to exchange (like クク); silence means the exchange
+# succeeds. 道化 stays automatic, and deck-drawn specials always auto-fire
+# (the deck has nobody to declare for it).
+EffectDeclaration = Literal["auto", "declared"]
 
 # Upper bound on any per-prompt timeout. A table creator's config is
 # attacker-controlled input (docs/security-notes.md); an unbounded timeout
@@ -40,6 +46,7 @@ class GameConfig:
     # result before the game moves on. 0 = no pause (the server otherwise
     # proceeds immediately); ignored in evaluation mode.
     result_pause_sec: float = 0.0
+    effect_declaration: EffectDeclaration = "auto"
 
     def __post_init__(self) -> None:
         if self.end_condition == "round_limit" and self.round_limit is None:

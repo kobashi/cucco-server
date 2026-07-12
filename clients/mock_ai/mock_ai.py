@@ -91,6 +91,11 @@ class MockAI:
         elif event.type == "cucco_window":
             declare = self.policy.decide_cucco_declare(self.my_hand or "", self.alive_count)
             await self.conn.send("cucco_declare" if declare else "cucco_pass", {})
+        elif event.type == "effect_window":
+            # Declared-effects tables: always declare -- matching the base
+            # rules' automatic behavior, and answering fast keeps the table
+            # from waiting out the window timeout on every exchange.
+            await self.conn.send("effect_declare", {})
         elif event.type == "continue_prompt":
             stay = self.policy.decide_continue(self.my_chips, p.get("required_chips", 1))
             await self.conn.send("continue_declare", {"continue": stay})

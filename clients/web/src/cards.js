@@ -15,3 +15,22 @@ export function isSpecialRank(rank) {
 export function rankLabel(rank) {
   return rank == null ? "?" : rank;
 }
+
+// Wire tokens -> human-readable Japanese, for the log and result views.
+export const REFUSAL_LABELS = {
+  house_horse_skip: "スキップ(馬または家)",
+  human_refusal: "人間!",
+  cat_meow: "猫「ニャー!」",
+  horse_house_chain: "馬/家 — 次のカードへ",
+  cucco_refusal: "クク(拒否扱い)",
+  human_deck_draw: "人間",
+  cat_deck_draw: "猫",
+};
+
+export const CAUSE_LABELS = {
+  received_joker: "道化を受け取った",
+  human_refusal: "人間に拒否された",
+  human_deck_draw: "山札から人間",
+  cat_refusal: "猫の効果",
+  cat_deck_draw: "山札から猫の効果",
+};

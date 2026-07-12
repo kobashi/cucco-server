@@ -19,6 +19,7 @@ VALID_PLAYER_TYPES = ("human", "ai", "spectator")
 VALID_MODES = ("normal", "evaluation")
 VALID_END_CONDITIONS = ("chips_zero", "round_limit")
 VALID_DISCLOSURES = ("immediate", "deferred")
+VALID_EFFECT_DECLARATIONS = ("auto", "declared")
 
 # Display names are attacker-controlled and broadcast to every client via
 # state_snapshot (seats[].name), so they must be bounded and sanitized at the
@@ -52,6 +53,7 @@ class CreateTable:
     cucco_window_timeout_human_sec: float = 10.0
     cucco_window_timeout_ai_sec: float = 2.0
     result_pause_sec: float = 0.0
+    effect_declaration: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -108,6 +110,22 @@ class ResultAck:
     pass
 
 
+@dataclass(frozen=True)
+class EffectDeclare:
+    """Declare the special card's effect during an effect_window
+    (effect_declaration: "declared" tables only)."""
+
+    pass
+
+
+@dataclass(frozen=True)
+class EffectPass:
+    """Stay silent during an effect_window: the effect does not fire and
+    the exchange goes through."""
+
+    pass
+
+
 Action = Union[
     Identify,
     CreateTable,
@@ -121,6 +139,8 @@ Action = Union[
     ContinueDeclare,
     StartPot,
     ResultAck,
+    EffectDeclare,
+    EffectPass,
 ]
 
 
@@ -236,6 +256,7 @@ def _parse_create_table(payload: dict) -> CreateTable:
         cucco_window_timeout_human_sec=_optional_number(payload, "cucco_window_timeout_human_sec", 10.0),
         cucco_window_timeout_ai_sec=_optional_number(payload, "cucco_window_timeout_ai_sec", 2.0),
         result_pause_sec=_optional_number(payload, "result_pause_sec", 0.0),
+        effect_declaration=_require_choice(payload, "effect_declaration", VALID_EFFECT_DECLARATIONS, default="auto"),
     )
 
 
@@ -264,6 +285,8 @@ _PARSERS: dict[str, Callable[[dict], Action]] = {
     "continue_declare": _parse_continue_declare,
     "start_pot": lambda payload: StartPot(),
     "result_ack": lambda payload: ResultAck(),
+    "effect_declare": lambda payload: EffectDeclare(),
+    "effect_pass": lambda payload: EffectPass(),
 }
 
 
@@ -291,4 +314,5 @@ def create_table_to_config(action: CreateTable) -> GameConfig:
         cucco_window_timeout_human_sec=action.cucco_window_timeout_human_sec,
         cucco_window_timeout_ai_sec=action.cucco_window_timeout_ai_sec,
         result_pause_sec=action.result_pause_sec,
+        effect_declaration=action.effect_declaration,
     )

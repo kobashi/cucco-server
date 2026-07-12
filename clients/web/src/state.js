@@ -36,6 +36,7 @@ export function createStore() {
 
     // active prompts (only ever set when *this* session is the addressee)
     resultPause: null, // { deadline } -- result-review modal window (broadcast to everyone)
+    effectWindow: null, // { requester, deadline } -- declared-effects rule: declare my card's effect or let the exchange through
     dealerReadyPrompt: null, // { timeoutSec, deadline }
     turnPrompt: null, // { timeoutSec, deadline }
     cuccoWindow: null, // { timeoutSec, deadline }

@@ -1,6 +1,6 @@
 import { esc, secondsLeft } from "../utils.js";
 import { seatName } from "../state.js";
-import { RANK_ORDER } from "../cards.js";
+import { CAUSE_LABELS, RANK_ORDER } from "../cards.js";
 
 // Countdown digits live in [data-deadline] spans so the ticker in main.js can
 // update them in place -- re-rendering the whole screen 4x/second to move a
@@ -27,6 +27,7 @@ export function render(el, state, actions) {
       ${renderSeats(t, state)}
       ${isSpectator ? "" : renderHand(state)}
       ${renderDiscardPile(t)}
+      ${renderProvenance(t, state)}
       ${renderDeclarations(t, state)}
       ${renderDealSummary(state)}
       ${renderPotResult(state, isSpectator)}
@@ -35,6 +36,7 @@ export function render(el, state, actions) {
       ${renderLog(state)}
     </div>
     ${!isSpectator && state.cuccoWindow ? renderCuccoModal(state) : ""}
+    ${!isSpectator && state.effectWindow ? renderEffectModal(state) : ""}
     ${!isSpectator && state.continuePrompt ? renderContinueModal(state) : ""}
     ${state.resultPause ? renderResultPauseModal(state, isSpectator) : ""}
   `;
@@ -47,6 +49,8 @@ export function render(el, state, actions) {
   el.querySelector("#continue-yes-btn")?.addEventListener("click", () => actions.sendContinue(true));
   el.querySelector("#continue-no-btn")?.addEventListener("click", () => actions.sendContinue(false));
   el.querySelector("#result-ack-btn")?.addEventListener("click", () => actions.sendResultAck());
+  el.querySelector("#effect-declare-btn")?.addEventListener("click", () => actions.sendEffectDeclare());
+  el.querySelector("#effect-pass-btn")?.addEventListener("click", () => actions.sendEffectPass());
 }
 
 // One always-visible line answering "who/what are we waiting on right now".
@@ -139,6 +143,30 @@ function renderDiscardPile(t) {
   `;
 }
 
+// カードの来歴 -- who each player's CURRENT card was originally dealt to.
+// Public information (a physical table's players track it by watching the
+// swaps), and the input to the 猫 effect: the requester's current card's
+// FIRST holder is who gets disqualified. Only rows where the card actually
+// moved are shown; a quiet deal shows nothing.
+function renderProvenance(t, state) {
+  const prov = t.provenance_map ?? {};
+  const moved = Object.entries(prov).filter(([holder, origin]) => origin !== holder);
+  if (!moved.length) return "";
+  return `
+    <section>
+      <h2>カードの来歴(猫の効果の対象)</h2>
+      <ul class="provenance-list">
+        ${moved
+          .map(
+            ([holder, origin]) =>
+              `<li>${esc(seatName(state, holder))} の現在の札 ← ${origin == null ? "山札から引いた札" : `元は ${esc(seatName(state, origin))} に配られた札`}</li>`
+          )
+          .join("")}
+      </ul>
+    </section>
+  `;
+}
+
 function renderDeclarations(t, state) {
   if (!t.declarations_this_deal?.length) return "";
   return `
@@ -157,14 +185,6 @@ function renderDeclarations(t, state) {
     </section>
   `;
 }
-
-const CAUSE_LABELS = {
-  received_joker: "道化を受け取った",
-  human_refusal: "人間に拒否された",
-  human_deck_draw: "山札から人間",
-  cat_refusal: "猫の効果",
-  cat_deck_draw: "山札から猫の効果",
-};
 
 // Per-player summary table shown at deal open/result: card, outcome,
 // payment, chips, and whether they stay for the next deal. Replaces the old
@@ -294,6 +314,33 @@ function renderCuccoModal(state) {
         <p class="countdown">残り ${countdown(state.cuccoWindow.deadline)} 秒</p>
         <button id="cucco-declare-btn">クク宣言する</button>
         <button id="cucco-pass-btn" class="secondary">今は宣言しない</button>
+      </div>
+    </div>
+  `;
+}
+
+const EFFECT_ACTION_LABELS = {
+  猫: "「ニャー!」と鳴く(要求者の札の元の持ち主が失格)",
+  人間: "拒否する(要求者が失格)",
+  馬: "「スキップ」(要求を次のプレイヤーへ)",
+  家: "「スキップ」(要求を次のプレイヤーへ)",
+};
+
+// Declared-effects rule (effect_declaration="declared"): I hold a declarable
+// special card and someone is asking to exchange -- same urgency treatment
+// as the cucco window.
+function renderEffectModal(state) {
+  const card = state.yourHand;
+  const actionLabel = EFFECT_ACTION_LABELS[card] ?? "効果を宣言する";
+  return `
+    <div class="modal-overlay">
+      <div class="modal cucco-modal">
+        <h2>効果を宣言しますか?</h2>
+        <p>${esc(seatName(state, state.effectWindow.requester))} さんがあなたに交換を要求しています。<br>
+           あなたの札: <strong>${esc(card ?? "?")}</strong></p>
+        <p class="countdown">残り ${countdown(state.effectWindow.deadline)} 秒</p>
+        <button id="effect-declare-btn">${esc(actionLabel)}</button>
+        <button id="effect-pass-btn" class="secondary">宣言しない(交換に応じる)</button>
       </div>
     </div>
   `;

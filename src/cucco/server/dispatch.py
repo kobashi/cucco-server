@@ -31,6 +31,8 @@ from cucco.protocol.actions import (
     CuccoDeclare,
     CuccoPass,
     DealerReady,
+    EffectDeclare,
+    EffectPass,
     Identify,
     JoinTable,
     NoChangeDeclare,
@@ -48,7 +50,7 @@ from cucco.server.runner import TableRunner, build_state_snapshot
 from cucco.server.session import Connection, PlayerSession
 from cucco.server.table import Table
 
-QUEUE_ROUTED = (DealerReady, CambioDeclare, NoChangeDeclare, CuccoDeclare, CuccoPass, ContinueDeclare)
+QUEUE_ROUTED = (DealerReady, CambioDeclare, NoChangeDeclare, CuccoDeclare, CuccoPass, ContinueDeclare, EffectDeclare, EffectPass)
 
 # A generous safety-net window for players to join and declare `ready`
 # before the first pot starts anyway (docs/protocol/design.md: "ready"の

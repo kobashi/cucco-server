@@ -17,6 +17,12 @@ All asyncio/timeout/broadcast concerns live in `cucco.server.runner`.
 from __future__ import annotations
 
 from cucco.domain.cards import CHAINING_RANKS, Rank, strength
+
+# Cards whose refusal effect requires an active declaration under the
+# effect_declaration="declared" rule variant. 道化 is deliberately absent
+# (its receive-and-lose effect stays automatic), and クク has no refusal
+# power to declare in the first place.
+DECLARABLE_RANKS = frozenset({Rank.HUMAN, Rank.HORSE, Rank.CAT, Rank.HOUSE})
 from cucco.domain.config import GameConfig
 from cucco.domain.deck import Deck, DiscardEntry
 from cucco.domain.errors import IllegalAction
@@ -82,6 +88,12 @@ class Deal:
         self.cucco_declared_by: str | None = None
         self.declarations: list[Declaration] = []
         self.deferred_discards: list[DiscardEntry] = []
+
+        # Step-wise cambio in progress (effect_declaration="declared" only):
+        # (requester, current target awaiting an effect decision). The
+        # runner drives begin_cambio/resolve_* to completion within one
+        # turn, so this never survives past the turn that set it.
+        self._pending_exchange: tuple[str, str] | None = None
 
         self._opened = False
 
@@ -196,6 +208,10 @@ class Deal:
     def submit_cucco_declare(self, player_id: str) -> list[DealEvent]:
         if self._opened:
             raise IllegalAction("deal has already been opened")
+        if self._pending_exchange is not None:
+            # Exchange processing is atomic (docs/rules/final_rules.md) --
+            # クク cannot interrupt a mid-chain declared-mode exchange.
+            raise IllegalAction("an exchange is being resolved; cucco cannot interrupt it")
         if self.cucco_declared_by is not None:
             raise IllegalAction("deal already ended by a cucco declaration")
         if player_id in self.disqualified:
@@ -218,6 +234,79 @@ class Deal:
             raise IllegalAction(f"{player_id} is disqualified and cannot respond to a cucco window")
         if self.hands.get(player_id) is not Rank.CUCCO:
             raise IllegalAction(f"{player_id} does not hold クク")
+
+    # -- step-wise cambio (effect_declaration="declared") -----------------------
+    #
+    # Base-rule exchanges resolve synchronously inside submit_cambio. Under
+    # the declared-effects variant every hop of a request needs the target's
+    # decision first, so the exchange is split into steps the (async) runner
+    # drives:
+    #
+    #   begin_cambio(A)                 -> events, target|None
+    #   resolve_effect_declared(A, T)   -> events, next_target|None
+    #   resolve_exchange_accept(A, T)   -> events (always terminal)
+    #
+    # A returned target of None ALWAYS means "this turn is fully resolved" —
+    # a chain that runs off the end of `order` resolves against the deck
+    # internally (deck-drawn specials keep their automatic behavior: the
+    # deck has nobody to declare for it). The 馬/家 skip chain is therefore
+    # just: declare -> get the next target -> ask them, with no wrap-around
+    # (next_target() never loops, same as the base rules).
+
+    def begin_cambio(self, player_id: str) -> tuple[list[DealEvent], str | None]:
+        """Start a declared-mode cambio turn. Returns the first target to
+        ask, or None if the request went straight to the deck (dealer /
+        last-in-order turns) and has already fully resolved."""
+        self._validate_turn(player_id)
+        self._mark_acted(player_id)
+        events: list[DealEvent] = [self._record_declaration(player_id, "cambio")]
+        target = self.next_target(self.order.index(player_id))
+        if target is None:
+            events += self._resolve_against_deck(player_id)
+            return events, None
+        self._pending_exchange = (player_id, target)
+        return events, target
+
+    def _validate_pending(self, requester: str, target: str) -> None:
+        if self._pending_exchange != (requester, target):
+            raise IllegalAction(
+                f"no exchange from {requester} to {target} is awaiting a decision"
+            )
+
+    def resolve_exchange_accept(self, requester: str, target: str) -> list[DealEvent]:
+        """The target stayed silent (or holds no declarable card): the
+        exchange goes through as a plain swap. Terminal — the turn is over.
+        道化 receipt still disqualifies automatically (it is not part of the
+        declared-effects variant)."""
+        self._validate_pending(requester, target)
+        self._pending_exchange = None
+        return self._do_swap(requester, target)
+
+    def resolve_effect_declared(self, requester: str, target: str) -> tuple[list[DealEvent], str | None]:
+        """The target actively declared their card's effect. Returns the
+        next target to ask when a 馬/家 declaration moves the request on, or
+        None when the turn fully resolved (人間/猫 fired, or the chain
+        reached the deck and auto-resolved there)."""
+        self._validate_pending(requester, target)
+        rank = self.hands[target]
+        if rank not in DECLARABLE_RANKS:
+            raise IllegalAction(f"{target}'s card has no declarable effect")
+        self._pending_exchange = None
+        if rank is Rank.HUMAN:
+            return self._resolve_human_refusal(requester, target), None
+        if rank is Rank.CAT:
+            return self._resolve_cat_refusal(requester, target), None
+        # 馬 / 家: the request skips onward.
+        revealed = rank if self.config.horse_house_reveal else None
+        events: list[DealEvent] = [
+            ExchangeRefused(requester=requester, target=target, reason="house_horse_skip", revealed_rank=revealed)
+        ]
+        next_target = self.next_target(self.order.index(target))
+        if next_target is None:
+            events += self._resolve_against_deck(requester)
+            return events, None
+        self._pending_exchange = (requester, next_target)
+        return events, next_target
 
     # -- exchange resolution ---------------------------------------------------
 
@@ -335,6 +424,8 @@ class Deal:
     def open(self) -> list[DealEvent]:
         if self._opened:
             raise IllegalAction("deal has already been opened")
+        if self._pending_exchange is not None:
+            raise IllegalAction("cannot open: an exchange is awaiting an effect decision")
         if self.legal_actor() is not None and self.cucco_declared_by is None:
             raise IllegalAction("cannot open: turns remain")
         self._opened = True

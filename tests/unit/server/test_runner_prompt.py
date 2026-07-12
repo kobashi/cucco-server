@@ -8,7 +8,16 @@ from cucco.domain.cards import Rank
 from cucco.domain.config import GameConfig
 from cucco.domain.deck import Deck
 from cucco.domain.pot import Pot
-from cucco.protocol.actions import CambioDeclare, ContinueDeclare, CuccoDeclare, CuccoPass, DealerReady, NoChangeDeclare
+from cucco.protocol.actions import (
+    CambioDeclare,
+    ContinueDeclare,
+    CuccoDeclare,
+    CuccoPass,
+    DealerReady,
+    EffectDeclare,
+    EffectPass,
+    NoChangeDeclare,
+)
 from cucco.server.runner import TableRunner
 from cucco.server.session import PlayerSession
 from cucco.server.table import Table
@@ -137,6 +146,53 @@ class ScriptedConnection:
 class _StubGame:
     def note_deal_played(self) -> None:
         pass
+
+
+@pytest.mark.asyncio
+async def test_declared_mode_effect_window_declared_and_silent_paths():
+    # effect_declaration="declared": the runner must open an effect_window
+    # for a declarable-card holder, honor a declared 馬 (skip onward), and
+    # treat the NEXT target's silence as acceptance of the exchange.
+    from cucco.domain.cards import Rank
+    from cucco.domain.deck import Deck
+
+    config = GameConfig(
+        effect_declaration="declared", turn_timeout_ai_sec=1.0, cucco_window_timeout_ai_sec=1.0
+    )
+    # dealer p1 -> order [p2, p3, p4, p1]; p2 requests, p3 holds 馬 and
+    # declares (skip), p4 holds 猫 but stays silent -> plain swap p2<->p4.
+    deck = Deck.from_fixed_order([Rank.N5, Rank.HORSE, Rank.CAT, Rank.N9])
+    pot = Pot(
+        ["p1", "p2", "p3", "p4"], "p1", {p: 24 for p in ("p1", "p2", "p3", "p4")}, config, random.Random(0), deck=deck
+    )
+
+    table = Table(room_id="ABC123", config=config, creator_id="p1")
+    scripts_by_pid = {
+        "p1": {"turn_prompt": [NoChangeDeclare()], "dealer_ready": [DealerReady()], "cucco_window": []},
+        "p2": {"turn_prompt": [CambioDeclare()], "dealer_ready": [], "cucco_window": []},
+        "p3": {"turn_prompt": [NoChangeDeclare()], "dealer_ready": [], "cucco_window": [], "effect_window": [EffectDeclare()]},
+        "p4": {"turn_prompt": [NoChangeDeclare()], "dealer_ready": [], "cucco_window": [], "effect_window": [EffectPass()]},
+    }
+    sessions = {}
+    for pid, scripts in scripts_by_pid.items():
+        ref = [None]
+        conn = ScriptedConnection(ref, scripts)
+        session = PlayerSession(player_id=pid, name=pid, player_type="ai", session_token=pid, connection=conn)
+        ref[0] = session
+        table.add_session(session)
+        sessions[pid] = session
+
+    runner = TableRunner(table)
+    deal = await runner._run_deal(pot, _StubGame())
+
+    # p3 was asked and declared; p4 was asked and passed.
+    assert "effect_window" in sessions["p3"].connection.received
+    assert "effect_window" in sessions["p4"].connection.received
+    # The horse skip chained past p3; p4's silence accepted the swap.
+    assert deal.hands["p2"] is Rank.CAT
+    assert deal.hands["p4"] is Rank.N5
+    assert deal.hands["p3"] is Rank.HORSE  # untouched, kept the horse
+    assert deal.disqualified == set()
 
 
 @pytest.mark.asyncio
