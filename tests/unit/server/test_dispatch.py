@@ -592,6 +592,75 @@ async def test_start_button_falls_to_the_next_connected_player_when_the_creator_
 
 
 @pytest.mark.asyncio
+async def test_game_seating_is_shuffled_and_snapshot_reports_seat_order(monkeypatch):
+    import cucco.server.dispatch as dispatch_module
+
+    # Pin the recorded seed so the shuffle is deterministic in the test.
+    class FixedSystemRandom:
+        def randrange(self, n):
+            return 12345
+
+    monkeypatch.setattr(dispatch_module.random, "SystemRandom", lambda: FixedSystemRandom())
+
+    registry = TableRegistry()
+    handlers = []
+    room_id = None
+    for name in ("Alice", "Bob", "Carol", "Dave"):
+        h = ConnectionHandler(FakeConnection(), registry)
+        await h.handle_message(build_envelope("identify", {"name": name, "player_type": "human"}))
+        if room_id is None:
+            await h.handle_message(build_envelope("create_table", {}))
+            room_id = next(m for m in h.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+        await h.handle_message(build_envelope("join_table", {"room_id": room_id}))
+        handlers.append(h)
+    for h in handlers[1:]:
+        await h.handle_message(build_envelope("ready", {}))
+    await handlers[0].handle_message(build_envelope("start_pot", {}))
+
+    table = registry.get(room_id)
+    join_order = [h.session.player_id for h in handlers]
+    expected = list(join_order)
+    random.Random(12345).shuffle(expected)
+    assert table.game.seats == expected  # seeded shuffle, reproducible from the recorded seed
+    assert table.game.seats != join_order or expected == join_order
+
+    snapshot = build_state_snapshot(table, join_order[0])
+    assert [s["player_id"] for s in snapshot["seats"]] == expected  # snapshot follows seat order
+
+
+@pytest.mark.asyncio
+async def test_result_pause_ends_early_once_every_seated_human_acks():
+    config = GameConfig(result_pause_sec=30.0)
+    table = Table(room_id="ABC123", config=config, creator_id="p1")
+    conns = {}
+    for pid in ("p1", "p2"):
+        conns[pid] = FakeConnection()
+        table.add_session(
+            PlayerSession(player_id=pid, name=pid, player_type="human", session_token=pid, connection=conns[pid])
+        )
+    table.game = Game(["p1", "p2"], config, random.Random(0))
+    list(table.game.start_first_pot())
+
+    runner = TableRunner(table)
+
+    async def ack_both():
+        await asyncio.sleep(0.05)
+        table.result_acks.add("p1")
+        table.result_acks.add("p2")
+
+    task = asyncio.create_task(ack_both())
+    start = asyncio.get_event_loop().time()
+    await runner._result_pause()
+    elapsed = asyncio.get_event_loop().time() - start
+    await task
+
+    assert elapsed < 5.0  # skipped well before the 30s deadline
+    # Everyone (players and would-be spectators) was told the window opened.
+    assert any(m["type"] == "result_pause" for m in conns["p1"].sent)
+    assert any(m["type"] == "result_pause" for m in conns["p2"].sent)
+
+
+@pytest.mark.asyncio
 async def test_state_snapshot_includes_creator_id_and_ready_ids():
     registry = TableRegistry()
     creator = ConnectionHandler(FakeConnection(), registry)

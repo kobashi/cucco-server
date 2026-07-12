@@ -35,6 +35,7 @@ from cucco.protocol.actions import (
     JoinTable,
     NoChangeDeclare,
     Ready,
+    ResultAck,
     StartPot,
     create_table_to_config,
     folded_name,
@@ -103,7 +104,13 @@ async def _start_game(table: Table) -> None:
     if action_log is not None:
         action_log.write_seed(seed)
 
-    table.game = Game(participants, table.config, random.Random(seed))
+    rng = random.Random(seed)
+    # Seating order is randomized per game (participants arrive in join
+    # order, which would otherwise bake a fixed seat bias into every game at
+    # the table). Shuffled with the SAME seeded rng the Game uses, so the
+    # recorded seed still deterministically reproduces seats + deals alike.
+    rng.shuffle(participants)
+    table.game = Game(participants, table.config, rng)
     asyncio.create_task(_run_table_safely(table, action_log))
 
 
@@ -193,6 +200,8 @@ class ConnectionHandler:
                 await self._handle_ready()
             elif isinstance(action, StartPot):
                 await self._handle_start_pot()
+            elif isinstance(action, ResultAck):
+                await self._handle_result_ack()
             elif isinstance(action, QUEUE_ROUTED):
                 await self._route_to_inbox(action)
             else:
@@ -349,6 +358,13 @@ class ConnectionHandler:
             table.ready_deadline_task.cancel()
             table.ready_deadline_task = None
         await _start_game(table)
+
+    async def _handle_result_ack(self) -> None:
+        if self.session is None or self.table is None:
+            raise ProtocolError("must join_table before result_ack")
+        # A late ack (after the pause already ended) is harmless: the set is
+        # cleared at the start of the next pause.
+        self.table.result_acks.add(self.session.player_id)
 
     async def _route_to_inbox(self, action) -> None:
         if self.session is None or self.table is None:

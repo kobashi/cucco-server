@@ -100,6 +100,14 @@ class StartPot:
     pass
 
 
+@dataclass(frozen=True)
+class ResultAck:
+    """The player confirmed the result screen -- once every seated,
+    connected player has acked, the result pause ends early."""
+
+    pass
+
+
 Action = Union[
     Identify,
     CreateTable,
@@ -112,6 +120,7 @@ Action = Union[
     CuccoPass,
     ContinueDeclare,
     StartPot,
+    ResultAck,
 ]
 
 
@@ -254,6 +263,7 @@ _PARSERS: dict[str, Callable[[dict], Action]] = {
     "cucco_pass": lambda payload: CuccoPass(),
     "continue_declare": _parse_continue_declare,
     "start_pot": lambda payload: StartPot(),
+    "result_ack": lambda payload: ResultAck(),
 }
 
 

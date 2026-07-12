@@ -88,8 +88,14 @@ def build_state_snapshot(table: Table, recipient_id: str | None) -> dict:
     deal = pot.current_deal if pot is not None else None
     active_ids = set(pot.active_participants()) if pot is not None else set()
 
+    # Seats are reported in GAME seating order (randomized at game start),
+    # not join order -- the on-screen arrangement then matches the actual
+    # turn direction. Late joiners not seated in this game sort last.
+    seat_rank = {pid: i for i, pid in enumerate(game.seats)}
+    ordered_players = sorted(table.players(), key=lambda s: seat_rank.get(s.player_id, len(seat_rank)))
+
     base.update(
-        seats=[_seat_view(s, game, active_ids) for s in table.players()],
+        seats=[_seat_view(s, game, active_ids) for s in ordered_players],
         dealer_seat=pot.dealer_id if pot is not None else None,
         current_turn_seat=(deal.legal_actor() if deal is not None and not deal.is_opened else None),
         pot_number=game.pot_number,
@@ -363,7 +369,12 @@ class TableRunner:
                 instant_win = next((e for e in game_events if isinstance(e, PotWon)), None)
                 if instant_win is not None:
                     await self._send_pot_result(game.chips, instant_win)
-                await self._result_pause()  # review the pot outcome before the next pot deals
+                if not game.is_finished:
+                    # Review the pot outcome before the next pot deals. No
+                    # pause when the game just ended: the ranking screen is
+                    # user-paced, and delaying here would also delay the
+                    # room's reset for the 続ける flow.
+                    await self._result_pause()
                 await self._broadcast_state_snapshot()
                 return  # this pot is done; run() will start the next one (or stop)
 
@@ -436,8 +447,27 @@ class TableRunner:
     async def _result_pause(self) -> None:
         # Evaluation mode explicitly omits human-pacing waits
         # (docs/protocol/design.md 「AI専用高速評価モード」).
-        if self.table.config.mode != "evaluation" and self.table.config.result_pause_sec > 0:
-            await asyncio.sleep(self.table.config.result_pause_sec)
+        if self.table.config.mode == "evaluation" or self.table.config.result_pause_sec <= 0:
+            return
+        game = self.table.game
+        seated = set(game.seats) if game is not None else set()
+        self.table.result_acks.clear()
+        timeout = self.table.config.result_pause_sec
+        await self._broadcast("result_pause", lambda pid: {"timeout_sec": timeout})
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            # Skippable: once every seated, connected HUMAN has acked the
+            # result screen there is nobody left to wait for (AIs never ack
+            # -- the pause is a human-pacing feature; an all-AI normal table
+            # skips it outright).
+            unacked = [
+                s
+                for s in self.table.players()
+                if s.player_type == "human" and s.connected and s.player_id in seated and s.player_id not in self.table.result_acks
+            ]
+            if not unacked:
+                return
+            await asyncio.sleep(0.2)
 
     async def _send_pot_result(self, chips: dict[str, int], conclusion: PotWon | PotWipedOut) -> None:
         if isinstance(conclusion, PotWon):

@@ -36,6 +36,7 @@ export function render(el, state, actions) {
     </div>
     ${!isSpectator && state.cuccoWindow ? renderCuccoModal(state) : ""}
     ${!isSpectator && state.continuePrompt ? renderContinueModal(state) : ""}
+    ${state.resultPause ? renderResultPauseModal(state, isSpectator) : ""}
   `;
 
   el.querySelector("#dealer-ready-btn")?.addEventListener("click", actions.sendDealerReady);
@@ -45,6 +46,7 @@ export function render(el, state, actions) {
   el.querySelector("#cucco-pass-btn")?.addEventListener("click", actions.sendCuccoPass);
   el.querySelector("#continue-yes-btn")?.addEventListener("click", () => actions.sendContinue(true));
   el.querySelector("#continue-no-btn")?.addEventListener("click", () => actions.sendContinue(false));
+  el.querySelector("#result-ack-btn")?.addEventListener("click", () => actions.sendResultAck());
 }
 
 // One always-visible line answering "who/what are we waiting on right now".
@@ -308,6 +310,34 @@ function renderContinueModal(state) {
         <p class="countdown">残り ${countdown(c.deadline)} 秒</p>
         <button id="continue-yes-btn">続行する</button>
         <button id="continue-no-btn" class="secondary">離脱する</button>
+      </div>
+    </div>
+  `;
+}
+
+// Result-review window (broadcast `result_pause`): the outcome as a modal
+// over everyone's screen, with a countdown. Players can ack to skip -- the
+// server proceeds early once every seated human has confirmed.
+function renderResultPauseModal(state, isSpectator) {
+  const pot = state.lastPotResult;
+  const body = pot
+    ? `<p>${
+        pot.result === "won"
+          ? `${esc(seatName(state, pot.winner))} が ${pot.amount} 枚を獲得しました!`
+          : `このポット(${pot.amount}枚)は次のポットへ持ち越しになりました。`
+      }</p>${summaryTable(state, state.lastDealOpened, state.lastDealResult, state.disqualifiedInfo, null)}`
+    : summaryTable(state, state.lastDealOpened, state.lastDealResult, state.disqualifiedInfo, null);
+  return `
+    <div class="modal-overlay">
+      <div class="modal result-modal">
+        <h2>${pot ? "ポット結果" : "判定結果"}</h2>
+        ${body}
+        <p class="countdown">残り ${countdown(state.resultPause.deadline)} 秒</p>
+        ${
+          isSpectator
+            ? `<p class="muted">まもなく進行します。</p>`
+            : `<button id="result-ack-btn">確認した(全員そろえば先へ進む)</button>`
+        }
       </div>
     </div>
   `;

@@ -96,8 +96,8 @@ function renderCreate(el, state, actions) {
           </select>
         </label>
         <label><input type="checkbox" id="horse-house-reveal"> 馬/家どちらの拒否か公開する</label>
-        <label>結果確認の待機時間(秒)
-          <input id="result-pause" type="number" min="0" max="60" step="1" value="5">
+        <label>結果確認の待機時間(秒。全員が確認ボタンを押せば短縮)
+          <input id="result-pause" type="number" min="0" max="60" step="1" value="15">
         </label>
         <button type="submit">作成する</button>
         <button type="button" id="back-btn" class="secondary">戻る</button>

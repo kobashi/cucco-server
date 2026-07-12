@@ -35,6 +35,7 @@ export function createStore() {
     firstActionSeen: false,
 
     // active prompts (only ever set when *this* session is the addressee)
+    resultPause: null, // { deadline } -- result-review modal window (broadcast to everyone)
     dealerReadyPrompt: null, // { timeoutSec, deadline }
     turnPrompt: null, // { timeoutSec, deadline }
     cuccoWindow: null, // { timeoutSec, deadline }

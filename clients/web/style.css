@@ -142,6 +142,9 @@ button:disabled { opacity: 0.5; cursor: default; }
   text-align: center;
 }
 .cucco-modal { border: 3px solid var(--urgent); animation: pulse 1s infinite; }
+.result-modal { max-width: 600px; text-align: left; }
+.result-modal .countdown { text-align: center; }
+.result-modal button { display: block; margin: 0.4rem auto 0; }
 .countdown { font-size: 1.4rem; font-weight: bold; color: var(--urgent); }
 
 @keyframes pulse {

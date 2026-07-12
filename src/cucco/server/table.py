@@ -42,6 +42,10 @@ class Table:
     # _start_game has already scheduled the evaluation task (but before its
     # first Game exists) can't launch a second EvaluationRunner.
     evaluation_started: bool = False
+    # Players who confirmed the current result screen (`result_ack`); the
+    # runner's result pause ends early once every seated, connected player
+    # is in here. Cleared at the start of each pause.
+    result_acks: set[str] = field(default_factory=set)
 
     def add_session(self, session: PlayerSession) -> None:
         self.sessions[session.player_id] = session

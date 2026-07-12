@@ -64,7 +64,7 @@ function update(mutator) {
 setInterval(() => {
   const now = Date.now();
   let expired = false;
-  for (const key of ["dealerReadyPrompt", "turnPrompt", "cuccoWindow", "continuePrompt"]) {
+  for (const key of ["dealerReadyPrompt", "turnPrompt", "cuccoWindow", "continuePrompt", "resultPause"]) {
     if (state[key] && state[key].deadline <= now) {
       state[key] = null;
       expired = true;
@@ -221,6 +221,10 @@ const actions = {
   sendContinue(stay) {
     conn.send("continue_declare", { continue: stay });
     update(() => (state.continuePrompt = null));
+  },
+  sendResultAck() {
+    conn.send("result_ack", {});
+    update(() => (state.resultPause = null));
   },
 
   // Stay at the same table after game_ended: the server has already reset
@@ -385,6 +389,16 @@ function handleEvent(type, p) {
         state.lastDealResult = null;
         state.lastPotResult = null;
         state.lastDealOpened = null;
+        state.resultPause = null;
+        // Reorder the on-screen seats to the game's (randomized) seating so
+        // the arrangement matches the actual turn direction, and announce it.
+        if (Array.isArray(p.participants) && p.participants.length) {
+          const rank = new Map(p.participants.map((pid, i) => [pid, i]));
+          state.table.seats.sort(
+            (a, b) => (rank.get(a.player_id) ?? p.participants.length) - (rank.get(b.player_id) ?? p.participants.length)
+          );
+          pushLog(state, `着席順: ${p.participants.map((pid) => seatName(state, pid)).join(" → ")}`);
+        }
         state.screen = "table";
         pushLog(state, `ポット ${p.pot_number} 開始(親: ${seatName(state, p.dealer_id)}、ポット${state.potChips}枚)`);
       });
@@ -412,6 +426,7 @@ function handleEvent(type, p) {
         state.pendingContinueIds = new Set();
         state.dozoSent = false;
         state.firstActionSeen = false;
+        state.resultPause = null;
         state._discardPileLenAtDealStart = state.table.discard_pile.length;
         state.lastDealOpened = null;
         state.lastDealResult = null;
@@ -437,6 +452,15 @@ function handleEvent(type, p) {
     case "cucco_window":
       update(() => {
         state.cuccoWindow = { timeoutSec: p.timeout_sec, deadline: Date.now() + p.timeout_sec * 1000 };
+      });
+      return;
+
+    case "result_pause":
+      // Result-review window: everyone gets a modal with the outcome; the
+      // server moves on early once every seated human has acked (or at the
+      // deadline, whichever comes first).
+      update(() => {
+        state.resultPause = { deadline: Date.now() + p.timeout_sec * 1000 };
       });
       return;
 
@@ -609,6 +633,7 @@ function handleEvent(type, p) {
         // Session deliberately kept: the room resets server-side and the
         // ended screen offers 続ける (another game at the same table).
         state.readySent = false;
+        state.resultPause = null;
       });
       return;
 
