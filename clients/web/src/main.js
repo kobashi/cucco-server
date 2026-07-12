@@ -582,7 +582,9 @@ function handleExchangeResult(p) {
       break;
     case "deck_exchange_accepted":
       if (p.actor === me) state.yourHand = p.new_card;
-      pushLog(state, `${seatName(state, p.actor)} が山札とカンビオ`);
+      // Both cards are public: the deck draw happens in the open and the
+      // given-up card lands face-up in the discard pile.
+      pushLog(state, `${seatName(state, p.actor)} が山札とカンビオ(引いた: ${p.new_card} / 出した: ${p.given_up_card})`);
       turnOwner = p.actor;
       break;
     case "refused":
@@ -590,7 +592,7 @@ function handleExchangeResult(p) {
       turnOwner = p.requester;
       break;
     case "deck_draw_refused":
-      pushLog(state, `山札が拒否(${p.reason})`);
+      pushLog(state, `山札が拒否(${p.reason}${p.drawn_rank ? ": " + p.drawn_rank : ""})`);
       turnOwner = p.actor;
       break;
   }

@@ -56,12 +56,15 @@ def test_exchange_accepted_hides_card_values_from_bystanders():
     assert target_view["your_new_card"] == Rank.N6.value
 
 
-def test_deck_exchange_accepted_reveals_only_to_the_actor():
+def test_deck_exchange_accepted_is_fully_public():
+    # Unlike a player-to-player exchange: the deck draw happens in the open
+    # and the given-up card lands face-up in the discard pile, so everyone
+    # sees both cards (docs/rules/final_rules.md 親の山札交換).
     wire = translate(DeckExchangeAccepted(actor="A", new_card=Rank.N10, given_up_card=Rank.N3))
-    assert wire.for_recipient("A")["new_card"] == Rank.N10.value
-    assert wire.for_recipient("A")["given_up_card"] == Rank.N3.value
     bystander = wire.for_recipient("B")
-    assert "new_card" not in bystander
+    assert bystander["new_card"] == Rank.N10.value
+    assert bystander["given_up_card"] == Rank.N3.value
+    assert wire.for_recipient("A")["new_card"] == Rank.N10.value
 
 
 def test_exchange_refused_is_fully_public():

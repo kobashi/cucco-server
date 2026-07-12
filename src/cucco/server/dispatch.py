@@ -311,6 +311,11 @@ class ConnectionHandler:
             raise ProtocolError("start_pot is only available on normal-mode tables")
         if table.game is not None or table.evaluation_started:
             return  # already started; no-op
+        # Pressing start IS the creator's participation declaration -- the
+        # organizer's flow is "wait for everyone else to ready up, then
+        # start", not "ready yourself like a guest and then also start".
+        if self.session.player_type != "spectator":
+            table.ready_ids.add(self.session.player_id)
         participants = [pid for pid in _eligible_participant_ids(table) if pid in table.ready_ids]
         if len(participants) < table.min_players:
             raise ProtocolError(f"not enough players are ready yet (need at least {table.min_players})")

@@ -96,6 +96,9 @@ function renderCreate(el, state, actions) {
           </select>
         </label>
         <label><input type="checkbox" id="horse-house-reveal"> 馬/家どちらの拒否か公開する</label>
+        <label>結果確認の待機時間(秒)
+          <input id="result-pause" type="number" min="0" max="60" step="1" value="5">
+        </label>
         <button type="submit">作成する</button>
         <button type="button" id="back-btn" class="secondary">戻る</button>
       </form>
@@ -121,6 +124,7 @@ function renderCreate(el, state, actions) {
       starting_chips: Math.round(Number(el.querySelector("#starting-chips").value)),
       disqualified_card_disclosure: el.querySelector("#disclosure").value,
       horse_house_reveal: el.querySelector("#horse-house-reveal").checked,
+      result_pause_sec: Math.max(0, Math.min(60, Number(el.querySelector("#result-pause").value) || 0)),
     });
   });
 }

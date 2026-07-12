@@ -325,6 +325,31 @@ async def test_creator_can_start_pot_early_once_enough_players_are_ready():
 
 
 @pytest.mark.asyncio
+async def test_start_pot_auto_readies_the_creator():
+    # The organizer's flow is "wait for guests to ready, then press start" --
+    # pressing start IS their participation declaration, no separate `ready`
+    # needed (and the waiting-room UI no longer offers them one).
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    p2 = ConnectionHandler(FakeConnection(), registry)
+    await p2.handle_message(build_envelope("identify", {"name": "Bob", "player_type": "human"}))
+    await p2.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    await p2.handle_message(build_envelope("ready", {}))
+    # creator never sends `ready`
+    await creator.handle_message(build_envelope("start_pot", {}))
+
+    table = registry.get(room_id)
+    assert table.game is not None
+    assert set(table.game.seats) == {creator.session.player_id, p2.session.player_id}
+
+
+@pytest.mark.asyncio
 async def test_non_creator_cannot_start_pot():
     registry = TableRegistry()
     creator = ConnectionHandler(FakeConnection(), registry)

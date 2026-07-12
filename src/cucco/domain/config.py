@@ -35,6 +35,11 @@ class GameConfig:
     turn_timeout_ai_sec: float = 10.0
     cucco_window_timeout_human_sec: float = 10.0
     cucco_window_timeout_ai_sec: float = 2.0
+    # Reading pause after deal_opened (before continue prompts) and after
+    # pot_result (before the next pot) so humans get a moment to review the
+    # result before the game moves on. 0 = no pause (the server otherwise
+    # proceeds immediately); ignored in evaluation mode.
+    result_pause_sec: float = 0.0
 
     def __post_init__(self) -> None:
         if self.end_condition == "round_limit" and self.round_limit is None:
@@ -59,3 +64,5 @@ class GameConfig:
             value = getattr(self, field_name)
             if not (0 < value <= MAX_TIMEOUT_SEC):
                 raise ValueError(f"{field_name} must be between 0 and {MAX_TIMEOUT_SEC} seconds")
+        if not (0 <= self.result_pause_sec <= 60):
+            raise ValueError("result_pause_sec must be between 0 and 60 seconds")

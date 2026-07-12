@@ -51,6 +51,7 @@ class CreateTable:
     turn_timeout_ai_sec: float = 10.0
     cucco_window_timeout_human_sec: float = 10.0
     cucco_window_timeout_ai_sec: float = 2.0
+    result_pause_sec: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -225,6 +226,7 @@ def _parse_create_table(payload: dict) -> CreateTable:
         turn_timeout_ai_sec=_optional_number(payload, "turn_timeout_ai_sec", 10.0),
         cucco_window_timeout_human_sec=_optional_number(payload, "cucco_window_timeout_human_sec", 10.0),
         cucco_window_timeout_ai_sec=_optional_number(payload, "cucco_window_timeout_ai_sec", 2.0),
+        result_pause_sec=_optional_number(payload, "result_pause_sec", 0.0),
     )
 
 
@@ -278,4 +280,5 @@ def create_table_to_config(action: CreateTable) -> GameConfig:
         turn_timeout_ai_sec=action.turn_timeout_ai_sec,
         cucco_window_timeout_human_sec=action.cucco_window_timeout_human_sec,
         cucco_window_timeout_ai_sec=action.cucco_window_timeout_ai_sec,
+        result_pause_sec=action.result_pause_sec,
     )

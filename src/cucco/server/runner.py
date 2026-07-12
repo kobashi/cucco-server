@@ -296,6 +296,12 @@ class TableRunner:
                 await self._send_event(opened)
             losers = opened.losers if opened is not None else ()
 
+            # Reading pause: everyone gets a moment to review the opened
+            # hands BEFORE any loser's continue prompt pops over them and
+            # before the next deal starts (the server otherwise proceeds
+            # immediately, leaving no time to take the result in).
+            await self._result_pause()
+
             loser_events = pot.resolve_losers(deal, losers)
             await self._send_events(loser_events)
             resolution_events = list(loser_events)
@@ -328,6 +334,7 @@ class TableRunner:
                 instant_win = next((e for e in game_events if isinstance(e, PotWon)), None)
                 if instant_win is not None:
                     await self._send_pot_result(game.chips, instant_win)
+                await self._result_pause()  # review the pot outcome before the next pot deals
                 await self._broadcast_state_snapshot()
                 return  # this pot is done; run() will start the next one (or stop)
 
@@ -385,6 +392,12 @@ class TableRunner:
             ],
         }
         await self._broadcast("deal_result", lambda pid: payload)
+
+    async def _result_pause(self) -> None:
+        # Evaluation mode explicitly omits human-pacing waits
+        # (docs/protocol/design.md 「AI専用高速評価モード」).
+        if self.table.config.mode != "evaluation" and self.table.config.result_pause_sec > 0:
+            await asyncio.sleep(self.table.config.result_pause_sec)
 
     async def _send_pot_result(self, chips: dict[str, int], conclusion: PotWon | PotWipedOut) -> None:
         if isinstance(conclusion, PotWon):

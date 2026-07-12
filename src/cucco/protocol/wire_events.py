@@ -82,14 +82,16 @@ def translate(event: DealEvent | PotEvent | GameEvent) -> WireEvent | None:
         )
 
     if isinstance(event, DeckExchangeAccepted):
+        # Fully public, unlike a player-to-player exchange: at a physical
+        # table the card drawn from the deck is visible to everyone, and the
+        # card given up lands face-up in the discard pile (dealer_swap).
         return WireEvent(
             "exchange_result",
-            public={"result": "deck_exchange_accepted", "actor": event.actor},
-            private={
-                event.actor: {
-                    "new_card": _rank_value(event.new_card),
-                    "given_up_card": _rank_value(event.given_up_card),
-                }
+            public={
+                "result": "deck_exchange_accepted",
+                "actor": event.actor,
+                "new_card": _rank_value(event.new_card),
+                "given_up_card": _rank_value(event.given_up_card),
             },
         )
 
