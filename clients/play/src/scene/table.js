@@ -7,6 +7,16 @@
 import { esc } from "../../../web-common/utils.js";
 import { RANK_ORDER } from "../../../web-common/cards.js";
 
+// Card markup helpers, shared with the animation layer (flight ghosts use
+// the exact same DOM as the slots they fly between).
+export function cardHTML(rank, elevated = false) {
+  if (rank == null) return `<div class="card card-back"></div>`;
+  const special = !/^\d+$/.test(rank);
+  return `<div class="card card-face ${special ? "special" : ""}" data-rank="${esc(rank)}">
+    <span>${esc(rank)}</span>${elevated ? '<span class="elevated">↑最強</span>' : ""}
+  </div>`;
+}
+
 export function createTableScene(root) {
   root.innerHTML = `
     <div class="felt">
@@ -65,10 +75,7 @@ export function createTableScene(root) {
   }
 
   function cardFaceHTML(rank, elevated = false) {
-    const special = !/^\d+$/.test(rank);
-    return `<div class="card card-face ${special ? "special" : ""}" data-rank="${esc(rank)}">
-      <span>${esc(rank)}</span>${elevated ? '<span class="elevated">↑最強</span>' : ""}
-    </div>`;
+    return cardHTML(rank, elevated);
   }
 
   function sync(state) {
@@ -130,5 +137,14 @@ export function createTableScene(root) {
       : "";
   }
 
-  return { sync, seatEls, root };
+  return {
+    sync,
+    seatEls,
+    root,
+    slotEl: (pid) => seatEls.get(pid)?.querySelector(".card-slot") ?? null,
+    seatEl: (pid) => seatEls.get(pid) ?? null,
+    deckEl: () => root.querySelector("#scene-deck"),
+    potEl: () => root.querySelector("#scene-pot"),
+    discardEl: () => root.querySelector("#scene-discard") ?? root.querySelector(".center"),
+  };
 }

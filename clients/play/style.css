@@ -164,6 +164,10 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 .deal-summary td.c { font-weight: 700; }
 .deal-summary tr.loser td { color: var(--urgent); }
 
+/* -- animation layer -- */
+.fly-ghost { position: fixed; z-index: 15; pointer-events: none; }
+.chip-ghost { font-size: 1.6rem; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); }
+
 .conn-banner {
   position: sticky; top: 0; z-index: 30; padding: 0.5rem 1rem; text-align: center;
   font-weight: 700; color: #fff; background: var(--urgent);

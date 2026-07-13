@@ -6,7 +6,8 @@ import { CuccoConnection, wsUrlFor } from "../../web-common/connection.js";
 import { loadSession, saveSession, clearSession } from "../../web-common/persistence.js";
 import { sanitizeWsHost } from "../../web-common/utils.js";
 import { createGameState } from "./gameState.js";
-import { createTableScene } from "./scene/table.js";
+import { createTableScene, cardHTML } from "./scene/table.js";
+import { createQueue, fly, pause } from "./anim/queue.js";
 import { renderLobby, renderWaiting } from "./ui/panels.js";
 import { renderStatus, renderDock, renderModals, renderLogDrawer } from "./ui/overlays.js";
 
@@ -23,13 +24,11 @@ if (wsParam) {
 let savedHost = localStorage.getItem("cucco_ws_host") || `${location.hostname || "localhost"}:8765`;
 let conn = new CuccoConnection(wsUrlFor(savedHost));
 
+const queue = createQueue();
+
 const game = createGameState({
   onChange: () => render(),
-  onOp: (op) => {
-    // M1: no animation queue yet -- the scene re-syncs via onChange. The op
-    // stream is in place for M2's queue to consume.
-    if (op.kind === "rejected") actions.resync();
-  },
+  onOp: handleOp,
   onToast: showToast,
 });
 const state = game.state;
@@ -37,6 +36,133 @@ const state = game.state;
 // UI-only state (which screen family is showing)
 let uiPhase = "name"; // name | lobby | create | join | waiting | table
 let connectionStatus = "connecting";
+
+// -- op -> animation mapping -----------------------------------------------------
+//
+// Ops arrive AFTER the state has already mutated (state is authoritative);
+// what's queued here is purely how the change is shown. While the queue is
+// busy, render() leaves the scene alone -- each queued sequence ends with
+// its own scene.sync, so slots reveal their new contents only when the
+// flight lands. Prompts addressed to me fast-forward everything (the server
+// clock doesn't wait for theatrics).
+
+const scene = () => sceneRefs?.scene ?? null;
+const syncStep = () => queue.enqueue(async () => sceneRefs?.scene?.sync(state));
+
+function handleOp(op) {
+  switch (op.kind) {
+    case "rejected":
+      actions.resync();
+      return;
+
+    case "prompt":
+      queue.fastForward();
+      return;
+
+    case "rebuild":
+      queue.clear();
+      return; // onChange render syncs immediately once the queue is empty
+
+    case "deal_started": {
+      const seatsInOrder = (state.table?.seats ?? []).filter((s) => s.in_current_pot !== false).map((s) => s.player_id);
+      queue.enqueue(async (instant) => {
+        const sc = scene();
+        if (!sc || instant) return;
+        for (const pid of seatsInOrder) {
+          await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(pid), html: cardHTML(null), duration: 160 });
+        }
+      });
+      syncStep();
+      return;
+    }
+
+    case "exchange": {
+      const { requester, target } = op;
+      queue.enqueue(async (instant) => {
+        const sc = scene();
+        if (!sc || instant) return;
+        await Promise.all([
+          fly(queue, { fromEl: sc.slotEl(requester), toEl: sc.slotEl(target), html: cardHTML(null), duration: 550 }),
+          fly(queue, { fromEl: sc.slotEl(target), toEl: sc.slotEl(requester), html: cardHTML(null), duration: 550 }),
+        ]);
+      });
+      syncStep();
+      return;
+    }
+
+    case "deck_exchange": {
+      const { actor, givenUp } = op;
+      queue.enqueue(async (instant) => {
+        const sc = scene();
+        if (!sc || instant) return;
+        await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(actor), html: cardHTML(null), duration: 450 });
+        await fly(queue, { fromEl: sc.slotEl(actor), toEl: sc.discardEl(), html: cardHTML(givenUp), duration: 450 });
+      });
+      syncStep();
+      return;
+    }
+
+    case "deck_refused": {
+      const { drawn } = op;
+      queue.enqueue(async (instant) => {
+        const sc = scene();
+        if (!sc || instant) return;
+        await fly(queue, { fromEl: sc.deckEl(), toEl: sc.discardEl(), html: cardHTML(drawn), duration: 450 });
+      });
+      syncStep();
+      return;
+    }
+
+    case "deal_opened":
+      queue.enqueue(async (instant) => {
+        const sc = scene();
+        if (!sc) return;
+        sc.sync(state); // faces are now in the slots
+        if (instant) return;
+        const faces = sc.root.querySelectorAll(".card-slot .card-face");
+        faces.forEach((el, i) => {
+          const anim = el.animate(
+            [
+              { transform: "rotateY(90deg) scale(1.06)", opacity: 0.4 },
+              { transform: "rotateY(0deg) scale(1)", opacity: 1 },
+            ],
+            { duration: 260, delay: i * 60, easing: "ease-out", fill: "backwards" }
+          );
+          queue._track(anim);
+        });
+        await pause(queue, 260 + faces.length * 60);
+      });
+      return;
+
+    case "chips_paid": {
+      const { player } = op;
+      queue.enqueue(async (instant) => {
+        const sc = scene();
+        if (!sc || instant) return;
+        await fly(queue, { fromEl: sc.seatEl(player), toEl: sc.potEl(), html: '<div class="chip-ghost">🪙</div>', duration: 500 });
+      });
+      syncStep();
+      return;
+    }
+
+    case "pot_result": {
+      if (op.result === "won") {
+        const { winner } = op;
+        queue.enqueue(async (instant) => {
+          const sc = scene();
+          if (!sc || instant) return;
+          await fly(queue, { fromEl: sc.potEl(), toEl: sc.seatEl(winner), html: '<div class="chip-ghost">💰</div>', duration: 600 });
+        });
+      }
+      syncStep();
+      return;
+    }
+
+    default:
+      syncStep();
+      return;
+  }
+}
 
 // -- rendering ----------------------------------------------------------------
 
@@ -58,6 +184,7 @@ function render() {
     return;
   }
 
+  let justCreated = false;
   if (!sceneRefs) {
     screenEl.innerHTML = `
       <div class="play-root">
@@ -79,13 +206,16 @@ function render() {
       logEl: screenEl.querySelector("#log-holder"),
       headerEl: screenEl.querySelector(".play-header"),
     };
+    justCreated = true;
   }
   const t = state.table;
   sceneRefs.headerEl.querySelector("#hdr-room").textContent = `卓 ${state.roomId ?? ""}`;
   sceneRefs.headerEl.querySelector("#hdr-pot").textContent = t
     ? `ポット${t.pot_number}・ディール${t.deal_number}`
     : "";
-  sceneRefs.scene.sync(state);
+  // While animations are in flight, the scene is owned by the queue (each
+  // sequence ends with its own sync); the overlays always track live state.
+  if (justCreated || !queue.busy) sceneRefs.scene.sync(state);
   renderStatus(sceneRefs.statusEl, state, game.seatName);
   renderDock(sceneRefs.dockEl, state, actions);
   renderModals(sceneRefs.modalEl, state, actions, game.seatName);
