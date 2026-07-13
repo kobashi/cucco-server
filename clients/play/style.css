@@ -1,0 +1,182 @@
+:root {
+  color-scheme: light dark;
+  --fg: #1c1c1e;
+  --bg: #efece6;
+  --panel-bg: #ffffff;
+  --border: #d8d4cc;
+  --accent: #8a2b2b;
+  --accent-fg: #fff;
+  --muted: #767066;
+  --urgent: #c22525;
+  --felt: radial-gradient(ellipse at 50% 42%, #2e7d4f 0%, #1d5c38 62%, #14432a 100%);
+  --felt-rim: #0f3520;
+  --card-bg: #fdfcf8;
+  --card-back: repeating-linear-gradient(45deg, #7a2727 0 6px, #6a1f1f 6px 12px);
+  font-family: system-ui, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #ececec;
+    --bg: #141416;
+    --panel-bg: #232327;
+    --border: #3b3b40;
+    --accent: #c9534f;
+    --muted: #9a958c;
+    --card-bg: #f4f1e8;
+  }
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); }
+button {
+  padding: 0.55rem 1.1rem; margin: 0.25rem; border: none; border-radius: 9px;
+  background: var(--accent); color: var(--accent-fg); cursor: pointer; font-size: 1rem;
+}
+button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--border); }
+button:disabled { opacity: 0.5; cursor: default; }
+.muted { color: var(--muted); }
+.error { color: var(--urgent); }
+
+/* -- lobby / waiting panels (visual language shared with the reference) -- */
+.panel {
+  max-width: 480px; margin: 5vh auto; padding: 1.6rem;
+  background: var(--panel-bg); border: 1px solid var(--border); border-radius: 14px;
+}
+.panel h1 .sub { font-size: 0.55em; color: var(--muted); font-weight: normal; }
+form label { display: block; margin: 0.6rem 0; }
+input, select { width: 100%; padding: 0.45rem; margin-top: 0.2rem; }
+fieldset { border: none; padding: 0; margin: 0.6rem 0; }
+.callout { border: 1px solid var(--border); border-radius: 10px; padding: 0.8rem; margin: 0.8rem 0; }
+.room-id { font-size: 1.3em; letter-spacing: 0.12em; }
+.seat-list { list-style: none; padding: 0; }
+.seat-list li { padding: 0.3rem 0; }
+.ws-host-details { margin-top: 1.2rem; font-size: 0.9em; }
+.ws-host-details summary { cursor: pointer; color: var(--muted); }
+
+/* -- play screen ------------------------------------------------------------ */
+.play-root { display: flex; flex-direction: column; height: 100vh; }
+.play-header {
+  display: flex; justify-content: space-between; padding: 0.45rem 1rem;
+  font-weight: 600; font-size: 0.95rem;
+}
+#status-holder { padding: 0 0.8rem; }
+.status-line {
+  text-align: center; padding: 0.35rem 0.8rem; border-radius: 8px; font-size: 0.98rem;
+  background: var(--panel-bg); border: 1px solid var(--border);
+}
+.status-line.mine { border-color: var(--urgent); color: var(--urgent); font-weight: 700; animation: pulse 1.2s infinite; }
+
+#scene-holder { flex: 1; position: relative; min-height: 0; }
+.felt {
+  position: absolute; inset: 2% 3%;
+  background: var(--felt);
+  border-radius: 48% / 42%;
+  box-shadow: inset 0 0 0 10px var(--felt-rim), inset 0 0 60px rgba(0,0,0,0.45), 0 12px 30px rgba(0,0,0,0.35);
+}
+.seat-layer { position: absolute; inset: 0; }
+
+.center {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 1.4rem; flex-direction: column;
+}
+.center > * { display: flex; align-items: center; gap: 0.5rem; }
+.deck { position: relative; }
+.deck-count, .pot-count { color: #fff; font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
+.pot-stack { font-size: 1.5rem; }
+.discard { max-width: 320px; display: flex; flex-wrap: wrap; gap: 0.25rem; justify-content: center; }
+.discard-title { width: 100%; text-align: center; color: #d9e8dd; font-size: 0.75rem; }
+.discard-chip {
+  background: rgba(255,255,255,0.92); color: #222; border-radius: 6px;
+  padding: 0.1rem 0.45rem; font-size: 0.85rem; font-weight: 600;
+}
+
+/* -- seats -- */
+.player-seat {
+  position: absolute; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; gap: 0.18rem;
+  width: 108px; text-align: center;
+}
+.name-plate {
+  background: rgba(0,0,0,0.55); color: #fff; border-radius: 999px;
+  padding: 0.12rem 0.7rem; font-size: 0.85rem; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chip-count { color: #ffe9a8; font-size: 0.8rem; font-weight: 700; text-shadow: 0 1px 2px rgba(0,0,0,0.7); }
+.chip-count::before { content: "🪙 "; }
+.seat-badges { color: #ffb0b0; font-size: 0.72rem; font-weight: 700; text-shadow: 0 1px 2px rgba(0,0,0,0.8); min-height: 0.9em; }
+.player-seat.is-out { opacity: 0.5; }
+.player-seat.is-disqualified .name-plate { text-decoration: line-through; }
+.player-seat.is-disconnected .name-plate { border: 1px dashed #ffb0b0; }
+
+.turn-ring {
+  position: absolute; inset: -8px; border-radius: 14px; pointer-events: none;
+  border: 3px solid transparent;
+}
+.player-seat.is-turn .turn-ring { border-color: #ffd75e; box-shadow: 0 0 14px #ffd75e88; animation: pulse 1.2s infinite; }
+
+/* -- cards -- */
+.card {
+  width: 54px; height: 76px; border-radius: 7px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+.card-slot { min-height: 80px; display: flex; justify-content: center; }
+.card-back { background: var(--card-back); border: 2px solid #fff; }
+.card-face {
+  background: var(--card-bg); color: #1c1c1e; border: 1px solid #bbb;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 1.05rem; padding: 2px;
+}
+.card-face.special { color: var(--accent); border-color: var(--accent); }
+.card-face .elevated { font-size: 0.6rem; color: #b8860b; }
+
+/* -- dock / log / modals -- */
+#dock-holder {
+  min-height: 64px; display: flex; align-items: center; justify-content: center; gap: 0.6rem;
+  padding: 0.4rem;
+}
+.dock-timer { font-weight: 800; color: var(--urgent); font-size: 1.1rem; min-width: 3.2em; text-align: right; }
+
+#log-holder { padding: 0 0.8rem 0.6rem; }
+.log-drawer summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
+.log-drawer ul {
+  list-style: none; margin: 0.3rem 0 0; padding: 0.4rem 0.7rem; max-height: 160px; overflow-y: auto;
+  background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; font-size: 0.85rem;
+}
+.log-drawer li { padding: 0.12rem 0; border-bottom: 1px solid var(--border); }
+
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center; z-index: 20;
+}
+.modal {
+  background: var(--panel-bg); border-radius: 14px; padding: 1.4rem;
+  max-width: 380px; width: 92%; text-align: center;
+}
+.modal.wide { max-width: 620px; text-align: left; }
+.modal.wide .countdown, .modal.wide button { display: block; margin-left: auto; margin-right: auto; text-align: center; }
+.modal.urgent { border: 3px solid var(--urgent); animation: pulse 1s infinite; }
+.countdown { font-size: 1.3rem; font-weight: 800; color: var(--urgent); }
+.ranking { font-size: 1.05rem; }
+
+.summary-scroll { overflow-x: auto; }
+.deal-summary { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.deal-summary th, .deal-summary td { padding: 0.3rem 0.55rem; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.deal-summary td.c { font-weight: 700; }
+.deal-summary tr.loser td { color: var(--urgent); }
+
+.conn-banner {
+  position: sticky; top: 0; z-index: 30; padding: 0.5rem 1rem; text-align: center;
+  font-weight: 700; color: #fff; background: var(--urgent);
+}
+
+#toast {
+  position: fixed; left: 50%; bottom: 1.4rem; transform: translate(-50%, 20px);
+  background: var(--fg); color: var(--bg); padding: 0.6rem 1.2rem; border-radius: 9px;
+  opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s; z-index: 40;
+}
+#toast.visible { opacity: 0.95; transform: translate(-50%, 0); }
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(194, 37, 37, 0.4); }
+  50% { box-shadow: 0 0 0 9px rgba(194, 37, 37, 0); }
+}

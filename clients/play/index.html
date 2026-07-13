@@ -3,19 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Cucco - プレイ用クライアント(準備中)</title>
-  <style>
-    body { font-family: system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; margin: 0; }
-    main { text-align: center; }
-  </style>
+  <title>Cucco</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main>
-    <h1>プレイ用クライアントは準備中です</h1>
-    <p>当面は<a id="ref-link" href="../web/">リファレンスクライアント</a>をご利用ください。</p>
-  </main>
-  <script>
-    if (location.search) document.getElementById("ref-link").href += location.search;
-  </script>
+  <div id="screen"></div>
+  <div id="toast"></div>
+  <script type="module" src="src/main.js"></script>
 </body>
 </html>

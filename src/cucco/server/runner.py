@@ -365,6 +365,11 @@ class TableRunner:
             conclusion = next((e for e in outcome_events if isinstance(e, (PotWon, PotWipedOut))), None)
             if conclusion is not None:
                 await self._send_pot_result(pot.chips, conclusion)
+                # The review pause runs BEFORE the next pot's events go out:
+                # process_pot_outcome broadcasts pot_started (and possibly
+                # game_ended), which resets clients' result views -- pausing
+                # after it left everyone staring at an already-cleared modal.
+                await self._result_pause()
                 game_events = game.process_pot_outcome(conclusion)
                 await self._send_events(game_events)
                 # docs/protocol/design.md:159 -- after a wipeout carryover,
@@ -375,12 +380,6 @@ class TableRunner:
                 instant_win = next((e for e in game_events if isinstance(e, PotWon)), None)
                 if instant_win is not None:
                     await self._send_pot_result(game.chips, instant_win)
-                if not game.is_finished:
-                    # Review the pot outcome before the next pot deals. No
-                    # pause when the game just ended: the ranking screen is
-                    # user-paced, and delaying here would also delay the
-                    # room's reset for the 続ける flow.
-                    await self._result_pause()
                 await self._broadcast_state_snapshot()
                 return  # this pot is done; run() will start the next one (or stop)
 
