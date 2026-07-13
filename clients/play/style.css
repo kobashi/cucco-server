@@ -168,6 +168,18 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 .fly-ghost { position: fixed; z-index: 15; pointer-events: none; }
 .chip-ghost { font-size: 1.6rem; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); }
 
+.fx-banner {
+  position: fixed; left: 50%; top: 42%; transform: translate(-50%, -50%);
+  z-index: 18; pointer-events: none;
+  padding: 0.6rem 1.6rem; border-radius: 12px;
+  font-size: 1.5rem; font-weight: 800; letter-spacing: 0.04em;
+  background: rgba(0,0,0,0.75); color: #fff;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.6);
+}
+.fx-banner.warn { background: rgba(140, 90, 0, 0.85); }
+.fx-banner.danger { background: rgba(160, 24, 24, 0.88); }
+.fx-banner.cucco { background: rgba(120, 20, 20, 0.92); font-size: 2rem; border: 2px solid #ffd75e; }
+
 .conn-banner {
   position: sticky; top: 0; z-index: 30; padding: 0.5rem 1rem; text-align: center;
   font-weight: 700; color: #fff; background: var(--urgent);

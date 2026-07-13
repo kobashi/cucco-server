@@ -8,6 +8,8 @@ import { sanitizeWsHost } from "../../web-common/utils.js";
 import { createGameState } from "./gameState.js";
 import { createTableScene, cardHTML } from "./scene/table.js";
 import { createQueue, fly, pause } from "./anim/queue.js";
+import { banner, shake } from "./anim/effects.js";
+import { REFUSAL_LABELS } from "../../web-common/cards.js";
 import { renderLobby, renderWaiting } from "./ui/panels.js";
 import { renderStatus, renderDock, renderModals, renderLogDrawer } from "./ui/overlays.js";
 
@@ -103,11 +105,58 @@ function handleOp(op) {
     }
 
     case "deck_refused": {
-      const { drawn } = op;
+      const { drawn, reason } = op;
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
         await fly(queue, { fromEl: sc.deckEl(), toEl: sc.discardEl(), html: cardHTML(drawn), duration: 450 });
+        await banner(queue, `山札: ${drawn} — ${REFUSAL_LABELS[reason] ?? reason}`, "warn");
+      });
+      syncStep();
+      return;
+    }
+
+    case "refused": {
+      const { target, reason, revealed } = op;
+      queue.enqueue(async (instant) => {
+        const sc = scene();
+        if (!sc || instant) return;
+        await shake(queue, sc.seatEl(target));
+        const label = REFUSAL_LABELS[reason] ?? reason;
+        await banner(queue, revealed ? `${label}(${revealed})` : label, "warn");
+      });
+      syncStep();
+      return;
+    }
+
+    case "cucco_declared": {
+      queue.enqueue(async (instant) => {
+        if (instant) return;
+        await banner(queue, `クク宣言!! — ${game.seatName(op.player)}`, "cucco", 1500);
+      });
+      syncStep();
+      return;
+    }
+
+    case "disqualified": {
+      const { player, card } = op;
+      queue.enqueue(async (instant) => {
+        const sc = scene();
+        if (!sc || instant) return;
+        if (card) {
+          await fly(queue, { fromEl: sc.slotEl(player), toEl: sc.discardEl(), html: cardHTML(card), duration: 450 });
+        }
+        await banner(queue, `${game.seatName(op.player)} 失格`, "danger");
+      });
+      syncStep();
+      return;
+    }
+
+    case "reshuffle": {
+      queue.enqueue(async (instant) => {
+        const sc = scene();
+        if (!sc || instant) return;
+        await fly(queue, { fromEl: sc.discardEl(), toEl: sc.deckEl(), html: cardHTML(null), duration: 500 });
       });
       syncStep();
       return;
