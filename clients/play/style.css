@@ -192,6 +192,15 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 }
 #toast.visible { opacity: 0.95; transform: translate(-50%, 0); }
 
+#sound-toggle {
+  position: fixed; top: 0.5rem; right: 0.6rem; z-index: 35;
+  width: 2.4rem; height: 2.4rem; padding: 0; margin: 0;
+  border-radius: 50%; font-size: 1.15rem; line-height: 1;
+  background: var(--panel-bg); border: 1px solid var(--border); color: var(--fg);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+#sound-toggle.off { opacity: 0.55; }
+
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(194, 37, 37, 0.4); }
   50% { box-shadow: 0 0 0 9px rgba(194, 37, 37, 0); }

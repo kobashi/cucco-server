@@ -9,6 +9,7 @@ import { createGameState } from "./gameState.js";
 import { createTableScene, cardHTML } from "./scene/table.js";
 import { createQueue, fly, pause } from "./anim/queue.js";
 import { banner, shake } from "./anim/effects.js";
+import { createSound } from "./anim/sound.js";
 import { REFUSAL_LABELS } from "../../web-common/cards.js";
 import { renderLobby, renderWaiting } from "./ui/panels.js";
 import { renderStatus, renderDock, renderModals, renderLogDrawer } from "./ui/overlays.js";
@@ -27,6 +28,18 @@ let savedHost = localStorage.getItem("cucco_ws_host") || `${location.hostname ||
 let conn = new CuccoConnection(wsUrlFor(savedHost));
 
 const queue = createQueue();
+const sound = createSound();
+
+// Effect-activation sounds, keyed by the refusal/deck-draw reason tokens.
+const REASON_SOUNDS = {
+  house_horse_skip: "skip",
+  horse_house_chain: "skip",
+  human_refusal: "human",
+  human_deck_draw: "human",
+  cat_meow: "cat",
+  cat_deck_draw: "cat",
+  cucco_refusal: "cucco",
+};
 
 const game = createGameState({
   onChange: () => render(),
@@ -59,6 +72,7 @@ function handleOp(op) {
 
     case "prompt":
       queue.fastForward();
+      sound.play("my_turn");
       return;
 
     case "rebuild":
@@ -71,6 +85,7 @@ function handleOp(op) {
         const sc = scene();
         if (!sc || instant) return;
         for (const pid of seatsInOrder) {
+          sound.play("deal");
           await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(pid), html: cardHTML(null), duration: 160 });
         }
       });
@@ -83,6 +98,7 @@ function handleOp(op) {
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
+        sound.play("exchange");
         await Promise.all([
           fly(queue, { fromEl: sc.slotEl(requester), toEl: sc.slotEl(target), html: cardHTML(null), duration: 550 }),
           fly(queue, { fromEl: sc.slotEl(target), toEl: sc.slotEl(requester), html: cardHTML(null), duration: 550 }),
@@ -97,7 +113,9 @@ function handleOp(op) {
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
+        sound.play("flip");
         await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(actor), html: cardHTML(null), duration: 450 });
+        sound.play("deal");
         await fly(queue, { fromEl: sc.slotEl(actor), toEl: sc.discardEl(), html: cardHTML(givenUp), duration: 450 });
       });
       syncStep();
@@ -109,6 +127,7 @@ function handleOp(op) {
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
+        sound.play(REASON_SOUNDS[reason] ?? "flip");
         await fly(queue, { fromEl: sc.deckEl(), toEl: sc.discardEl(), html: cardHTML(drawn), duration: 450 });
         await banner(queue, `山札: ${drawn} — ${REFUSAL_LABELS[reason] ?? reason}`, "warn");
       });
@@ -121,6 +140,7 @@ function handleOp(op) {
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
+        sound.play(REASON_SOUNDS[reason] ?? "skip");
         await shake(queue, sc.seatEl(target));
         const label = REFUSAL_LABELS[reason] ?? reason;
         await banner(queue, revealed ? `${label}(${revealed})` : label, "warn");
@@ -132,6 +152,7 @@ function handleOp(op) {
     case "cucco_declared": {
       queue.enqueue(async (instant) => {
         if (instant) return;
+        sound.play("cucco");
         await banner(queue, `クク宣言!! — ${game.seatName(op.player)}`, "cucco", 1500);
       });
       syncStep();
@@ -143,6 +164,7 @@ function handleOp(op) {
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
+        sound.play("disqualified");
         if (card) {
           await fly(queue, { fromEl: sc.slotEl(player), toEl: sc.discardEl(), html: cardHTML(card), duration: 450 });
         }
@@ -156,6 +178,7 @@ function handleOp(op) {
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
+        sound.play("reshuffle");
         await fly(queue, { fromEl: sc.discardEl(), toEl: sc.deckEl(), html: cardHTML(null), duration: 500 });
       });
       syncStep();
@@ -168,6 +191,7 @@ function handleOp(op) {
         if (!sc) return;
         sc.sync(state); // faces are now in the slots
         if (instant) return;
+        sound.play("open");
         const faces = sc.root.querySelectorAll(".card-slot .card-face");
         faces.forEach((el, i) => {
           const anim = el.animate(
@@ -188,6 +212,7 @@ function handleOp(op) {
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
+        sound.play("chip");
         await fly(queue, { fromEl: sc.seatEl(player), toEl: sc.potEl(), html: '<div class="chip-ghost">🪙</div>', duration: 500 });
       });
       syncStep();
@@ -200,6 +225,7 @@ function handleOp(op) {
         queue.enqueue(async (instant) => {
           const sc = scene();
           if (!sc || instant) return;
+          sound.play("pot_win");
           await fly(queue, { fromEl: sc.potEl(), toEl: sc.seatEl(winner), html: '<div class="chip-ghost">💰</div>', duration: 600 });
         });
       }
@@ -207,10 +233,35 @@ function handleOp(op) {
       return;
     }
 
+    case "game_ended":
+      sound.play("pot_win");
+      syncStep();
+      return;
+
     default:
       syncStep();
       return;
   }
+}
+
+// -- sound toggle (floats outside #screen so re-renders never remove it) --
+
+function mountSoundToggle() {
+  const btn = document.createElement("button");
+  btn.id = "sound-toggle";
+  btn.type = "button";
+  const refresh = () => {
+    btn.textContent = sound.enabled ? "🔊" : "🔇";
+    btn.title = sound.enabled ? "効果音: ON(クリックでOFF)" : "効果音: OFF(クリックでON)";
+    btn.classList.toggle("off", !sound.enabled);
+  };
+  btn.addEventListener("click", () => {
+    sound.toggle();
+    if (sound.enabled) sound.play("chip"); // audible confirmation
+    refresh();
+  });
+  refresh();
+  document.body.appendChild(btn);
 }
 
 // -- rendering ----------------------------------------------------------------
@@ -555,6 +606,7 @@ function wireConnection() {
 
 wireConnection();
 conn.connect();
+mountSoundToggle();
 
 const saved = loadSession();
 if (saved && saved.sessionToken && saved.roomId) {
