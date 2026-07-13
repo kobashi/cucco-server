@@ -1,4 +1,4 @@
-import { esc } from "../utils.js";
+import { esc } from "../../../web-common/utils.js";
 import { seatName } from "../state.js";
 
 export function render(el, state, actions) {

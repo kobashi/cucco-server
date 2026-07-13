@@ -1,13 +1,19 @@
-name: Deploy web client to GitHub Pages
+name: Deploy web clients to GitHub Pages
 
-# clients/web/ is a plain static site (no build step) that GitHub Pages can't
-# serve directly since it's nested under the repo root rather than at "/" or
-# "/docs" -- this workflow just uploads that directory as the Pages
+# clients/ hosts plain static sites (no build step): a landing page at the
+# root, the reference client at /web/, the play client at /play/, and shared
+# ES modules at /web-common/. GitHub Pages can't serve a nested directory
+# directly, so this workflow assembles just the web-facing parts (excluding
+# the Python client packages that also live under clients/) into the Pages
 # artifact. Requires Settings > Pages > Source = "GitHub Actions" (one-time).
 on:
   push:
     branches: [main]
-    paths: ["clients/web/**"]
+    paths:
+      - "clients/web/**"
+      - "clients/play/**"
+      - "clients/web-common/**"
+      - "clients/index.html"
   workflow_dispatch:
 
 permissions:
@@ -28,8 +34,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      - name: Assemble the static site (web-facing parts of clients/ only)
+        run: |
+          mkdir -p _site
+          cp clients/index.html _site/
+          cp -r clients/web _site/web
+          cp -r clients/play _site/play
+          cp -r clients/web-common _site/web-common
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: clients/web
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

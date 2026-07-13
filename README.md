@@ -69,10 +69,13 @@ src/cucco/
   persistence/  # SQLite成績記録 + JSON Lines行動ログ
   evaluation/   # AI専用高速評価モード(game_countループ・座席ローテーション)
 clients/
-  common/       # クライアント共通のWebSocketラッパー
+  common/       # Pythonクライアント共通のWebSocketラッパー
   mock_ai/      # 自動対局クライアント(方策プラガブル)
   stub/         # 対話式ターミナルクライアント
-  web/          # 人間向けブラウザクライアント(ビルドツール不要)
+  index.html    # ブラウザクライアント選択のランディングページ
+  web-common/   # ブラウザクライアント共有モジュール(プロトコル層)
+  web/          # 人間向けブラウザクライアント(最小実装リファレンス)
+  play/         # プレイ体験重視のリッチクライアント(開発中)
 tests/          # unit/ + integration/(実WebSocket経由の結合テスト)
 docs/           # 要求仕様・ルール・プロトコル設計・実装ガイド類
 ```

@@ -1,6 +1,6 @@
-import { esc, secondsLeft } from "../utils.js";
+import { esc, secondsLeft } from "../../../web-common/utils.js";
 import { seatName } from "../state.js";
-import { CAUSE_LABELS, RANK_ORDER } from "../cards.js";
+import { CAUSE_LABELS, RANK_ORDER } from "../../../web-common/cards.js";
 
 // Countdown digits live in [data-deadline] spans so the ticker in main.js can
 // update them in place -- re-rendering the whole screen 4x/second to move a

@@ -1,9 +1,9 @@
-import { CuccoConnection, wsUrlFor } from "./connection.js";
+import { CuccoConnection, wsUrlFor } from "../../web-common/connection.js";
 import { createStore, pushLog, seatName } from "./state.js";
-import { loadSession, saveSession, clearSession } from "./persistence.js";
+import { loadSession, saveSession, clearSession } from "../../web-common/persistence.js";
 import { turnOrderFor, advanceTurn } from "./deriveTurn.js";
-import { sanitizeWsHost } from "./utils.js";
-import { CAUSE_LABELS, REFUSAL_LABELS } from "./cards.js";
+import { sanitizeWsHost } from "../../web-common/utils.js";
+import { CAUSE_LABELS, REFUSAL_LABELS } from "../../web-common/cards.js";
 import * as lobby from "./views/lobby.js";
 import * as waitingRoom from "./views/waiting_room.js";
 import * as table from "./views/table.js";

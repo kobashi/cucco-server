@@ -12,18 +12,17 @@
    python -m cucco.server.app
    ```
    `ws://localhost:8765`で待ち受ける。
-2. 別ターミナルで、クライアントを静的ファイルサーバーとして配信する:
+2. 別ターミナルで、クライアント群を静的ファイルサーバーとして配信する
+   (docrootは`clients/`。共有モジュール`clients/web-common/`を両クライアントが
+   参照するため。ES Modulesは`file://`から直接読み込めない):
    ```bash
-   cd clients/web
-   python -m http.server 8000
+   python -m http.server 8000 --directory clients
    ```
-   (ES Modulesを使っているため`index.html`を直接ダブルクリックしては動かない。
-   このサーバーを経由する必要がある)
-3. ブラウザで `http://localhost:8000` を開く。デフォルトで
-   `ws://<ページを開いたホスト名>:8765`に自動接続する。別ホスト/ポートの
-   サーバーに繋ぐ場合は、ブラウザの開発者コンソールで
-   `localStorage.setItem("cucco_ws_host", "host:port")`を実行してからページを
-   再読み込みする。
+3. ブラウザで `http://localhost:8000/` を開くとクライアント選択のランディング
+   ページが表示される。リファレンスクライアントは`/web/`、プレイ用クライアント
+   (開発中)は`/play/`。デフォルトで`ws://<ページを開いたホスト名>:8765`に自動
+   接続する。別ホスト/ポートのサーバーに繋ぐ場合は`?ws=host:port`付きURLを
+   開くか、名前入力画面下部の「接続先を変更」から設定する。
 
 ## 2. 卓を立てて参加者を募る
 
@@ -88,12 +87,13 @@ AIは参加後すぐに自動で「準備完了」を送るため、人間側が
 別ドメインでホストしたクライアントからの接続をそのまま受け付ける)。**実際に
 稼働させている構成**は以下(Cloudflare Pagesではなく最終的にGitHub Pagesを採用)。
 
-- **クライアント(`clients/web/`)**: GitHub Pagesで静的公開
-  (`https://kobashi.github.io/cucco-server/`)。`clients/web/`はリポジトリ
-  ルートでも`/docs`でもないため、GitHub Pagesの標準UI(ブランチ+フォルダ選択)
-  では配信できない。`.github/workflows/deploy-pages.yml`(GitHub Actions、
-  `clients/web/**`変更時に`main`へのpushで自動実行)がその中身をPagesの
-  アーティファクトとしてアップロード・デプロイする。リポジトリ設定は
+- **クライアント群(`clients/`配下)**: GitHub Pagesで静的公開。
+  `https://kobashi.github.io/cucco-server/`はクライアント選択のランディング
+  ページで、リファレンスクライアントは`…/web/`、プレイ用クライアントは
+  `…/play/`、共有モジュールは`…/web-common/`に配置される。
+  `.github/workflows/deploy-pages.yml`(GitHub Actions、`clients/`配下の
+  web関連の変更時に`main`へのpushで自動実行)が、Pythonパッケージを除く
+  web部分だけを`_site/`に組み立ててPagesへデプロイする。リポジトリ設定は
   Settings → Pages → Source を「GitHub Actions」にしておく(一度だけ)
 - **サーバー(`cucco.server.app`、8765番)**: ゼミのマシン上で起動したうえで、
   `cloudflared`の一時トンネル(trycloudflare.com、アカウント不要)で公開する:
@@ -111,6 +111,10 @@ AIは参加後すぐに自動で「準備完了」を送るため、人間側が
 ```
 https://kobashi.github.io/cucco-server/?ws=xxxx.trycloudflare.com
 ```
+
+(ランディングページが`?ws=`を各クライアントへのリンクに引き継ぐので、
+このURL1つを共有すればどちらのクライアントでもそのまま接続できる。
+特定クライアントへ直接誘導する場合は`…/web/?ws=…`・`…/play/?ws=…`)
 
 `cloudflared`を再起動してドメインが変わった場合は、上記URLの`ws=`部分だけ
 差し替えて共有し直せばよい。ブラウザから手動で接続先を変更したい場合は、

@@ -16,13 +16,14 @@
    source .venv/bin/activate
    python -m cucco.server.app
    ```
-2. 別ターミナルで、このディレクトリを静的ファイルサーバーとして配信する
-   (ES Modulesは`file://`から直接読み込めないため必須):
+2. 別ターミナルで、`clients/`を静的ファイルサーバーとして配信する
+   (共有モジュール`clients/web-common/`を参照するため、docrootは`clients/`。
+   ES Modulesは`file://`から直接読み込めない):
    ```bash
-   cd clients/web
-   python -m http.server 8000
+   python -m http.server 8000 --directory clients
    ```
-3. ブラウザで `http://localhost:8000` を開く
+3. ブラウザで `http://localhost:8000/web/` を開く(`http://localhost:8000/`は
+   クライアント選択のランディングページ)
 
 デフォルトの接続先は `ws://<ページを開いたホスト名>:8765` (サーバーの既定ポート)。
 別ホスト/ポートのサーバーに繋ぐ場合(クライアントとサーバーを別ドメインで

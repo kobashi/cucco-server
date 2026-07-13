@@ -1,4 +1,4 @@
-import { esc } from "../utils.js";
+import { esc } from "../../../web-common/utils.js";
 
 export function render(el, state, actions) {
   if (state.screen === "name") return renderName(el, state, actions);
