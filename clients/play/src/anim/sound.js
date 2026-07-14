@@ -88,6 +88,10 @@ export function createSound() {
       tone({ freq: 880, dur: 0.1, gain: 0.1 });
       tone({ freq: 1175, dur: 0.16, gain: 0.1, at: 0.11 });
     },
+    pass: () => tone({ freq: 460, to: 400, type: "sine", dur: 0.1, gain: 0.06 }),
+    leave: () => {
+      tone({ freq: 500, to: 260, type: "sine", dur: 0.28, gain: 0.08 });
+    },
 
     // -- card effects (distinct per card so the ear learns them) --
     cat: () => {

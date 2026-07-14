@@ -154,12 +154,12 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 }
 .modal.wide { max-width: 620px; text-align: left; }
 .modal.result {
-  background: rgba(255, 255, 255, 0.88); backdrop-filter: blur(2px);
+  background: rgba(255, 255, 255, 0.6); backdrop-filter: blur(4px);
 }
 @media (prefers-color-scheme: dark) {
-  .modal.result { background: rgba(35, 35, 39, 0.88); }
+  .modal.result { background: rgba(35, 35, 39, 0.6); }
 }
-.modal-overlay:has(.modal.result) { background: rgba(0, 0, 0, 0.32); }
+.modal-overlay:has(.modal.result) { background: rgba(0, 0, 0, 0.15); }
 .modal.wide .countdown, .modal.wide button { display: block; margin-left: auto; margin-right: auto; text-align: center; }
 .modal.urgent { border: 3px solid var(--urgent); animation: pulse 1s infinite; }
 .countdown { font-size: 1.3rem; font-weight: 800; color: var(--urgent); }

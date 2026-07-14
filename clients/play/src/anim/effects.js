@@ -87,6 +87,24 @@ export function effectMotion(queueRef, cardEl, kind, duration = 650) {
   });
 }
 
+// A quiet "kept as-is" confirmation for ノンカンビオ -- a small settle-in
+// pulse on the seat, distinct from shake() which reads as a rejection.
+export function confirmPulse(queueRef, el, duration = 320) {
+  return new Promise((resolve) => {
+    if (!el) return resolve();
+    const anim = el.animate(
+      [
+        { transform: "scale(1)", offset: 0 },
+        { transform: "scale(1.05)", offset: 0.4, filter: "brightness(1.15)" },
+        { transform: "scale(1)", offset: 1 },
+      ],
+      { duration, easing: "ease-out" }
+    );
+    queueRef._track(anim);
+    anim.finished.then(resolve, resolve);
+  });
+}
+
 export function shake(queueRef, el, duration = 350) {
   return new Promise((resolve) => {
     if (!el) return resolve();

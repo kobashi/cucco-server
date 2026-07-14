@@ -8,7 +8,7 @@ import { sanitizeWsHost } from "../../web-common/utils.js";
 import { createGameState } from "./gameState.js";
 import { createTableScene, cardHTML } from "./scene/table.js";
 import { createQueue, fly, pause } from "./anim/queue.js";
-import { banner, shake, flipReveal, effectMotion } from "./anim/effects.js";
+import { banner, shake, flipReveal, effectMotion, confirmPulse } from "./anim/effects.js";
 import { createSound } from "./anim/sound.js";
 import { REFUSAL_LABELS } from "../../web-common/cards.js";
 import { renderLobby, renderWaiting } from "./ui/panels.js";
@@ -95,6 +95,30 @@ function handleOp(op) {
           sound.play("deal");
           await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(pid), html: cardHTML(null), duration: 160 });
         }
+      });
+      syncStep();
+      return;
+    }
+
+    case "no_change": {
+      const { player } = op;
+      queue.enqueue(async (instant) => {
+        const sc = scene();
+        if (!sc || instant) return;
+        sound.play("pass");
+        await confirmPulse(queue, sc.slotEl(player));
+      });
+      syncStep();
+      return;
+    }
+
+    case "left_pot": {
+      const { player } = op;
+      queue.enqueue(async (instant) => {
+        const sc = scene();
+        if (!sc || instant) return;
+        sound.play("leave");
+        await banner(queue, `${game.seatName(player)} が離脱`, "warn");
       });
       syncStep();
       return;
