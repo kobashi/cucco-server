@@ -98,7 +98,7 @@ export function renderModals(el, state, actions, seatName) {
     );
   } else if (state.resultPause) {
     html = modal(
-      "wide",
+      "wide result",
       `<h2>${state.lastPotResult ? "ポット結果" : "判定結果"}</h2>
        ${resultSummaryHTML(state, seatName)}
        <p class="countdown">残り ${countdown(state.resultPause.deadline)} 秒</p>

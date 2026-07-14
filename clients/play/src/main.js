@@ -121,7 +121,7 @@ function handleOp(op) {
         const sc = scene();
         if (!sc || instant) return;
         sound.play("flip");
-        await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(actor), html: cardHTML(null), duration: 450 });
+        await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(actor), html: cardHTML(null), duration: 750 });
         sound.play("deal");
         await fly(queue, { fromEl: sc.slotEl(actor), toEl: sc.discardEl(), html: cardHTML(givenUp), duration: 450 });
       });
@@ -135,7 +135,7 @@ function handleOp(op) {
         const sc = scene();
         if (!sc || instant) return;
         sound.play(REASON_SOUNDS[reason] ?? "flip");
-        await fly(queue, { fromEl: sc.deckEl(), toEl: sc.discardEl(), html: cardHTML(drawn), duration: 450 });
+        await fly(queue, { fromEl: sc.deckEl(), toEl: sc.discardEl(), html: cardHTML(drawn), duration: 750 });
         await banner(queue, `山札: ${drawn} — ${REFUSAL_LABELS[reason] ?? reason}`, "warn");
       });
       syncStep();
