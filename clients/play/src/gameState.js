@@ -28,6 +28,12 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
     disqualifiedThisDeal: false,
     disqualifiedIdsThisDeal: new Set(),
     disqualifiedInfo: {},
+    // Cards made public MID-deal by an effect firing (猫/人間 always reveal
+    // themselves; 馬/家 per horse_house_reveal; クク on declaration). The
+    // knowledge follows the CARD, so it swaps along with exchanges and
+    // clears when the holder trades with the deck or leaves the deal --
+    // exactly what everyone at a physical table would have watched happen.
+    revealedCards: {},
     requiredChipsByPlayer: {},
     pendingContinueIds: new Set(),
     readySent: false,
@@ -108,6 +114,10 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
     state.currentTurnSeat = snapshot.current_turn_seat;
     state.potChips = snapshot.pot_chips ?? 0;
     state.firstActionSeen = (snapshot.declarations_this_deal ?? []).length > 0;
+    // Mid-deal reveal knowledge isn't carried in the snapshot; a reconnect
+    // starts from what the snapshot can prove (open hands, discard). Clear
+    // any stale reveals so nothing lingers from a prior deal.
+    state.revealedCards = {};
     state.dealerReadyPrompt = null;
     state.turnPrompt = null;
     state.cuccoWindow = null;
@@ -173,6 +183,7 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         state.disqualifiedThisDeal = false;
         state.disqualifiedIdsThisDeal = new Set();
         state.disqualifiedInfo = {};
+        state.revealedCards = {};
         state.requiredChipsByPlayer = {};
         state.pendingContinueIds = new Set();
         state.dozoSent = false;
@@ -268,6 +279,8 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         state.firstActionSeen = true;
         state.turnPrompt = null;
         state.cuccoWindow = null;
+        // The declarer's クク is now shown to everyone.
+        state.revealedCards[p.player_id] = "クク";
         log(`${seatName(p.player_id)} がクク宣言!`);
         emit({ kind: "cucco_declared", player: p.player_id });
         break;
@@ -277,6 +290,7 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         state.disqualifiedIdsThisDeal.add(p.player_id);
         state.disqualifiedInfo[p.player_id] = { cause: p.cause, card: p.card ?? null };
         delete state.table?.provenance_map?.[p.player_id];
+        delete state.revealedCards[p.player_id];
         if (p.card && state.table) {
           state.table.discard_pile = [
             ...(state.table.discard_pile || []),
@@ -374,6 +388,7 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
     if (!state.table) return;
     const me = state.playerId;
     const prov = state.table.provenance_map ?? (state.table.provenance_map = {});
+    const rev = state.revealedCards;
     const terminal =
       p.result === "accepted" ||
       p.result === "deck_exchange_accepted" ||
@@ -384,6 +399,15 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
       case "accepted":
         if (p.requester === me || p.target === me) state.yourHand = p.your_new_card;
         [prov[p.requester], prov[p.target]] = [prov[p.target] ?? p.target, prov[p.requester] ?? p.requester];
+        // Reveal knowledge follows the card that moved.
+        {
+          const a = rev[p.requester];
+          const b = rev[p.target];
+          if (b !== undefined) rev[p.requester] = b;
+          else delete rev[p.requester];
+          if (a !== undefined) rev[p.target] = a;
+          else delete rev[p.target];
+        }
         log(`${seatName(p.requester)} が ${seatName(p.target)} とカンビオ`);
         turnOwner = p.requester;
         emit({ kind: "exchange", requester: p.requester, target: p.target });
@@ -391,11 +415,18 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
       case "deck_exchange_accepted":
         if (p.actor === me) state.yourHand = p.new_card;
         prov[p.actor] = null;
+        // The deck draw happens in the open, so the actor's new card is
+        // public to everyone.
+        rev[p.actor] = p.new_card;
         log(`${seatName(p.actor)} が山札とカンビオ(引いた: ${p.new_card} / 出した: ${p.given_up_card})`);
         turnOwner = p.actor;
         emit({ kind: "deck_exchange", actor: p.actor, newCard: p.new_card, givenUp: p.given_up_card });
         break;
       case "refused":
+        // The refusing card's identity becomes public: 猫/人間 always
+        // (revealed_rank always set by the server), 馬/家 only when the
+        // table's horse_house_reveal is on (server sends revealed_rank then).
+        if (p.revealed_rank) rev[p.target] = p.revealed_rank;
         log(`${seatName(p.target)} が拒否 — ${REFUSAL_LABELS[p.reason] ?? p.reason}${p.revealed_rank ? `(${p.revealed_rank})` : ""}`);
         turnOwner = p.requester;
         emit({ kind: "refused", requester: p.requester, target: p.target, reason: p.reason, revealed: p.revealed_rank });

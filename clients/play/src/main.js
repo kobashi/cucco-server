@@ -8,7 +8,7 @@ import { sanitizeWsHost } from "../../web-common/utils.js";
 import { createGameState } from "./gameState.js";
 import { createTableScene, cardHTML } from "./scene/table.js";
 import { createQueue, fly, pause } from "./anim/queue.js";
-import { banner, shake } from "./anim/effects.js";
+import { banner, shake, flipReveal, effectMotion } from "./anim/effects.js";
 import { createSound } from "./anim/sound.js";
 import { REFUSAL_LABELS } from "../../web-common/cards.js";
 import { renderLobby, renderWaiting } from "./ui/panels.js";
@@ -39,6 +39,13 @@ const REASON_SOUNDS = {
   cat_meow: "cat",
   cat_deck_draw: "cat",
   cucco_refusal: "cucco",
+};
+
+// Refusal reason -> the on-card motion its effect plays (anim/effects.js).
+const REASON_MOTIONS = {
+  house_horse_skip: "skip",
+  human_refusal: "human",
+  cat_meow: "cat",
 };
 
 const game = createGameState({
@@ -141,7 +148,18 @@ function handleOp(op) {
         const sc = scene();
         if (!sc || instant) return;
         sound.play(REASON_SOUNDS[reason] ?? "skip");
-        await shake(queue, sc.seatEl(target));
+        const motion = REASON_MOTIONS[reason];
+        if (revealed) {
+          // The card's identity became public: flip it up in place, then
+          // play its effect's motion on the revealed face.
+          sc.sync(state); // the revealed face is now in the target's slot
+          const cardEl = sc.slotEl(target)?.querySelector(".card-face");
+          await flipReveal(queue, cardEl);
+          if (motion) await effectMotion(queue, cardEl, motion);
+        } else {
+          // 馬/家 with reveal off: the card stays hidden, just react.
+          await shake(queue, sc.seatEl(target));
+        }
         const label = REFUSAL_LABELS[reason] ?? reason;
         await banner(queue, revealed ? `${label}(${revealed})` : label, "warn");
       });
@@ -150,10 +168,16 @@ function handleOp(op) {
     }
 
     case "cucco_declared": {
+      const { player } = op;
       queue.enqueue(async (instant) => {
-        if (instant) return;
+        const sc = scene();
+        if (!sc || instant) return;
         sound.play("cucco");
-        await banner(queue, `クク宣言!! — ${game.seatName(op.player)}`, "cucco", 1500);
+        sc.sync(state); // the declarer's クク is now revealed in their slot
+        const cardEl = sc.slotEl(player)?.querySelector(".card-face");
+        await flipReveal(queue, cardEl);
+        await effectMotion(queue, cardEl, "cucco");
+        await banner(queue, `クク宣言!! — ${game.seatName(player)}`, "cucco", 1500);
       });
       syncStep();
       return;
@@ -166,7 +190,16 @@ function handleOp(op) {
         if (!sc || instant) return;
         sound.play("disqualified");
         if (card) {
-          await fly(queue, { fromEl: sc.slotEl(player), toEl: sc.discardEl(), html: cardHTML(card), duration: 450 });
+          // Reveal the disqualified card in the seat (the disclosure setting
+          // sent it), then send it to the discard.
+          const slot = sc.slotEl(player);
+          if (slot) {
+            slot.innerHTML = cardHTML(card);
+            const cardEl = slot.querySelector(".card-face");
+            await flipReveal(queue, cardEl);
+            if (card === "道化") await effectMotion(queue, cardEl, "joker");
+          }
+          await fly(queue, { fromEl: slot, toEl: sc.discardEl(), html: cardHTML(card), duration: 450 });
         }
         await banner(queue, `${game.seatName(op.player)} 失格`, "danger");
       });

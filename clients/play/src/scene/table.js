@@ -106,19 +106,21 @@ export function createTableScene(root) {
       if (s.connected === false) badges.push("切断");
       el.querySelector(".seat-badges").textContent = badges.join("・");
 
-      // Card slot: my own card face-up; others face-down while playing;
-      // everyone face-up at open (from deal_opened.hands).
+      // Card slot: face-up for my own card, cards an effect made public
+      // mid-deal (revealedCards), and everyone at open; face-down otherwise.
       const slot = el.querySelector(".card-slot");
       const openedCard = opened?.hands?.[s.player_id];
-      const dqCard = state.disqualifiedInfo[s.player_id]?.card;
+      const revealed = state.revealedCards?.[s.player_id];
       if (openedCard !== undefined) {
         slot.innerHTML = cardFaceHTML(openedCard, opened.elevated_joker_holders?.includes(s.player_id));
-      } else if (dqCard) {
-        slot.innerHTML = cardFaceHTML(dqCard);
       } else if (state.disqualifiedIdsThisDeal.has(s.player_id)) {
+        // Disqualified: their card has gone to the discard pile (the fly
+        // animation delivered it), so the seat is empty.
         slot.innerHTML = "";
       } else if (s.player_id === state.playerId) {
         slot.innerHTML = state.yourHand ? cardFaceHTML(state.yourHand) : "";
+      } else if (revealed !== undefined) {
+        slot.innerHTML = cardFaceHTML(revealed);
       } else {
         slot.innerHTML = dealInProgress || (t.deal_number > 0 && !state.lastDealResult) ? '<div class="card card-back"></div>' : "";
       }
