@@ -284,7 +284,8 @@ function mountSoundToggle() {
   btn.id = "sound-toggle";
   btn.type = "button";
   const refresh = () => {
-    btn.textContent = sound.enabled ? "🔊" : "🔇";
+    // Labeled so it reads as a sound control, not a mystery icon.
+    btn.textContent = sound.enabled ? "🔊 効果音 ON" : "🔇 効果音 OFF";
     btn.title = sound.enabled ? "効果音: ON(クリックでOFF)" : "効果音: OFF(クリックでON)";
     btn.classList.toggle("off", !sound.enabled);
   };
