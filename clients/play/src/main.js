@@ -10,7 +10,7 @@ import { createTableScene, cardHTML } from "./scene/table.js";
 import { createQueue, fly, pause } from "./anim/queue.js";
 import { banner, shake, flipReveal, effectMotion, confirmPulse } from "./anim/effects.js";
 import { createSound } from "./anim/sound.js";
-import { REFUSAL_LABELS } from "../../web-common/cards.js";
+import { REFUSAL_LABELS, CAUSE_LABELS } from "../../web-common/cards.js";
 import { renderLobby, renderWaiting } from "./ui/panels.js";
 import { renderStatus, renderDock, renderModals, renderLogDrawer } from "./ui/overlays.js";
 
@@ -40,6 +40,18 @@ const REASON_SOUNDS = {
   cat_deck_draw: "cat",
   cucco_refusal: "cucco",
 };
+
+// How long the result pane will wait for the animation queue before showing
+// itself regardless. Comfortably covers a deal's trailing effect + open
+// animations, and leaves the bulk of the server's pause for actually reading
+// the result.
+const RESULT_PANE_GRACE_MS = 2000;
+
+// Pacing for the card-by-card effect beats. Deliberate enough that every
+// player can follow who did what: a card flies, is turned face-up, is read,
+// then resolves -- one card at a time, like a physical table.
+const FLIGHT_MS = 550; // a single card's flight (deck<->seat<->discard)
+const REVEAL_HOLD_MS = 750; // how long a turned-up card sits so the table reads it
 
 // Refusal reason -> the on-card motion its effect plays (anim/effects.js).
 const REASON_MOTIONS = {
@@ -78,13 +90,42 @@ function handleOp(op) {
       return;
 
     case "prompt":
-      queue.fastForward();
+      // Don't hard-snap the scene -- speed the pending effect chain up so I
+      // still see what just happened before deciding. My action buttons are
+      // already live off state, so this never blocks me.
+      queue.hurry();
       sound.play("my_turn");
       return;
 
     case "rebuild":
       queue.clear();
       return; // onChange render syncs immediately once the queue is empty
+
+    // The result pane explains what the animations just showed (the クク
+    // reveal, the effect that fired, the open flip), so it waits BEHIND them
+    // in the queue rather than covering them. Queued last, it runs once the
+    // steps ahead of it have played -- or immediately, if a fast-forward
+    // already flushed them.
+    case "result_pause": {
+      let revealed = false;
+      const reveal = () => {
+        if (revealed) return;
+        revealed = true;
+        state.resultPauseReady = true;
+        render();
+      };
+      queue.enqueue(async () => reveal());
+      // Safety net: the pane must never miss the server's pause window. The
+      // server does not wait for animations, so if the queue is still busy
+      // after this grace period, snap the remaining steps and show the pane
+      // anyway -- a late pane is bad, a pane the player never sees is worse.
+      setTimeout(() => {
+        if (revealed) return;
+        queue.fastForward();
+        requestAnimationFrame(reveal); // let the flushed ghosts clear first
+      }, RESULT_PANE_GRACE_MS);
+      return;
+    }
 
     case "deal_started": {
       const seatsInOrder = (state.table?.seats ?? []).filter((s) => s.in_current_pot !== false).map((s) => s.player_id);
@@ -131,8 +172,8 @@ function handleOp(op) {
         if (!sc || instant) return;
         sound.play("exchange");
         await Promise.all([
-          fly(queue, { fromEl: sc.slotEl(requester), toEl: sc.slotEl(target), html: cardHTML(null), duration: 550 }),
-          fly(queue, { fromEl: sc.slotEl(target), toEl: sc.slotEl(requester), html: cardHTML(null), duration: 550 }),
+          fly(queue, { fromEl: sc.slotEl(requester), toEl: sc.slotEl(target), html: cardHTML(null), duration: FLIGHT_MS }),
+          fly(queue, { fromEl: sc.slotEl(target), toEl: sc.slotEl(requester), html: cardHTML(null), duration: FLIGHT_MS }),
         ]);
       });
       syncStep();
@@ -140,27 +181,37 @@ function handleOp(op) {
     }
 
     case "deck_exchange": {
-      const { actor, givenUp } = op;
+      const { actor, givenUp, newCard } = op;
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
-        sound.play("flip");
-        await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(actor), html: cardHTML(null), duration: 750 });
+        // Drawing from the deck is public at a physical table: fly the drawn
+        // card face-up to the actor so everyone sees what came off the deck.
         sound.play("deal");
-        await fly(queue, { fromEl: sc.slotEl(actor), toEl: sc.discardEl(), html: cardHTML(givenUp), duration: 450 });
+        await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(actor), html: cardHTML(newCard), duration: FLIGHT_MS });
+        sc.sync(state); // the actor's slot now holds the revealed drawn card
+        await banner(queue, `${game.seatName(actor)} が山札から ${newCard} を引く`, "info");
+        await pause(queue, REVEAL_HOLD_MS);
+        // The card given up lands face-up on the discard pile.
+        sound.play("flip");
+        await fly(queue, { fromEl: sc.slotEl(actor), toEl: sc.discardEl(), html: cardHTML(givenUp), duration: FLIGHT_MS });
       });
       syncStep();
       return;
     }
 
     case "deck_refused": {
-      const { drawn, reason } = op;
+      const { actor, drawn, reason } = op;
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
+        // The drawn card is public and immediately discarded face-up; the
+        // disqualification it triggers is narrated by the disqualified op next.
+        sound.play("deal");
+        await fly(queue, { fromEl: sc.deckEl(), toEl: sc.discardEl(), html: cardHTML(drawn), duration: FLIGHT_MS });
         sound.play(REASON_SOUNDS[reason] ?? "flip");
-        await fly(queue, { fromEl: sc.deckEl(), toEl: sc.discardEl(), html: cardHTML(drawn), duration: 750 });
-        await banner(queue, `山札: ${drawn} — ${REFUSAL_LABELS[reason] ?? reason}`, "warn");
+        await banner(queue, `${game.seatName(actor)} が山札から ${drawn} を引く`, "warn");
+        await pause(queue, REVEAL_HOLD_MS);
       });
       syncStep();
       return;
@@ -173,19 +224,21 @@ function handleOp(op) {
         if (!sc || instant) return;
         sound.play(REASON_SOUNDS[reason] ?? "skip");
         const motion = REASON_MOTIONS[reason];
+        const label = REFUSAL_LABELS[reason] ?? reason;
         if (revealed) {
-          // The card's identity became public: flip it up in place, then
-          // play its effect's motion on the revealed face.
+          // The refusing card's identity became public: flip it up in the
+          // target's slot and play the effect's motion so everyone sees it.
           sc.sync(state); // the revealed face is now in the target's slot
           const cardEl = sc.slotEl(target)?.querySelector(".card-face");
           await flipReveal(queue, cardEl);
           if (motion) await effectMotion(queue, cardEl, motion);
+          await banner(queue, `${game.seatName(target)}: ${label}(${revealed})`, "warn");
         } else {
           // 馬/家 with reveal off: the card stays hidden, just react.
           await shake(queue, sc.seatEl(target));
+          await banner(queue, `${game.seatName(target)}: ${label}`, "warn");
         }
-        const label = REFUSAL_LABELS[reason] ?? reason;
-        await banner(queue, revealed ? `${label}(${revealed})` : label, "warn");
+        await pause(queue, REVEAL_HOLD_MS);
       });
       syncStep();
       return;
@@ -202,30 +255,36 @@ function handleOp(op) {
         await flipReveal(queue, cardEl);
         await effectMotion(queue, cardEl, "cucco");
         await banner(queue, `クク宣言!! — ${game.seatName(player)}`, "cucco", 1500);
+        await pause(queue, REVEAL_HOLD_MS);
       });
       syncStep();
       return;
     }
 
     case "disqualified": {
-      const { player, card } = op;
+      const { player, card, cause } = op;
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
         sound.play("disqualified");
-        if (card) {
-          // Reveal the disqualified card in the seat (the disclosure setting
-          // sent it), then send it to the discard.
-          const slot = sc.slotEl(player);
-          if (slot) {
-            slot.innerHTML = cardHTML(card);
-            const cardEl = slot.querySelector(".card-face");
-            await flipReveal(queue, cardEl);
-            if (card === "道化") await effectMotion(queue, cardEl, "joker");
-          }
-          await fly(queue, { fromEl: slot, toEl: sc.discardEl(), html: cardHTML(card), duration: 450 });
+        const label = CAUSE_LABELS[cause] ?? cause;
+        const slot = sc.slotEl(player);
+        if (card && slot) {
+          // Disclosure is on: turn the offending card face-up in the seat so
+          // everyone sees exactly why this player is out, hold, then discard.
+          slot.innerHTML = cardHTML(card);
+          const cardEl = slot.querySelector(".card-face");
+          await flipReveal(queue, cardEl);
+          if (card === "道化") await effectMotion(queue, cardEl, "joker");
+          await banner(queue, `${game.seatName(player)} 失格 — ${label}`, "danger");
+          await pause(queue, REVEAL_HOLD_MS);
+          sound.play("deal");
+          await fly(queue, { fromEl: slot, toEl: sc.discardEl(), html: cardHTML(card), duration: FLIGHT_MS });
+        } else {
+          // Disclosure deferred (card hidden): still announce who and why.
+          await banner(queue, `${game.seatName(player)} 失格 — ${label}`, "danger");
+          await pause(queue, REVEAL_HOLD_MS);
         }
-        await banner(queue, `${game.seatName(op.player)} 失格`, "danger");
       });
       syncStep();
       return;

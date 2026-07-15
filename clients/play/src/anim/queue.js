@@ -1,15 +1,26 @@
 // The presentation queue: network events mutate game state instantly (the
 // state is always authoritative), but their VISUALS play out here as
 // sequential steps. The one hard rule (from the plan): server timeouts don't
-// wait for animations, so fastForward() must be able to complete everything
-// pending in one tick -- it is called whenever a prompt addressed to ME
-// arrives, and on snapshot rebuilds.
+// wait for animations. Two escape hatches enforce that:
+//   - fastForward(): snap everything to its end state in one tick (used by
+//     the result-pane safety net and, via clear(), by snapshot rebuilds).
+//   - hurry(): a gentler catch-up -- keep playing the pending steps but at
+//     HURRY_RATE speed, so a player about to act still gets a quick, legible
+//     recap of the effect chain instead of a hard snap to the end state.
+// Every animation is registered with _track(), so both hatches reach it.
+
+const HURRY_RATE = 3; // playback multiplier for the catch-up recap on my prompt
+const HURRY_CEILING_MS = 1500; // hard cap: snap whatever is left after this
 
 export function createQueue() {
   const steps = [];
   let running = false;
   let instant = false; // once set, every remaining step runs with zero duration
+  let rate = 1; // >1 while catching up; applied to every tracked animation
+  let hurryTimer = null;
   const activeAnimations = new Set();
+
+  const busy = () => running || steps.length > 0;
 
   async function pump() {
     if (running) return;
@@ -24,6 +35,16 @@ export function createQueue() {
     }
     running = false;
     instant = false;
+    rate = 1; // back to real time once the backlog has drained
+    clearTimeout(hurryTimer);
+  }
+
+  // Finish the current animation(s) immediately and run all queued steps with
+  // zero duration. Synchronous from the caller's perspective except for
+  // microtasks -- by the next frame the scene shows the end state.
+  function fastForward() {
+    instant = true;
+    for (const a of activeAnimations) a.finish();
   }
 
   return {
@@ -31,22 +52,45 @@ export function createQueue() {
       steps.push(step);
       pump();
     },
-    // Finish the current animation(s) immediately and run all queued steps
-    // with zero duration. Synchronous from the caller's perspective except
-    // for microtasks -- by the next frame the scene shows the end state.
-    fastForward() {
-      instant = true;
-      for (const a of activeAnimations) a.finish();
+    fastForward,
+    // Speed the remaining recap up (rather than skipping it) so the player
+    // about to act still sees what happened. A realistic backlog compresses
+    // to well under a second, and the action buttons are already live. No-op
+    // when nothing is pending, so it never leaves a lingering fast rate. A
+    // ceiling snaps whatever remains if an animation stalls (e.g. a throttled
+    // background tab never settles its `finished` promise).
+    hurry() {
+      if (!busy()) return;
+      rate = HURRY_RATE;
+      for (const a of activeAnimations) {
+        try {
+          a.playbackRate = HURRY_RATE;
+        } catch {
+          /* animation already settled */
+        }
+      }
+      clearTimeout(hurryTimer);
+      hurryTimer = setTimeout(() => {
+        if (busy()) fastForward();
+      }, HURRY_CEILING_MS);
     },
     clear() {
       steps.length = 0;
+      clearTimeout(hurryTimer);
       for (const a of activeAnimations) a.finish();
     },
     get busy() {
-      return running || steps.length > 0;
+      return busy();
     },
     _track(animation) {
       activeAnimations.add(animation);
+      if (rate !== 1) {
+        try {
+          animation.playbackRate = rate;
+        } catch {
+          /* animation already settled */
+        }
+      }
       const drop = () => activeAnimations.delete(animation);
       animation.finished.then(drop, drop);
     },

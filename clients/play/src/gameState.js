@@ -42,6 +42,10 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
 
     // prompts addressed to me (+ the broadcast result pause)
     resultPause: null,
+    // The result pane must not cover the effect animations that explain the
+    // result (クク宣言・山札交換の特殊札演出…). It's only shown once the
+    // presentation queue has drained -- main.js flips this from a queued step.
+    resultPauseReady: false,
     effectWindow: null,
     dealerReadyPrompt: null,
     turnPrompt: null,
@@ -225,6 +229,7 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
 
       case "result_pause":
         state.resultPause = { deadline: Date.now() + p.timeout_sec * 1000 };
+        state.resultPauseReady = false; // main.js reveals it after the queue drains
         emit({ kind: "result_pause" });
         break;
 

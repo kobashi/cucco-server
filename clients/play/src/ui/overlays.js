@@ -96,7 +96,7 @@ export function renderModals(el, state, actions, seatName) {
        <button id="continue-yes-btn">続行する</button>
        <button id="continue-no-btn" class="secondary">離脱する</button>`
     );
-  } else if (state.resultPause) {
+  } else if (state.resultPause && state.resultPauseReady) {
     html = modal(
       "wide result",
       `<h2>${state.lastPotResult ? "ポット結果" : "判定結果"}</h2>
