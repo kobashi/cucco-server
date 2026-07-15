@@ -33,6 +33,8 @@ button {
   background: var(--accent); color: var(--accent-fg); cursor: pointer; font-size: 1rem;
 }
 button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--border); }
+/* クク is the rare, deal-ending call -- make its inline button unmistakable. */
+button.cucco-btn { background: #b8860b; color: #fff; font-weight: 700; }
 button:disabled { opacity: 0.5; cursor: default; }
 .muted { color: var(--muted); }
 .error { color: var(--urgent); }

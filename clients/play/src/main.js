@@ -635,9 +635,14 @@ const actions = {
     state.turnPrompt = null;
     render();
   },
+  // クク can be declared from the cucco_window modal or from the dock (turn /
+  // dealer-ready). Clear whichever prompt was showing.
   sendCuccoDeclare() {
     conn.send("cucco_declare", {});
     state.cuccoWindow = null;
+    state.turnPrompt = null;
+    state.dealerReadyPrompt = null;
+    state.dozoSent = true;
     render();
   },
   sendCuccoPass() {

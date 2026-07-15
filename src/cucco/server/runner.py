@@ -494,30 +494,34 @@ class TableRunner:
             },
         )
 
-        # Cucco priority window right after dealing: the dealer is checked
-        # first, then everyone else, before "dōzo"/dealer_ready and before
-        # the first turn_prompt.
-        ordered_seats = [deal.dealer_id] + [pid for pid in deal.order if pid != deal.dealer_id]
-        await self._cucco_window(deal, ordered_seats)
-
-        if deal.cucco_declared_by is None:
-            dealer_session = self.table.get(deal.dealer_id)
-            if dealer_session is not None and dealer_session.connected:
-                await self._prompt(dealer_session, "dealer_ready", (DealerReady,))
+        # Dealer readiness ("dōzo"). A dealer holding クク may declare it here
+        # instead: the dealer's own turn comes last, so "dōzo" is their only
+        # chance to klop before anyone plays. Non-dealers get NO window before
+        # "dōzo" -- the deal has not started (docs/rules/final_rules.md).
+        dealer_session = self.table.get(deal.dealer_id)
+        if dealer_session is not None and dealer_session.connected:
+            dealer_holds_cucco = deal.hands.get(deal.dealer_id) is Rank.CUCCO
+            expected = (DealerReady, CuccoDeclare) if dealer_holds_cucco else (DealerReady,)
+            action = await self._prompt(dealer_session, "dealer_ready", expected)
+            if isinstance(action, CuccoDeclare):
+                await self._send_events(deal.submit_cucco_declare(deal.dealer_id))
 
         while deal.legal_actor() is not None and deal.cucco_declared_by is None:
             actor_id = deal.legal_actor()
             assert actor_id is not None
-            events = await self._run_turn(deal, actor_id)
-            await self._send_events(events)
+            # クク may be declared at ANY point between atomic steps (klop is
+            # not tied to your turn -- docs/rules/final_rules.md). Before each
+            # turn, offer a cucco_window to every current holder EXCEPT the
+            # upcoming actor, who is instead offered クク as a third turn
+            # choice (see _run_turn). Deterministic seat order; excluding the
+            # actor avoids double-prompting them. This covers the moment right
+            # after "dōzo" and the gap after every resolved turn.
+            reactive = deal.current_cucco_holders() - {actor_id}
+            await self._cucco_window(deal, [pid for pid in deal.order if pid in reactive])
             if deal.cucco_declared_by is not None:
                 break
-            # After this atomic step, re-check every current holder (the
-            # exchange that just resolved may have changed who holds クク),
-            # in deterministic seat order (docs/protocol/design.md: "親か
-            # ら手番順に行う"), not set-iteration order.
-            current_holders = deal.current_cucco_holders()
-            await self._cucco_window(deal, [pid for pid in deal.order if pid in current_holders])
+            events = await self._run_turn(deal, actor_id)
+            await self._send_events(events)
 
         game.note_deal_played()
         return deal
@@ -527,9 +531,15 @@ class TableRunner:
         if session is None or not session.connected:
             return deal.submit_no_change(actor_id, via_timeout=True)
 
-        action = await self._prompt(session, "turn", (CambioDeclare, NoChangeDeclare))
+        # クク is offered as a third turn choice to a holder (交換 / 不交換 /
+        # クク), alongside the anytime between-turns windows.
+        holds_cucco = deal.hands.get(actor_id) is Rank.CUCCO
+        expected = (CambioDeclare, NoChangeDeclare, CuccoDeclare) if holds_cucco else (CambioDeclare, NoChangeDeclare)
+        action = await self._prompt(session, "turn", expected)
         if action is None:
             return deal.submit_no_change(actor_id, via_timeout=True)
+        if isinstance(action, CuccoDeclare):
+            return deal.submit_cucco_declare(actor_id)
         if isinstance(action, CambioDeclare):
             if self.table.config.effect_declaration == "declared":
                 return await self._run_declared_cambio(deal, actor_id)

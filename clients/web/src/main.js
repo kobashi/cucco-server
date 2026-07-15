@@ -211,9 +211,16 @@ const actions = {
     conn.send("no_change_declare", {});
     update(() => (state.turnPrompt = null));
   },
+  // クク can be declared from three UIs: the cucco_window modal, the turn
+  // action area, or the dealer-ready area. Clear whichever was showing.
   sendCuccoDeclare() {
     conn.send("cucco_declare", {});
-    update(() => (state.cuccoWindow = null));
+    update(() => {
+      state.cuccoWindow = null;
+      state.turnPrompt = null;
+      state.dealerReadyPrompt = null;
+      state.dozoSent = true;
+    });
   },
   sendCuccoPass() {
     conn.send("cucco_pass", {});

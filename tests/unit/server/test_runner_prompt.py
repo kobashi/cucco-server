@@ -248,3 +248,69 @@ async def test_cucco_window_fires_before_and_after_the_holders_own_turn():
 
     # The declared cucco actually took effect (ended the deal early).
     assert deal.cucco_declared_by == "p3"
+
+
+@pytest.mark.asyncio
+async def test_cucco_holder_declares_on_their_own_turn():
+    # クク is offered as a third choice on the holder's own turn (交換 / 不交換
+    # / クク), in addition to the anytime cucco_window between turns.
+    # dealer p1 -> deal.order = [p2, p3, p1]; p2 (first actor) is dealt クク.
+    config = GameConfig(turn_timeout_ai_sec=1.0, cucco_window_timeout_ai_sec=1.0)
+    deck = Deck.from_fixed_order([Rank.CUCCO, Rank.N5, Rank.N7])
+    pot = Pot(["p1", "p2", "p3"], "p1", {"p1": 24, "p2": 24, "p3": 24}, config, random.Random(0), deck=deck)
+
+    table = Table(room_id="ABC123", config=config, creator_id="p1")
+    scripts_by_pid = {
+        "p1": {"turn_prompt": [NoChangeDeclare()], "dealer_ready": [DealerReady()], "cucco_window": []},
+        "p2": {"turn_prompt": [CuccoDeclare()], "cucco_window": []},  # p2 holds クク, klops on its turn
+        "p3": {"turn_prompt": [NoChangeDeclare()], "cucco_window": []},
+    }
+    sessions = {}
+    for pid, scripts in scripts_by_pid.items():
+        ref = [None]
+        conn = ScriptedConnection(ref, scripts)
+        session = PlayerSession(player_id=pid, name=pid, player_type="ai", session_token=pid, connection=conn)
+        ref[0] = session
+        table.add_session(session)
+        sessions[pid] = session
+
+    runner = TableRunner(table)
+    deal = await runner._run_deal(pot, _StubGame())
+
+    assert deal.cucco_declared_by == "p2"
+    # p2 klopped on its own turn; p3 (later in order) was never given a turn.
+    assert "turn_prompt" not in sessions["p3"].connection.received
+
+
+@pytest.mark.asyncio
+async def test_cucco_holding_dealer_declares_at_dealer_ready():
+    # A dealer holding クク may declare it in place of どうぞ -- the dealer's own
+    # turn is last, so this is their only chance to klop before anyone plays.
+    # No non-dealer gets a window before どうぞ. dealer p1 is order[-1], so it
+    # is dealt the last card -> クク.
+    config = GameConfig(turn_timeout_ai_sec=1.0, cucco_window_timeout_ai_sec=1.0)
+    deck = Deck.from_fixed_order([Rank.N5, Rank.N7, Rank.CUCCO])
+    pot = Pot(["p1", "p2", "p3"], "p1", {"p1": 24, "p2": 24, "p3": 24}, config, random.Random(0), deck=deck)
+
+    table = Table(room_id="ABC123", config=config, creator_id="p1")
+    scripts_by_pid = {
+        "p1": {"dealer_ready": [CuccoDeclare()], "turn_prompt": [NoChangeDeclare()], "cucco_window": []},
+        "p2": {"turn_prompt": [NoChangeDeclare()], "cucco_window": []},
+        "p3": {"turn_prompt": [NoChangeDeclare()], "cucco_window": []},
+    }
+    sessions = {}
+    for pid, scripts in scripts_by_pid.items():
+        ref = [None]
+        conn = ScriptedConnection(ref, scripts)
+        session = PlayerSession(player_id=pid, name=pid, player_type="ai", session_token=pid, connection=conn)
+        ref[0] = session
+        table.add_session(session)
+        sessions[pid] = session
+
+    runner = TableRunner(table)
+    deal = await runner._run_deal(pot, _StubGame())
+
+    assert deal.cucco_declared_by == "p1"
+    # Declared at どうぞ: nobody, not even the first actor p2, was given a turn.
+    assert "turn_prompt" not in sessions["p2"].connection.received
+    assert "turn_prompt" not in sessions["p3"].connection.received

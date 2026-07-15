@@ -22,16 +22,21 @@ AIクライアントは基本的に「サーバーからの通知を待ち、必
 | サーバーからの通知 | 状況 | 送るべきアクション |
 |---|---|---|
 | `pot_result`(または卓参加直後の`state_snapshot`) | 次のポットが始まる前 | `ready`(参加費チップ1枚を払って次のポットへの参加を表明) |
-| `deal_started` | 自分が親の場合、配布直後 | `dealer_ready`(「どうぞ」宣言) |
-| `turn_prompt` | 自分の手番が来た | `cambio_declare`(交換を要求する) または `no_change_declare`(しない) |
-| `cucco_window` | クク札を保持している(かつ失格していない) | `cucco_declare`(ディールを終了させる) または `cucco_pass`(見送る) |
+| `deal_started` | 自分が親の場合、配布直後 | `dealer_ready`(「どうぞ」宣言)。クク札を持っていれば代わりに`cucco_declare`も可 |
+| `turn_prompt` | 自分の手番が来た | `cambio_declare`(交換を要求する) / `no_change_declare`(しない) / (クク札を持っていれば)`cucco_declare`(ディール即終了) |
+| `cucco_window` | クク札を保持している(かつ失格していない)。自分の手番以外の合間に届く | `cucco_declare`(ディールを終了させる) または `cucco_pass`(見送る) |
 | `continue_prompt` | 子供の時間(1〜3ディール目)で敗者になった | `continue_declare`(`{continue: true/false}`) |
 
 **`ready`はポットごとに毎回送り直す必要がある**。最初の参加時だけでなく、`pot_result`を受け取るたびに次のポットへの`ready`を送らないと、タイムアウトでそのポットに参加しない(観戦扱い)になってしまう。ただし評価モード(`mode: "evaluation"`)では、1回の`ready`で`game_count`回分のゲームが自動連続実行されるため、この限りではない。
 
 上記以外の通知(`exchange_result`, `player_disqualified`, `deal_opened`, `deal_result`, `pot_result`, `game_ended`など)は状態把握のためのイベントであり、応答アクションは不要。`pot_result`はそのポットの決着(勝者確定または持ち越し)、`game_ended`はゲーム全体の終了(チップ数による最終順位)を表す。
 
-**重要**: `cucco_window`は、クク札を保持していない場合は届かない。保持している場合は自分の手番かどうかに関わらず毎回(1つのアトミックな処理が完了するたび)届くため、**必ず`cucco_declare`か`cucco_pass`のどちらかを即座に返すこと**。応答しない(パスもしない)とタイムアウト(AI用: デフォルト2秒)まで卓全体の進行が止まってしまう。特に評価モード(高速連続対局)ではこの応答速度が重要になる。
+**重要**: クク宣言は、自分の手番かどうかに関わらずいつでも行える。宣言できる箇所は3つ:
+- **自分の手番**(`turn_prompt`): クク札を持っていれば`cambio_declare`/`no_change_declare`の代わりに`cucco_declare`を返せる
+- **自分が親のとき**(`dealer_ready`): 「どうぞ」の代わりに`cucco_declare`を返せる(親の通常手番は最後尾なので、他プレイヤーが動く前に宣言したい親の唯一の機会)
+- **手番外の合間**(`cucco_window`): クク札を保持している場合、各アトミックな処理の完了ごとに届く(ただし次に手番を行う自分自身には届かない=そのときは`turn_prompt`で宣言できるため)
+
+`cucco_window`が届いたら、**必ず`cucco_declare`か`cucco_pass`のどちらかを即座に返すこと**。応答しない(パスもしない)とタイムアウト(AI用: デフォルト2秒)まで卓全体の進行が止まってしまう。特に評価モード(高速連続対局)ではこの応答速度が重要になる。なお、**親以外は「どうぞ」の前にクク宣言をするタイミングはない**(その時点ではまだ何のプロンプトも届かない)。
 
 ## 3. 状態管理
 
@@ -52,22 +57,21 @@ AIクライアントは基本的にステートレスに実装できない。以
 
 ```
 サーバー→全員: deal_started        (自分の手札を含む、残り山札枚数を含む)
-サーバー→親:   cucco_window        (親がクク保持なら、他のプレイヤーより先に確認)
-親→サーバー:   cucco_pass          (または cucco_declare でここでディール終了)
-サーバー→(親以外のクク保持者): cucco_window (親の確認の後、ディール開始直後の分)
+サーバー→親:   dealer_ready        (親のみ)
+親→サーバー:   dealer_ready        (「どうぞ」。親がクク保持なら cucco_declare でここでディール即終了も可)
+サーバー→(1番手以外のクク保持者): cucco_window (「どうぞ」直後の合間。次に手番を行う1番手は除く)
 (該当プレイヤー)→サーバー: cucco_pass または cucco_declare
-親→サーバー:   dealer_ready        (「どうぞ」)
 サーバー→全員: turn_prompt         (1番手の手番)
-1番手→サーバー: cambio_declare または no_change_declare
+1番手→サーバー: cambio_declare / no_change_declare / (クク保持なら)cucco_declare
 サーバー→全員: exchange_result     (交換結果、または no_change_declared)
-サーバー→(自分がクク保持なら): cucco_window
+サーバー→(自分がクク保持で次の手番でなければ): cucco_window
 自分→サーバー: cucco_pass または cucco_declare
-サーバー→自分: turn_prompt         (自分の手番)
-自分→サーバー: cambio_declare または no_change_declare
+サーバー→自分: turn_prompt         (自分の手番。クク保持なら cucco_declare も選べる)
+自分→サーバー: cambio_declare / no_change_declare / cucco_declare
 サーバー→全員: exchange_result
 ... (残りのプレイヤーも同様に繰り返す) ...
-サーバー→親:   turn_prompt         (親の最終手番、山札交換)
-親→サーバー:   cambio_declare または no_change_declare
+サーバー→親:   turn_prompt         (親の最終手番、山札交換。親もここで cucco_declare を選べる)
+親→サーバー:   cambio_declare / no_change_declare / cucco_declare
 サーバー→全員: exchange_result     (山札からの交換。特殊札なら連鎖・失格イベントを伴う)
 サーバー→全員: deal_opened         (全員の手札を公開)
 サーバー→全員: deal_result         (敗者・支払いチップ・現在チップ数・次の親)

@@ -83,12 +83,23 @@ class MockAI:
             self.my_chips = p["chips_now"].get(me, self.my_chips)
 
         elif event.type == "dealer_ready":
-            await self.conn.send("dealer_ready", {})
+            # A クク-holding dealer may declare it together with "dōzo".
+            if self.my_hand == "クク" and self.policy.decide_cucco_declare(self.my_hand, self.alive_count):
+                await self.conn.send("cucco_declare", {})
+                self._info("dealer_ready: declaring クク")
+            else:
+                await self.conn.send("dealer_ready", {})
         elif event.type == "turn_prompt":
-            change = self.policy.decide_change(self.my_hand or "", self.alive_count)
-            await self.conn.send("cambio_declare" if change else "no_change_declare", {})
-            self._info(f"turn: hand={self.my_hand} alive={self.alive_count} -> {'change' if change else 'no_change'}")
+            # クク is offered as a third turn choice to a holder.
+            if self.my_hand == "クク" and self.policy.decide_cucco_declare(self.my_hand, self.alive_count):
+                await self.conn.send("cucco_declare", {})
+                self._info(f"turn: hand={self.my_hand} alive={self.alive_count} -> cucco")
+            else:
+                change = self.policy.decide_change(self.my_hand or "", self.alive_count)
+                await self.conn.send("cambio_declare" if change else "no_change_declare", {})
+                self._info(f"turn: hand={self.my_hand} alive={self.alive_count} -> {'change' if change else 'no_change'}")
         elif event.type == "cucco_window":
+            # Anytime klop (I hold クク and it is not my turn).
             declare = self.policy.decide_cucco_declare(self.my_hand or "", self.alive_count)
             await self.conn.send("cucco_declare" if declare else "cucco_pass", {})
         elif event.type == "effect_window":

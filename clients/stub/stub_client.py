@@ -41,16 +41,20 @@ async def run(conn: CuccoConnection) -> None:
         show(event)
 
         if event.type == "dealer_ready":
-            await ask("you are the dealer -- press Enter to declare どうぞ: ")
-            await conn.send("dealer_ready", {})
-            print(">> dealer_ready")
+            # A クク-holding dealer may declare it together with どうぞ.
+            answer = await ask("you are the dealer -- [Enter]=どうぞ, c=クク宣言: ")
+            action = "cucco_declare" if answer == "c" else "dealer_ready"
+            await conn.send(action, {})
+            print(f">> {action}")
         elif event.type == "turn_prompt":
-            answer = await ask("your turn -- change? [y/N]: ")
-            action = "cambio_declare" if answer == "y" else "no_change_declare"
+            # クク is a third choice for a holder (change / no-change / クク).
+            answer = await ask("your turn -- [y=change, N=no-change, c=クク宣言]: ")
+            action = {"y": "cambio_declare", "c": "cucco_declare"}.get(answer, "no_change_declare")
             await conn.send(action, {})
             print(f">> {action}")
         elif event.type == "cucco_window":
-            answer = await ask("you hold クク -- declare? [y/N]: ")
+            # Anytime klop (you hold クク and it is not your turn).
+            answer = await ask("you hold クク -- declare now? [y/N]: ")
             action = "cucco_declare" if answer == "y" else "cucco_pass"
             await conn.send(action, {})
             print(f">> {action}")

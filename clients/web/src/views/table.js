@@ -284,11 +284,17 @@ function renderPotResult(state, isSpectator) {
 }
 
 function renderActionArea(state, actions) {
+  // クク is a third choice at these decision points when I hold it: the dealer
+  // may declare it with どうぞ, and any player may declare it on their turn.
+  // (Between turns it's still offered as its own cucco_window modal.)
+  const holdsCucco = state.yourHand === "クク";
+  const cuccoBtn = holdsCucco ? `<button id="cucco-declare-btn">クク宣言(ディール即終了)</button>` : "";
   if (state.dealerReadyPrompt) {
     return `
       <section class="action-area urgent">
         <p>あなたが親です。手札を確認してから「どうぞ」を宣言してください。(残り${countdown(state.dealerReadyPrompt.deadline)}秒)</p>
         <button id="dealer-ready-btn">どうぞ</button>
+        ${cuccoBtn}
       </section>
     `;
   }
@@ -298,6 +304,7 @@ function renderActionArea(state, actions) {
         <p>あなたの手番です。(残り${countdown(state.turnPrompt.deadline)}秒)</p>
         <button id="cambio-btn">カンビオ(交換する)</button>
         <button id="no-change-btn" class="secondary">ノンカンビオ(交換しない)</button>
+        ${cuccoBtn}
       </section>
     `;
   }

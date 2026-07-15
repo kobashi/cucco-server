@@ -46,21 +46,26 @@ export function renderDock(el, state, actions) {
     el.innerHTML = "";
     return;
   }
+  // クク is a third choice at my own decision points when I hold it (dealer's
+  // どうぞ, or my turn). Between turns it's still offered via the cucco_window
+  // modal (renderModals) -- klop is declarable anytime.
+  const cuccoBtn = state.yourHand === "クク" ? `<button id="dock-cucco-btn" class="cucco-btn">クク宣言</button>` : "";
   let html = "";
   if (state.dealerReadyPrompt) {
     html = `
       <span class="dock-timer">${countdown(state.dealerReadyPrompt.deadline)}秒</span>
-      <button id="dealer-ready-btn">どうぞ</button>`;
+      <button id="dealer-ready-btn">どうぞ</button>${cuccoBtn}`;
   } else if (state.turnPrompt) {
     html = `
       <span class="dock-timer">${countdown(state.turnPrompt.deadline)}秒</span>
       <button id="cambio-btn">カンビオ(交換)</button>
-      <button id="no-change-btn" class="secondary">ノンカンビオ</button>`;
+      <button id="no-change-btn" class="secondary">ノンカンビオ</button>${cuccoBtn}`;
   }
   el.innerHTML = html;
   el.querySelector("#dealer-ready-btn")?.addEventListener("click", actions.sendDealerReady);
   el.querySelector("#cambio-btn")?.addEventListener("click", actions.sendCambio);
   el.querySelector("#no-change-btn")?.addEventListener("click", actions.sendNoChange);
+  el.querySelector("#dock-cucco-btn")?.addEventListener("click", actions.sendCuccoDeclare);
 }
 
 export function renderModals(el, state, actions, seatName) {
