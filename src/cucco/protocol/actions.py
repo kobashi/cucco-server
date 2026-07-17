@@ -84,11 +84,12 @@ class NoChangeDeclare:
 
 @dataclass(frozen=True)
 class CuccoDeclare:
-    pass
+    """Declare クク. Fire-and-forget: a holder may send this at ANY time
+    during a deal; the server applies it at the next point outside an atomic
+    exchange (dispatch routes it as a pending flag, never as a prompt
+    answer). There is no window, no pass, and nothing for the table to wait
+    on -- so the game's pacing reveals nothing about who holds クク."""
 
-
-@dataclass(frozen=True)
-class CuccoPass:
     pass
 
 
@@ -135,7 +136,6 @@ Action = Union[
     CambioDeclare,
     NoChangeDeclare,
     CuccoDeclare,
-    CuccoPass,
     ContinueDeclare,
     StartPot,
     ResultAck,
@@ -281,7 +281,6 @@ _PARSERS: dict[str, Callable[[dict], Action]] = {
     "cambio_declare": lambda payload: CambioDeclare(),
     "no_change_declare": lambda payload: NoChangeDeclare(),
     "cucco_declare": lambda payload: CuccoDeclare(),
-    "cucco_pass": lambda payload: CuccoPass(),
     "continue_declare": _parse_continue_declare,
     "start_pot": lambda payload: StartPot(),
     "result_ack": lambda payload: ResultAck(),

@@ -8,7 +8,7 @@ from cucco.domain.cards import Rank
 from cucco.domain.config import GameConfig
 from cucco.domain.deck import Deck
 from cucco.domain.game import Game
-from cucco.protocol.actions import CuccoPass, DealerReady, NoChangeDeclare
+from cucco.protocol.actions import DealerReady, NoChangeDeclare
 from cucco.protocol.envelope import build_envelope
 from cucco.server.dispatch import ConnectionHandler, _start_game
 from cucco.server.registry import TableRegistry
@@ -26,7 +26,7 @@ class FakeConnection:
 
 
 class AutoRespondConnection:
-    """Answers every prompt immediately (no_change / cucco_pass) by pushing
+    """Answers every prompt immediately (no_change / どうぞ) by pushing
     straight into its own session's inbox -- enough to drive a deal to
     "open" without a real client loop."""
 
@@ -39,8 +39,6 @@ class AutoRespondConnection:
         self.sent.append(data)
         if data["type"] == "turn_prompt":
             self.session.inbox.put_nowait(NoChangeDeclare())
-        elif data["type"] == "cucco_window":
-            self.session.inbox.put_nowait(CuccoPass())
         elif data["type"] == "dealer_ready":
             self.session.inbox.put_nowait(DealerReady())
 

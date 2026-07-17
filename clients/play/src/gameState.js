@@ -49,7 +49,6 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
     effectWindow: null,
     dealerReadyPrompt: null,
     turnPrompt: null,
-    cuccoWindow: null,
     continuePrompt: null,
 
     // aggregates for result views
@@ -124,7 +123,6 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
     state.revealedCards = {};
     state.dealerReadyPrompt = null;
     state.turnPrompt = null;
-    state.cuccoWindow = null;
     state.continuePrompt = null;
     state.effectWindow = null;
     state.resultPause = null;
@@ -217,11 +215,6 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         emit({ kind: "prompt" });
         break;
 
-      case "cucco_window":
-        state.cuccoWindow = { deadline: Date.now() + p.timeout_sec * 1000 };
-        emit({ kind: "prompt" });
-        break;
-
       case "effect_window":
         state.effectWindow = { requester: p.requester, deadline: Date.now() + p.timeout_sec * 1000 };
         emit({ kind: "prompt" });
@@ -283,7 +276,6 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
       case "cucco_declared":
         state.firstActionSeen = true;
         state.turnPrompt = null;
-        state.cuccoWindow = null;
         // The declarer's クク is now shown to everyone.
         state.revealedCards[p.player_id] = "クク";
         log(`${seatName(p.player_id)} がクク宣言!`);
@@ -306,7 +298,6 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
           state.disqualifiedThisDeal = true;
           state.yourHand = null;
           state.turnPrompt = null;
-          state.cuccoWindow = null;
           state.dealerReadyPrompt = null;
           state.effectWindow = null;
         }
@@ -356,7 +347,6 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
           if (p.next_dealer) state.table.dealer_seat = p.next_dealer;
         }
         state.turnPrompt = null;
-        state.cuccoWindow = null;
         state.dealerReadyPrompt = null;
         state.currentTurnSeat = null;
         log(`ディール結果: 敗者 ${p.losers.map((id) => seatName(id)).join(", ") || "なし"}`);

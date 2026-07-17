@@ -39,7 +39,6 @@ export function createStore() {
     effectWindow: null, // { requester, deadline } -- declared-effects rule: declare my card's effect or let the exchange through
     dealerReadyPrompt: null, // { timeoutSec, deadline }
     turnPrompt: null, // { timeoutSec, deadline }
-    cuccoWindow: null, // { timeoutSec, deadline }
     continuePrompt: null, // { requiredChips, timeoutSec, deadline }
 
     // last aggregate results, for the result screens

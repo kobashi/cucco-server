@@ -31,19 +31,12 @@ def test_cucco_declaration_freezes_hands_and_excludes_not_yet_acted_players_from
     assert opened.losers == ("C",)  # weakest among hands AS THEY STOOD at declaration
 
 
-def test_cucco_holder_may_decline_via_pass_with_no_public_event():
-    deal = build_deal({"A": Rank.N5, "B": Rank.CUCCO, "C": Rank.N7}, dealer_id="C")
-    deal.submit_cucco_pass("B")
-    assert deal.cucco_declared_by is None
-    assert deal.declarations == []  # cucco_pass is never publicly recorded
-
-
-def test_only_the_current_cucco_holder_may_declare_or_pass():
+def test_only_the_current_cucco_holder_may_declare():
     deal = build_deal({"A": Rank.N5, "B": Rank.CUCCO, "C": Rank.N7}, dealer_id="C")
     with pytest.raises(IllegalAction):
         deal.submit_cucco_declare("A")  # A does not hold クク
     with pytest.raises(IllegalAction):
-        deal.submit_cucco_pass("C")  # C does not hold クク either
+        deal.submit_cucco_declare("C")  # neither does C
 
 
 def test_disqualified_player_cannot_declare_cucco_even_if_still_holding_it_deferred():
@@ -60,8 +53,6 @@ def test_disqualified_player_cannot_declare_cucco_even_if_still_holding_it_defer
 
     with pytest.raises(IllegalAction):
         deal.submit_cucco_declare("B")
-    with pytest.raises(IllegalAction):
-        deal.submit_cucco_pass("B")
     assert "B" not in deal.current_cucco_holders()
 
 

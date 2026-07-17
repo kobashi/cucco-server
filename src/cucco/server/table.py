@@ -28,6 +28,10 @@ class Table:
     ready_ids: set[str] = field(default_factory=set)
     min_players: int = 2
     ready_deadline_task: asyncio.Task | None = None
+    # Set by dispatch whenever any player's out-of-band cucco_declare arrives
+    # (see PlayerSession.pending_cucco); the runner races its prompt waits
+    # against this so a klop interrupts even mid-someone-else's think time.
+    cucco_wakeup: asyncio.Event = field(default_factory=asyncio.Event)
     # Shared server-wide persistence handles (docs/protocol/design.md
     # 「永続化・成績記録」), copied onto each Table at creation time so
     # dispatch.py's `_start_game` doesn't need them threaded through every

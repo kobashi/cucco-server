@@ -5,14 +5,14 @@ import pytest
 from cucco.domain.config import GameConfig
 from cucco.evaluation.runner import EvaluationRunner
 from cucco.persistence.results_store import ResultsStore
-from cucco.protocol.actions import ContinueDeclare, CuccoPass, DealerReady, NoChangeDeclare
+from cucco.protocol.actions import ContinueDeclare, DealerReady, NoChangeDeclare
 from cucco.server.session import PlayerSession
 from cucco.server.table import Table
 
 
 class AutoRespondConnection:
-    """Answers every prompt immediately (no_change / cucco_pass / always
-    continue) by pushing straight into its own session's inbox -- enough to
+    """Answers every prompt immediately (no_change / always continue) by
+    pushing straight into its own session's inbox -- enough to
     drive whole games to completion without a real client loop."""
 
     def __init__(self):
@@ -24,8 +24,6 @@ class AutoRespondConnection:
         self.sent.append(data)
         if data["type"] == "turn_prompt":
             self.session.inbox.put_nowait(NoChangeDeclare())
-        elif data["type"] == "cucco_window":
-            self.session.inbox.put_nowait(CuccoPass())
         elif data["type"] == "dealer_ready":
             self.session.inbox.put_nowait(DealerReady())
         elif data["type"] == "continue_prompt":

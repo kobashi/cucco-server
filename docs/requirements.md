@@ -58,11 +58,11 @@ Cucco(カンビオルール、グランペール版)の完全なルールは [`d
 技術詳細は [`docs/protocol/design.md`](protocol/design.md) に定義する。要点は以下の通り。
 
 - 通信方式: WebSocket、メッセージ形式はJSON、共通エンベロープに`protocol_version`を含む
-- クライアント→サーバーのアクション一覧(`identify`, `create_table`, `join_table`, `ready`, `dealer_ready`, `cambio_declare`, `no_change_declare`, `cucco_declare`, `cucco_pass`, `continue_declare`)
+- クライアント→サーバーのアクション一覧(`identify`, `create_table`, `join_table`, `ready`, `dealer_ready`, `cambio_declare`, `no_change_declare`, `cucco_declare`, `continue_declare`)
 - サーバー→クライアントのイベント一覧(状態同期、手番通知、交換結果、失格、ディール/ポット結果、ゲーム終了、山札再構築等)
 - 公開ゲーム状態(Public Game State)の完全なデータモデル: 座席・チップ(絶対値)・親・手番・残り山札枚数・捨て札(来歴つき)・宣言履歴・本人の手札(本人にのみ)
 - 情報可視性のルール(何が誰に公開されるか)
-- クク宣言のタイミングと機会(いつでも宣言可能。手番の第3の選択肢=`turn_prompt`、親の`dealer_ready`、および手番外の合間の`cucco_window`。親以外は「どうぞ」の前に宣言する機会はない)
+- クク宣言のタイミング(アトミックな処理中を除きいつでも宣言可能。`cucco_declare`は非同期のファイア・アンド・フォーゲットで、専用ウィンドウ・待機は存在しない。親は「どうぞ」の場面から、親以外は「どうぞ」以降に効力)
 - タイムアウト・切断・再接続・不正操作の扱い(`docs/protocol/decisions.md`に運用方針の詳細)
 
 ### 2.4 卓(テーブル)管理

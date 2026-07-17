@@ -3,7 +3,10 @@
 Prints every server event in a readable form and asks the operator what to
 do at each decision point (docs/ai-client-guide.md §2). Meant for eyeballing
 a live deal against the message-flow example in the guide, not for play
-comfort -- the human-facing UI is a separate future project.
+comfort -- the human-facing UI is a separate future project. Limitation:
+クク can only be declared at your own prompts here (the synchronous ask()
+loop can't take out-of-turn input); the browser clients expose the full
+anytime-declaration button.
 
     python -m clients.stub.stub_client --url ws://localhost:8765 --name Alice --create
     python -m clients.stub.stub_client --url ws://localhost:8765 --name Bob --room ABC123
@@ -52,10 +55,12 @@ async def run(conn: CuccoConnection) -> None:
             action = {"y": "cambio_declare", "c": "cucco_declare"}.get(answer, "no_change_declare")
             await conn.send(action, {})
             print(f">> {action}")
-        elif event.type == "cucco_window":
-            # Anytime klop (you hold クク and it is not your turn).
-            answer = await ask("you hold クク -- declare now? [y/N]: ")
-            action = "cucco_declare" if answer == "y" else "cucco_pass"
+        elif event.type == "effect_window":
+            # Declared-effects tables prompt EVERY exchange target (masking
+            # the timing tell of who holds a special card). Declaring with a
+            # plain card is treated as accepting by the server.
+            answer = await ask("exchange requested -- declare your card's effect? [y=declare / N=accept]: ")
+            action = "effect_declare" if answer == "y" else "effect_pass"
             await conn.send(action, {})
             print(f">> {action}")
         elif event.type == "continue_prompt":

@@ -10,10 +10,12 @@ def test_turn_timeout_uses_player_type():
     assert timeout_for(config, "turn", "ai") == 10.0
 
 
-def test_cucco_window_timeout_uses_player_type():
+def test_effect_window_timeout_uses_player_type():
+    # The effect window reuses the (historically named) cucco_window_timeout_*
+    # knobs; クク itself is fire-and-forget and has no prompt or timeout.
     config = GameConfig(cucco_window_timeout_human_sec=10.0, cucco_window_timeout_ai_sec=2.0)
-    assert timeout_for(config, "cucco_window", "human") == 10.0
-    assert timeout_for(config, "cucco_window", "ai") == 2.0
+    assert timeout_for(config, "effect_window", "human") == 10.0
+    assert timeout_for(config, "effect_window", "ai") == 2.0
 
 
 @pytest.mark.parametrize("prompt_type", ["ready", "dealer_ready", "continue"])

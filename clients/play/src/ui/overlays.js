@@ -23,8 +23,7 @@ export function renderStatus(el, state, seatName) {
   let mine = false;
   if (!isSpectator && state.dealerReadyPrompt) [text, mine] = ["あなたが親です — 手札を確認して「どうぞ」", true];
   else if (!isSpectator && state.turnPrompt) [text, mine] = ["あなたの手番です", true];
-  else if (!isSpectator && state.cuccoWindow) [text, mine] = ["クク宣言のチャンス!", true];
-  else if (!isSpectator && state.effectWindow) [text, mine] = ["効果を宣言しますか?", true];
+  else if (!isSpectator && state.effectWindow) [text, mine] = ["交換を要求されています", true];
   else if (!isSpectator && state.continuePrompt) [text, mine] = ["続行するか選んでください", true];
   else {
     const waiting = [...(state.pendingContinueIds ?? [])].filter((id) => id !== state.playerId);
@@ -46,10 +45,12 @@ export function renderDock(el, state, actions) {
     el.innerHTML = "";
     return;
   }
-  // クク is a third choice at my own decision points when I hold it (dealer's
-  // どうぞ, or my turn). Between turns it's still offered via the cucco_window
-  // modal (renderModals) -- klop is declarable anytime.
-  const cuccoBtn = state.yourHand === "クク" ? `<button id="dock-cucco-btn" class="cucco-btn">クク宣言</button>` : "";
+  // クク宣言 is a STANDING dock button, visible whenever I hold クク in a
+  // live deal -- fire-and-forget, so the table never waits on me and its
+  // pacing leaks nothing about who holds クク. Hidden once the deal is
+  // decided (open/result); the server would drop a late declare anyway.
+  const holdsCucco = state.yourHand === "クク" && !state.lastDealOpened && !state.lastDealResult;
+  const cuccoBtn = holdsCucco ? `<button id="dock-cucco-btn" class="cucco-btn">クク宣言</button>` : "";
   let html = "";
   if (state.dealerReadyPrompt) {
     html = `
@@ -60,6 +61,8 @@ export function renderDock(el, state, actions) {
       <span class="dock-timer">${countdown(state.turnPrompt.deadline)}秒</span>
       <button id="cambio-btn">カンビオ(交換)</button>
       <button id="no-change-btn" class="secondary">ノンカンビオ</button>${cuccoBtn}`;
+  } else if (cuccoBtn) {
+    html = cuccoBtn;
   }
   el.innerHTML = html;
   el.querySelector("#dealer-ready-btn")?.addEventListener("click", actions.sendDealerReady);
@@ -71,25 +74,20 @@ export function renderDock(el, state, actions) {
 export function renderModals(el, state, actions, seatName) {
   const isSpectator = state.playerType === "spectator";
   let html = "";
-  if (!isSpectator && state.cuccoWindow) {
+  if (!isSpectator && state.effectWindow) {
+    // Every exchange target gets this window in declared mode -- plain-card
+    // holders just confirm the exchange. The uniform prompt masks the timing
+    // tell that would otherwise reveal who holds a declarable special card.
+    // Unicast, so per-hand buttons leak nothing to the rest of the table.
+    const label = EFFECT_ACTION_LABELS[state.yourHand];
     html = modal(
       "urgent",
-      `<h2>クク宣言のチャンス!</h2>
-       <p>あなたはクク札を持っています。今すぐ宣言してディールを終了させますか?</p>
-       <p class="countdown">残り ${countdown(state.cuccoWindow.deadline)} 秒</p>
-       <button id="cucco-declare-btn">クク宣言する</button>
-       <button id="cucco-pass-btn" class="secondary">今は宣言しない</button>`
-    );
-  } else if (!isSpectator && state.effectWindow) {
-    const label = EFFECT_ACTION_LABELS[state.yourHand] ?? "効果を宣言する";
-    html = modal(
-      "urgent",
-      `<h2>効果を宣言しますか?</h2>
+      `<h2>交換を要求されています</h2>
        <p>${esc(seatName(state.effectWindow.requester))} さんがあなたに交換を要求しています。<br>
           あなたの札: <strong>${esc(state.yourHand ?? "?")}</strong></p>
        <p class="countdown">残り ${countdown(state.effectWindow.deadline)} 秒</p>
-       <button id="effect-declare-btn">${esc(label)}</button>
-       <button id="effect-pass-btn" class="secondary">宣言しない(交換に応じる)</button>`
+       ${label ? `<button id="effect-declare-btn">${esc(label)}</button>` : ""}
+       <button id="effect-pass-btn" class="${label ? "secondary" : ""}">交換に応じる${label ? "(宣言しない)" : ""}</button>`
     );
   } else if (!isSpectator && state.continuePrompt) {
     const myChips = state.table?.seats?.find((s) => s.player_id === state.playerId)?.chips ?? "?";
@@ -126,8 +124,6 @@ export function renderModals(el, state, actions, seatName) {
     );
   }
   el.innerHTML = html;
-  el.querySelector("#cucco-declare-btn")?.addEventListener("click", actions.sendCuccoDeclare);
-  el.querySelector("#cucco-pass-btn")?.addEventListener("click", actions.sendCuccoPass);
   el.querySelector("#effect-declare-btn")?.addEventListener("click", actions.sendEffectDeclare);
   el.querySelector("#effect-pass-btn")?.addEventListener("click", actions.sendEffectPass);
   el.querySelector("#continue-yes-btn")?.addEventListener("click", () => actions.sendContinue(true));

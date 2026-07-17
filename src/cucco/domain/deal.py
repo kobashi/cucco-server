@@ -206,6 +206,15 @@ class Deal:
         return [self._record_declaration(player_id, "no_change", via_timeout=via_timeout)]
 
     def submit_cucco_declare(self, player_id: str) -> list[DealEvent]:
+        """Declare クク, ending the deal immediately.
+
+        A klop is legal at any time during a deal EXCEPT while an atomic
+        exchange is being resolved (docs/rules/final_rules.md). The server
+        layer receives declarations asynchronously (as pending flags, never
+        as prompt answers) and calls this only at safe points between atomic
+        steps -- these guards are the domain's own enforcement of the same
+        boundaries. Declining is simply not declaring; there is no pass.
+        """
         if self._opened:
             raise IllegalAction("deal has already been opened")
         if self._pending_exchange is not None:
@@ -220,20 +229,6 @@ class Deal:
             raise IllegalAction(f"{player_id} does not hold クク")
         self.cucco_declared_by = player_id
         return [self._record_declaration(player_id, "cucco_declare"), CuccoDeclared(player_id)]
-
-    def submit_cucco_pass(self, player_id: str) -> None:
-        """Explicitly decline to declare during a cucco window.
-
-        Deliberately produces no domain event and is never added to
-        `declarations` — recording it publicly would leak who holds クク.
-        The server layer logs the raw action for replay purposes instead.
-        """
-        if self._opened:
-            raise IllegalAction("deal has already been opened")
-        if player_id in self.disqualified:
-            raise IllegalAction(f"{player_id} is disqualified and cannot respond to a cucco window")
-        if self.hands.get(player_id) is not Rank.CUCCO:
-            raise IllegalAction(f"{player_id} does not hold クク")
 
     # -- step-wise cambio (effect_declaration="declared") -----------------------
     #

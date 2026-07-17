@@ -1,8 +1,8 @@
 // Best-effort "whose turn is it" tracker for the table screen's seat
 // indicator.
 //
-// IMPORTANT: this is NOT how input is gated. `turn_prompt`, `cucco_window`
-// and `dealer_ready` are sent by the server directly (and only) to the
+// IMPORTANT: this is NOT how input is gated. `turn_prompt` and `dealer_ready`
+// are sent by the server directly (and only) to the
 // addressed session -- src/cucco/server/runner.py's `_prompt` calls
 // `_send_to`, not `_broadcast`. Bystanders are never told in real time
 // whose turn it is; they can only infer it from the broadcast resolution

@@ -16,7 +16,6 @@ import logging
 
 from cucco.domain.cards import Rank
 from cucco.domain.deal import DECLARABLE_RANKS, Deal
-from cucco.domain.errors import IllegalAction
 from cucco.domain.events import ChipsPaid, ContinuePrompted, DealerChanged, PlayerLeftPot, PotWipedOut, PotWon
 from cucco.domain.game import Game
 from cucco.domain.pot import Pot
@@ -26,8 +25,6 @@ from cucco.protocol.actions import (
     Action,
     CambioDeclare,
     ContinueDeclare,
-    CuccoDeclare,
-    CuccoPass,
     DealerReady,
     EffectDeclare,
     EffectPass,
@@ -197,7 +194,6 @@ class TableRunner:
         "turn": "turn_prompt",
         "continue": "continue_prompt",
         "dealer_ready": "dealer_ready",
-        "cucco_window": "cucco_window",
         "effect_window": "effect_window",
     }
 
@@ -213,15 +209,16 @@ class TableRunner:
 
         Any action already sitting in the inbox before this prompt is sent
         is drained first -- it's a leftover response to a PREVIOUS, already-
-        closed prompt (e.g. a `cucco_declare` that arrived just after that
-        window's timeout) and per docs/protocol/design.md must be silently
+        closed prompt and per docs/protocol/design.md must be silently
         ignored rather than misapplied to this new prompt. A response that
         arrives during THIS window but doesn't match `expected_types` is
         rejected (so a buggy AI gets a diagnostic) and the wait continues
-        on the same deadline -- except a stray `CuccoDeclare`/`CuccoPass`,
-        which docs/protocol/design.md explicitly says must never be
-        `action_rejected` (a well-behaved AI would otherwise get spurious
-        rejections just from network-delay timing against a closed window).
+        on the same deadline -- except a stray `EffectDeclare`/`EffectPass`,
+        which docs/protocol/design.md says must never be `action_rejected`
+        (a well-behaved AI would otherwise get spurious rejections from pure
+        network-delay timing against a closed window). `cucco_declare` never
+        reaches an inbox at all -- dispatch routes it as a pending flag
+        (PlayerSession.pending_cucco) for the runner's safe-point checks.
         """
         while not session.inbox.empty():
             session.inbox.get_nowait()
@@ -248,7 +245,7 @@ class TableRunner:
                     return None
                 if isinstance(action, expected_types):
                     return action
-                if isinstance(action, (CuccoDeclare, CuccoPass, EffectDeclare, EffectPass)):
+                if isinstance(action, (EffectDeclare, EffectPass)):
                     # Late answers to an already-closed window are pure
                     # network-delay timing; never action_rejected for these
                     # (docs/protocol/design.md).
@@ -483,6 +480,19 @@ class TableRunner:
 
     async def _run_deal(self, pot: Pot, game: Game) -> Deal:
         deal = pot.start_next_deal()
+        # Reset the async-declaration state left over from any previous deal
+        # BEFORE anyone learns their new hand -- a click reacting to THIS
+        # deal's deal_started must survive. クク declarations are
+        # fire-and-forget (dispatch flags the session and sets
+        # table.cucco_wakeup); the server NEVER waits on a holder, so the
+        # table's pacing reveals nothing about who holds クク. Pending flags
+        # are validated and applied at safe points between atomic steps.
+        self.table.cucco_wakeup.clear()
+        for pid in deal.order:
+            flagged = self.table.get(pid)
+            if flagged is not None:
+                flagged.pending_cucco = False
+
         # A reshuffle can happen during the initial deal-out itself if the
         # shared deck was nearly exhausted; report it before deal_started.
         await self._send_events(deal.take_pending_events())
@@ -494,32 +504,28 @@ class TableRunner:
             },
         )
 
-        # Dealer readiness ("dōzo"). A dealer holding クク may declare it here
-        # instead: the dealer's own turn comes last, so "dōzo" is their only
-        # chance to klop before anyone plays. Non-dealers get NO window before
-        # "dōzo" -- the deal has not started (docs/rules/final_rules.md).
+        # Dealer readiness ("dōzo"). Only the DEALER's klop can apply before
+        # "dōzo" (their own turn comes last, so this is their one chance to
+        # declare before anyone plays); a non-dealer has no pre-dōzo timing --
+        # an early click stays pending and takes effect right after "dōzo".
         dealer_session = self.table.get(deal.dealer_id)
         if dealer_session is not None and dealer_session.connected:
-            dealer_holds_cucco = deal.hands.get(deal.dealer_id) is Rank.CUCCO
-            expected = (DealerReady, CuccoDeclare) if dealer_holds_cucco else (DealerReady,)
-            action = await self._prompt(dealer_session, "dealer_ready", expected)
-            if isinstance(action, CuccoDeclare):
+            kind, _ = await self._race_prompt(
+                deal, dealer_session, "dealer_ready", (DealerReady,), eligible={deal.dealer_id}
+            )
+            if kind == "cucco":
                 await self._send_events(deal.submit_cucco_declare(deal.dealer_id))
 
         while deal.legal_actor() is not None and deal.cucco_declared_by is None:
+            # Safe point between atomic steps: apply any pending klop first
+            # (one that arrived during the previous turn's atomic resolution,
+            # or a non-dealer's click from before "dōzo").
+            declarer = self._take_pending_cucco(deal)
+            if declarer is not None:
+                await self._send_events(deal.submit_cucco_declare(declarer))
+                break
             actor_id = deal.legal_actor()
             assert actor_id is not None
-            # クク may be declared at ANY point between atomic steps (klop is
-            # not tied to your turn -- docs/rules/final_rules.md). Before each
-            # turn, offer a cucco_window to every current holder EXCEPT the
-            # upcoming actor, who is instead offered クク as a third turn
-            # choice (see _run_turn). Deterministic seat order; excluding the
-            # actor avoids double-prompting them. This covers the moment right
-            # after "dōzo" and the gap after every resolved turn.
-            reactive = deal.current_cucco_holders() - {actor_id}
-            await self._cucco_window(deal, [pid for pid in deal.order if pid in reactive])
-            if deal.cucco_declared_by is not None:
-                break
             events = await self._run_turn(deal, actor_id)
             await self._send_events(events)
 
@@ -531,15 +537,16 @@ class TableRunner:
         if session is None or not session.connected:
             return deal.submit_no_change(actor_id, via_timeout=True)
 
-        # クク is offered as a third turn choice to a holder (交換 / 不交換 /
-        # クク), alongside the anytime between-turns windows.
-        holds_cucco = deal.hands.get(actor_id) is Rank.CUCCO
-        expected = (CambioDeclare, NoChangeDeclare, CuccoDeclare) if holds_cucco else (CambioDeclare, NoChangeDeclare)
-        action = await self._prompt(session, "turn", expected)
+        # The actor's own クク button works through the same async path as
+        # everyone else's: any valid pending declaration (theirs or a
+        # bystander's) interrupts this wait -- think time is not an atomic
+        # step, so a klop during it ends the deal immediately.
+        kind, payload = await self._race_prompt(deal, session, "turn", (CambioDeclare, NoChangeDeclare))
+        if kind == "cucco":
+            return deal.submit_cucco_declare(payload)
+        action = payload
         if action is None:
             return deal.submit_no_change(actor_id, via_timeout=True)
-        if isinstance(action, CuccoDeclare):
-            return deal.submit_cucco_declare(actor_id)
         if isinstance(action, CambioDeclare):
             if self.table.config.effect_declaration == "declared":
                 return await self._run_declared_cambio(deal, actor_id)
@@ -548,22 +555,27 @@ class TableRunner:
 
     async def _run_declared_cambio(self, deal: Deal, requester: str) -> list:
         """effect_declaration="declared": walk the exchange one target at a
-        time, giving each declarable-card holder an effect_window before the
-        swap happens. Silence (pass / timeout / disconnected) means the
-        effect does NOT fire and the exchange succeeds -- so unlike the base
-        rules, holding 猫 or 人間 no longer protects you automatically.
+        time, giving EVERY connected target an effect_window before the swap
+        happens -- not just declarable-card holders. Prompting only special
+        cards would leak them through timing alone: a plain card's instant
+        swap vs. a special card's think-time is visible to the whole table.
+        With a uniform prompt, a plain-card holder simply confirms the
+        exchange, and the lag is indistinguishable from a holder weighing a
+        declaration. Silence (pass / timeout / disconnected) means the effect
+        does NOT fire and the exchange succeeds -- so unlike the base rules,
+        holding 猫 or 人間 no longer protects you automatically. A declare
+        from a plain-card holder (buggy AI) is treated as accepting.
         The whole walk is one atomic exchange: no cucco windows in between.
         """
         events, target = deal.begin_cambio(requester)
         while target is not None:
             declared = False
-            if deal.hands.get(target) in DECLARABLE_RANKS:
-                session = self.table.get(target)
-                if session is not None and session.connected:
-                    answer = await self._prompt(
-                        session, "effect_window", (EffectDeclare, EffectPass), {"requester": requester}
-                    )
-                    declared = isinstance(answer, EffectDeclare)
+            session = self.table.get(target)
+            if session is not None and session.connected:
+                answer = await self._prompt(
+                    session, "effect_window", (EffectDeclare, EffectPass), {"requester": requester}
+                )
+                declared = isinstance(answer, EffectDeclare) and deal.hands.get(target) in DECLARABLE_RANKS
             if declared:
                 step_events, target = deal.resolve_effect_declared(requester, target)
                 events += step_events
@@ -572,29 +584,59 @@ class TableRunner:
                 target = None
         return events
 
-    async def _cucco_window(self, deal: Deal, holder_ids: list[str]) -> None:
-        for pid in holder_ids:
-            if deal.cucco_declared_by is not None:
-                return
-            if pid in deal.disqualified or deal.hands.get(pid) is not Rank.CUCCO:
-                continue
-            session = self.table.get(pid)
-            if session is None or not session.connected:
-                self._log_cucco_pass(pid, via_timeout=True)
-                continue
-            action = await self._prompt(session, "cucco_window", (CuccoDeclare, CuccoPass))
-            if action is None or isinstance(action, CuccoPass):
-                self._log_cucco_pass(pid, via_timeout=action is None)
-                continue
-            try:
-                events = deal.submit_cucco_declare(pid)
-                await self._send_events(events)
-            except IllegalAction as exc:
-                await self._reject(session, str(exc))
+    def _take_pending_cucco(self, deal: Deal, eligible: set[str] | None = None) -> str | None:
+        """Consume the first pending クク declaration that is valid right now.
 
-    def _log_cucco_pass(self, player_id: str, *, via_timeout: bool) -> None:
-        # cucco_pass deliberately produces no domain event (recording it
-        # publicly would leak who holds クク) -- the action log is the only
-        # place this is ever recorded (Deal.submit_cucco_pass's docstring).
-        if self.action_log is not None:
-            self.action_log.write_action(player_id, "cucco_pass", {"via_timeout": via_timeout})
+        Scanned in deterministic seat order (dealer first, then turn order --
+        「宣言確認は親から手番順」). A flag whose declaration is no longer
+        possible (the card was exchanged away, or the player was
+        disqualified) is dropped; a flag from a valid holder who is merely
+        not yet `eligible` (a non-dealer before "dōzo") is left pending so it
+        applies at the first safe point after "dōzo".
+        """
+        order = [deal.dealer_id] + [pid for pid in deal.order if pid != deal.dealer_id]
+        for pid in order:
+            session = self.table.get(pid)
+            if session is None or not session.pending_cucco:
+                continue
+            if pid in deal.disqualified or deal.hands.get(pid) is not Rank.CUCCO:
+                session.pending_cucco = False
+                continue
+            if eligible is not None and pid not in eligible:
+                continue
+            session.pending_cucco = False
+            return pid
+        return None
+
+    async def _race_prompt(
+        self,
+        deal: Deal,
+        session: PlayerSession,
+        prompt_type: str,
+        expected_types: tuple[type, ...],
+        eligible: set[str] | None = None,
+    ) -> tuple[str, object]:
+        """Wait for `session`'s prompt answer, but let any valid pending クク
+        declaration interrupt the wait: another player's think time is not an
+        atomic step, so a klop during it ends the deal immediately
+        (docs/rules/final_rules.md 「クク宣言は残りの手番進行を即座に停止」).
+        Returns ("cucco", declarer_id) -- the interrupted prompt is cancelled
+        and its late answer, if any, is drained as stale by the next prompt --
+        or ("action", answer) where answer is None on timeout.
+        """
+        prompt_task = asyncio.ensure_future(self._prompt(session, prompt_type, expected_types))
+        while True:
+            wake_task = asyncio.ensure_future(self.table.cucco_wakeup.wait())
+            done, _ = await asyncio.wait({prompt_task, wake_task}, return_when=asyncio.FIRST_COMPLETED)
+            wake_task.cancel()
+            if prompt_task in done:
+                return ("action", prompt_task.result())
+            # A declaration arrived somewhere at the table. Clear the event
+            # BEFORE scanning, so a set() racing the scan re-wakes us.
+            self.table.cucco_wakeup.clear()
+            declarer = self._take_pending_cucco(deal, eligible)
+            if declarer is None:
+                continue  # stale or not-yet-eligible flag: keep waiting
+            prompt_task.cancel()
+            await asyncio.gather(prompt_task, return_exceptions=True)
+            return ("cucco", declarer)

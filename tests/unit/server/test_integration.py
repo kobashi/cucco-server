@@ -28,8 +28,8 @@ class FakeConnection:
 async def auto_respond(
     handler: ConnectionHandler, conn: FakeConnection, stop_event: asyncio.Event, stop_type: str = "game_ended"
 ) -> None:
-    """Always no-change / cucco-pass / continue=True -- the simplest
-    possible well-behaved client, enough to drive a game (or, with
+    """Always no-change / どうぞ / continue=True -- the simplest possible
+    well-behaved client, enough to drive a game (or, with
     stop_type="evaluation_summary", a whole game_count run) to completion."""
     while not stop_event.is_set():
         try:
@@ -42,8 +42,6 @@ async def auto_respond(
             await handler.handle_message(build_envelope("dealer_ready", {}, table_id=table_id))
         elif type_ == "turn_prompt":
             await handler.handle_message(build_envelope("no_change_declare", {}, table_id=table_id))
-        elif type_ == "cucco_window":
-            await handler.handle_message(build_envelope("cucco_pass", {}, table_id=table_id))
         elif type_ == "continue_prompt":
             await handler.handle_message(build_envelope("continue_declare", {"continue": True}, table_id=table_id))
         if type_ == stop_type:
@@ -130,11 +128,9 @@ async def test_full_game_persists_a_results_row_and_a_replayable_action_log(tmp_
     results_store = ResultsStore(tmp_path / "results.db")
     action_log_dir = tmp_path / "action_logs"
 
-    # dispatch._start_game draws its RNG seed from OS entropy (by design,
-    # so it can't be predicted/replayed by an attacker) -- pin it here so
-    # this test's "at least one cucco_pass happens" assertion below isn't
-    # a statistical gamble. Seed 0 was verified (by direct experiment) to
-    # deal クク to someone before this 3-player/5-chip/chips_zero game ends.
+    # dispatch._start_game draws its RNG seed from OS entropy (by design, so
+    # it can't be predicted/replayed by an attacker) -- pin it here so this
+    # persistence test runs a fully deterministic game.
     class _FixedEntropy:
         def randrange(self, _n):
             return 0
@@ -192,10 +188,6 @@ async def test_full_game_persists_a_results_row_and_a_replayable_action_log(tmp_
     lines = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     assert lines[0]["kind"] == "seed"
     assert isinstance(lines[0]["seed"], int)
-    # Every well-behaved player passes on クク at least once during a full
-    # game -- confirms cucco_pass reaches the log despite never being
-    # broadcast on the wire (docs/protocol/design.md).
-    assert any(line["kind"] == "action" and line["action_type"] == "cucco_pass" for line in lines)
     assert any(line["kind"] == "event" and line["event_type"] == "GameEnded" for line in lines)
 
     results_store.close()

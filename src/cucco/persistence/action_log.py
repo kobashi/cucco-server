@@ -2,9 +2,7 @@
 
 Records the deck's shuffle seed plus every domain event and raw client
 action in chronological order, so a game can be replayed deterministically
-later -- including `cucco_pass`, which is deliberately excluded from the
-public wire protocol (it would leak who holds クク) but is still needed
-here for replay and AI strategy analysis.
+later, for replay and AI strategy analysis.
 """
 
 from __future__ import annotations

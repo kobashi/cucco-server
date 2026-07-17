@@ -37,6 +37,13 @@ class PlayerSession:
     # mid-turn just stares at a promptless screen until the server times
     # them out.
     outstanding_prompt: dict | None = None
+    # An out-of-band クク declaration waiting to be applied. cucco_declare is
+    # fire-and-forget (never a prompt answer): dispatch sets this flag and
+    # wakes the runner, which applies it at the next safe point -- the server
+    # never WAITS on a holder, so the table's pacing leaks nothing about who
+    # holds クク. Cleared by the runner when consumed, found invalid, or at
+    # deal boundaries.
+    pending_cucco: bool = False
 
     async def send(self, message: str) -> None:
         if self.connection is not None and self.connected:

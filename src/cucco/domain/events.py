@@ -17,9 +17,9 @@ from cucco.domain.timeutil import now_iso
 
 @dataclass(frozen=True)
 class Declaration:
-    """A player declared cambio / no-change / cucco on their own turn (or cucco
-    out of turn). `cucco_pass` is deliberately NOT represented here — it is
-    never part of the public declaration history (docs/protocol/design.md)."""
+    """A player declared cambio / no-change / cucco. クク declarations are
+    fire-and-forget and can land at any safe point; declining is simply not
+    declaring, so no "pass" ever appears in the public history."""
 
     player_id: str
     action: str  # "cambio" | "no_change" | "cucco_declare"

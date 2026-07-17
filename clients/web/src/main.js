@@ -53,9 +53,8 @@ function update(mutator) {
 
 // -- countdown ticking (display only; the server enforces the real deadline) --
 // Clears prompts whose deadline has passed: the server never notifies a
-// unicast-prompt timeout beyond turn_prompt (turn_timeout_consumed) and
-// cucco_window (silently drops to the next holder) -- without this, an
-// expired modal would keep overlaying whatever comes next.
+// unicast-prompt timeout beyond turn_prompt (turn_timeout_consumed) --
+// without this, an expired modal would keep overlaying whatever comes next.
 //
 // Countdown digits are updated IN PLACE via [data-deadline] spans rather than
 // through notify(): a full innerHTML re-render 4x/second tears down and
@@ -65,7 +64,7 @@ function update(mutator) {
 setInterval(() => {
   const now = Date.now();
   let expired = false;
-  for (const key of ["dealerReadyPrompt", "turnPrompt", "cuccoWindow", "continuePrompt", "resultPause", "effectWindow"]) {
+  for (const key of ["dealerReadyPrompt", "turnPrompt", "continuePrompt", "resultPause", "effectWindow"]) {
     if (state[key] && state[key].deadline <= now) {
       state[key] = null;
       expired = true;
@@ -211,20 +210,17 @@ const actions = {
     conn.send("no_change_declare", {});
     update(() => (state.turnPrompt = null));
   },
-  // クク can be declared from three UIs: the cucco_window modal, the turn
-  // action area, or the dealer-ready area. Clear whichever was showing.
+  // クク is fire-and-forget: the standing button sends it at any moment and
+  // the server applies it at the next safe point (no window, no pass --
+  // nothing the table waits on). If one of my own prompts was showing,
+  // optimistically clear it; declaring supersedes answering it.
   sendCuccoDeclare() {
     conn.send("cucco_declare", {});
     update(() => {
-      state.cuccoWindow = null;
       state.turnPrompt = null;
       state.dealerReadyPrompt = null;
       state.dozoSent = true;
     });
-  },
-  sendCuccoPass() {
-    conn.send("cucco_pass", {});
-    update(() => (state.cuccoWindow = null));
   },
   sendContinue(stay) {
     conn.send("continue_declare", { continue: stay });
@@ -332,7 +328,6 @@ function applySnapshot(snapshot) {
   state.screen = potRunning ? "table" : "waiting";
   state.dealerReadyPrompt = null;
   state.turnPrompt = null;
-  state.cuccoWindow = null;
   state.continuePrompt = null;
 }
 
@@ -473,12 +468,6 @@ function handleEvent(type, p) {
       });
       return;
 
-    case "cucco_window":
-      update(() => {
-        state.cuccoWindow = { timeoutSec: p.timeout_sec, deadline: Date.now() + p.timeout_sec * 1000 };
-      });
-      return;
-
     case "effect_window":
       // Declared-effects rule: I'm being asked to exchange while holding a
       // declarable special card -- declare its effect or let the swap happen.
@@ -556,7 +545,6 @@ function handleEvent(type, p) {
       update(() => {
         state.firstActionSeen = true;
         state.turnPrompt = null;
-        state.cuccoWindow = null;
         pushLog(state, `${seatName(state, p.player_id)} がクク宣言!`);
       });
       return;
@@ -581,7 +569,6 @@ function handleEvent(type, p) {
           state.disqualifiedThisDeal = true;
           state.yourHand = null;
           state.turnPrompt = null;
-          state.cuccoWindow = null;
           state.dealerReadyPrompt = null;
           state.effectWindow = null;
         }
@@ -639,7 +626,6 @@ function handleEvent(type, p) {
           if (p.next_dealer) state.table.dealer_seat = p.next_dealer;
         }
         state.turnPrompt = null;
-        state.cuccoWindow = null;
         state.dealerReadyPrompt = null;
         state.currentTurnSeat = null;
         pushLog(state, `ディール結果: 敗者 ${p.losers.map((id) => seatName(state, id)).join(", ") || "なし"}`);

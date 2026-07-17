@@ -5,7 +5,6 @@ from cucco.protocol.actions import (
     ContinueDeclare,
     CreateTable,
     CuccoDeclare,
-    CuccoPass,
     DealerReady,
     Identify,
     JoinTable,
@@ -168,7 +167,6 @@ def test_parse_no_payload_actions():
     assert parse_action(env("cambio_declare")) == CambioDeclare()
     assert parse_action(env("no_change_declare")) == NoChangeDeclare()
     assert parse_action(env("cucco_declare")) == CuccoDeclare()
-    assert parse_action(env("cucco_pass")) == CuccoPass()
 
 
 def test_parse_continue_declare():

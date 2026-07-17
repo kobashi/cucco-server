@@ -29,7 +29,6 @@ from cucco.protocol.actions import (
     ContinueDeclare,
     CreateTable,
     CuccoDeclare,
-    CuccoPass,
     DealerReady,
     EffectDeclare,
     EffectPass,
@@ -50,7 +49,7 @@ from cucco.server.runner import TableRunner, build_state_snapshot
 from cucco.server.session import Connection, PlayerSession
 from cucco.server.table import Table
 
-QUEUE_ROUTED = (DealerReady, CambioDeclare, NoChangeDeclare, CuccoDeclare, CuccoPass, ContinueDeclare, EffectDeclare, EffectPass)
+QUEUE_ROUTED = (DealerReady, CambioDeclare, NoChangeDeclare, CuccoDeclare, ContinueDeclare, EffectDeclare, EffectPass)
 
 # A generous safety-net window for players to join and declare `ready`
 # before the first pot starts anyway (docs/protocol/design.md: "ready"の
@@ -371,6 +370,16 @@ class ConnectionHandler:
     async def _route_to_inbox(self, action) -> None:
         if self.session is None or self.table is None:
             raise ProtocolError("must join_table first")
+        if isinstance(action, CuccoDeclare):
+            # cucco_declare is fire-and-forget, never a prompt answer: flag it
+            # and wake the runner, which validates and applies it at the next
+            # safe point (docs/protocol/design.md 「クク宣言」). Routing it
+            # through the inbox would tie the declaration to whatever prompt
+            # happens to be outstanding -- but a klop is legal at ANY time
+            # outside an atomic exchange, including mid-someone-else's turn.
+            self.session.pending_cucco = True
+            self.table.cucco_wakeup.set()
+            return
         self.session.inbox.put_nowait(action)
 
     async def on_disconnect(self) -> None:

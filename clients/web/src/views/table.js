@@ -35,7 +35,6 @@ export function render(el, state, actions) {
       ${renderPrevDealSummary(state)}
       ${renderLog(state)}
     </div>
-    ${!isSpectator && state.cuccoWindow ? renderCuccoModal(state) : ""}
     ${!isSpectator && state.effectWindow ? renderEffectModal(state) : ""}
     ${!isSpectator && state.continuePrompt ? renderContinueModal(state) : ""}
     ${state.resultPause ? renderResultPauseModal(state, isSpectator) : ""}
@@ -45,7 +44,6 @@ export function render(el, state, actions) {
   el.querySelector("#cambio-btn")?.addEventListener("click", actions.sendCambio);
   el.querySelector("#no-change-btn")?.addEventListener("click", actions.sendNoChange);
   el.querySelector("#cucco-declare-btn")?.addEventListener("click", actions.sendCuccoDeclare);
-  el.querySelector("#cucco-pass-btn")?.addEventListener("click", actions.sendCuccoPass);
   el.querySelector("#continue-yes-btn")?.addEventListener("click", () => actions.sendContinue(true));
   el.querySelector("#continue-no-btn")?.addEventListener("click", () => actions.sendContinue(false));
   el.querySelector("#result-ack-btn")?.addEventListener("click", () => actions.sendResultAck());
@@ -54,14 +52,13 @@ export function render(el, state, actions) {
 }
 
 // One always-visible line answering "who/what are we waiting on right now".
-// For bystanders this is best-effort: the dealer's どうぞ, turn prompts and
-// cucco windows are unicast (runner.py sends them only to the addressee), so
-// the deal phase is reconstructed from the broadcast resolution events.
+// For bystanders this is best-effort: the dealer's どうぞ and turn prompts are
+// unicast (runner.py sends them only to the addressee), so the deal phase is
+// reconstructed from the broadcast resolution events.
 function statusFor(state, isSpectator) {
   if (!isSpectator) {
     if (state.dealerReadyPrompt) return { text: "あなたが親です — 手札を確認して「どうぞ」を宣言してください", mine: true };
     if (state.turnPrompt) return { text: "あなたの手番です — カンビオ / ノンカンビオを選んでください", mine: true };
-    if (state.cuccoWindow) return { text: "クク宣言のチャンス!", mine: true };
     if (state.continuePrompt) return { text: "続行するかどうか選んでください", mine: true };
   }
   const waitingContinue = [...(state.pendingContinueIds ?? [])].filter((id) => id !== state.playerId);
@@ -284,10 +281,12 @@ function renderPotResult(state, isSpectator) {
 }
 
 function renderActionArea(state, actions) {
-  // クク is a third choice at these decision points when I hold it: the dealer
-  // may declare it with どうぞ, and any player may declare it on their turn.
-  // (Between turns it's still offered as its own cucco_window modal.)
-  const holdsCucco = state.yourHand === "クク";
+  // クク宣言 is a STANDING button, visible whenever I hold クク in a live
+  // deal -- on my own prompts as a third choice, and while others act.
+  // Fire-and-forget: the server never waits on the holder, so the table's
+  // pacing leaks nothing; this button is my anytime interrupt. Hidden after
+  // the open (the deal is decided) -- the server would drop it anyway.
+  const holdsCucco = state.yourHand === "クク" && !state.lastDealOpened && !state.lastDealResult;
   const cuccoBtn = holdsCucco ? `<button id="cucco-declare-btn">クク宣言(ディール即終了)</button>` : "";
   if (state.dealerReadyPrompt) {
     return `
@@ -309,21 +308,7 @@ function renderActionArea(state, actions) {
     `;
   }
   const waitingOn = state.currentTurnSeat ? seatName(state, state.currentTurnSeat) : null;
-  return `<section class="action-area"><p class="muted">${waitingOn ? `${esc(waitingOn)}さんの手番です` : "待機中です"}</p></section>`;
-}
-
-function renderCuccoModal(state) {
-  return `
-    <div class="modal-overlay">
-      <div class="modal cucco-modal">
-        <h2>クク宣言のチャンス!</h2>
-        <p>あなたはクク札を持っています。今すぐ宣言してディールを終了させますか?</p>
-        <p class="countdown">残り ${countdown(state.cuccoWindow.deadline)} 秒</p>
-        <button id="cucco-declare-btn">クク宣言する</button>
-        <button id="cucco-pass-btn" class="secondary">今は宣言しない</button>
-      </div>
-    </div>
-  `;
+  return `<section class="action-area"><p class="muted">${waitingOn ? `${esc(waitingOn)}さんの手番です` : "待機中です"}</p>${cuccoBtn}</section>`;
 }
 
 const EFFECT_ACTION_LABELS = {
@@ -337,17 +322,22 @@ const EFFECT_ACTION_LABELS = {
 // special card and someone is asking to exchange -- same urgency treatment
 // as the cucco window.
 function renderEffectModal(state) {
+  // Every exchange target gets this window in declared mode -- including
+  // plain-card holders, who just confirm the exchange. The uniform prompt is
+  // deliberate: it masks the timing tell that would otherwise reveal who is
+  // weighing a special card's declaration. This modal is unicast, so showing
+  // hand-specific buttons here leaks nothing to the rest of the table.
   const card = state.yourHand;
-  const actionLabel = EFFECT_ACTION_LABELS[card] ?? "効果を宣言する";
+  const actionLabel = EFFECT_ACTION_LABELS[card];
   return `
     <div class="modal-overlay">
       <div class="modal cucco-modal">
-        <h2>効果を宣言しますか?</h2>
+        <h2>交換を要求されています</h2>
         <p>${esc(seatName(state, state.effectWindow.requester))} さんがあなたに交換を要求しています。<br>
            あなたの札: <strong>${esc(card ?? "?")}</strong></p>
         <p class="countdown">残り ${countdown(state.effectWindow.deadline)} 秒</p>
-        <button id="effect-declare-btn">${esc(actionLabel)}</button>
-        <button id="effect-pass-btn" class="secondary">宣言しない(交換に応じる)</button>
+        ${actionLabel ? `<button id="effect-declare-btn">${esc(actionLabel)}</button>` : ""}
+        <button id="effect-pass-btn" class="${actionLabel ? "secondary" : ""}">交換に応じる${actionLabel ? "(宣言しない)" : ""}</button>
       </div>
     </div>
   `;

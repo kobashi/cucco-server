@@ -21,20 +21,19 @@ def test_write_seed_records_the_shuffle_seed_first(tmp_path):
     assert "ts" in lines[0]
 
 
-def test_write_action_records_cucco_pass_which_has_no_domain_event(tmp_path):
-    # cucco_pass deliberately produces no domain event (it would leak who
-    # holds クク if it did) -- the action log is the only place this is
-    # ever recorded, per Deal.submit_cucco_pass's own docstring.
+def test_write_action_records_a_raw_client_action(tmp_path):
+    # write_action logs a raw client action (one with no corresponding domain
+    # event) for deterministic replay -- exercised here with a generic action.
     path = tmp_path / "game.jsonl"
     log = ActionLogWriter(path)
-    log.write_action("B", "cucco_pass", {"via_timeout": False})
+    log.write_action("B", "some_raw_action", {"via_timeout": False})
     log.close()
 
     lines = read_lines(path)
     assert lines[0] == {
         "kind": "action",
         "player_id": "B",
-        "action_type": "cucco_pass",
+        "action_type": "some_raw_action",
         "payload": {"via_timeout": False},
         "ts": lines[0]["ts"],
     }

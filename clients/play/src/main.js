@@ -464,7 +464,7 @@ function showToast(text) {
 setInterval(() => {
   const now = Date.now();
   let expired = false;
-  for (const key of ["dealerReadyPrompt", "turnPrompt", "cuccoWindow", "continuePrompt", "resultPause", "effectWindow"]) {
+  for (const key of ["dealerReadyPrompt", "turnPrompt", "continuePrompt", "resultPause", "effectWindow"]) {
     if (state[key] && state[key].deadline <= now) {
       state[key] = null;
       expired = true;
@@ -635,19 +635,15 @@ const actions = {
     state.turnPrompt = null;
     render();
   },
-  // クク can be declared from the cucco_window modal or from the dock (turn /
-  // dealer-ready). Clear whichever prompt was showing.
+  // クク is fire-and-forget: the standing dock button sends it at any moment
+  // and the server applies it at the next safe point (no window, no pass --
+  // nothing the table waits on). If one of my own prompts was showing,
+  // optimistically clear it; declaring supersedes answering it.
   sendCuccoDeclare() {
     conn.send("cucco_declare", {});
-    state.cuccoWindow = null;
     state.turnPrompt = null;
     state.dealerReadyPrompt = null;
     state.dozoSent = true;
-    render();
-  },
-  sendCuccoPass() {
-    conn.send("cucco_pass", {});
-    state.cuccoWindow = null;
     render();
   },
   sendEffectDeclare() {

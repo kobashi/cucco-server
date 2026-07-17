@@ -1,9 +1,12 @@
 """Fully automatic Mock AI client (docs/ai-client-guide.md).
 
-A passive event loop: waits for server notifications and answers the four
-decision points (turn / cucco window / continue / dealer_ready), delegating
-the actual choices to a policy from `clients.mock_ai.policies`. Used to
-drive evaluation-mode self-play runs and as a reference implementation for
+A passive event loop: waits for server notifications and answers the
+decision points (turn / continue / dealer_ready / effect window), delegating
+the actual choices to a policy from `clients.mock_ai.policies`. クク is
+fire-and-forget (`cucco_declare` may be sent at any moment); this bot only
+declares it at its own prompts (turn / dealer_ready), which is a legal
+simplification -- declaring is always optional. Used to drive
+evaluation-mode self-play runs and as a reference implementation for
 seminar students' own AI clients.
 
 Run standalone:
@@ -98,15 +101,16 @@ class MockAI:
                 change = self.policy.decide_change(self.my_hand or "", self.alive_count)
                 await self.conn.send("cambio_declare" if change else "no_change_declare", {})
                 self._info(f"turn: hand={self.my_hand} alive={self.alive_count} -> {'change' if change else 'no_change'}")
-        elif event.type == "cucco_window":
-            # Anytime klop (I hold クク and it is not my turn).
-            declare = self.policy.decide_cucco_declare(self.my_hand or "", self.alive_count)
-            await self.conn.send("cucco_declare" if declare else "cucco_pass", {})
         elif event.type == "effect_window":
-            # Declared-effects tables: always declare -- matching the base
-            # rules' automatic behavior, and answering fast keeps the table
-            # from waiting out the window timeout on every exchange.
-            await self.conn.send("effect_declare", {})
+            # Declared-effects tables send this to EVERY exchange target (a
+            # uniform prompt masks the timing tell of who holds a special
+            # card). Declare when our card has an effect -- matching the base
+            # rules' automatic behavior -- otherwise confirm the exchange.
+            # Either way answer fast, so the table never waits out the window.
+            if self.my_hand in ("人間", "馬", "猫", "家"):
+                await self.conn.send("effect_declare", {})
+            else:
+                await self.conn.send("effect_pass", {})
         elif event.type == "continue_prompt":
             stay = self.policy.decide_continue(self.my_chips, p.get("required_chips", 1))
             await self.conn.send("continue_declare", {"continue": stay})
