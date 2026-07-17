@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.9.1 — プロジェクト全体の整合性レビュー
+
+ドキュメント・プロトコル・実装の全体を突き合わせ、食い違いを修正。
+
+### 修正
+
+- **webリファレンスクライアントの不具合**: `isTerminalExchange`が拒否理由
+  を`"human"`/`"cat"`で照合していたが、実際にサーバーが送るのは
+  `"human_refusal"`/`"cat_meow"`。人間・猫による拒否が発生しても手番推測
+  と宣言履歴(`declarations_this_deal`表示)が更新されない不具合を修正
+  (プレイ用クライアントは元々正しい実装だった)
+- **`ready`のドキュメント記述を実装に合わせて修正**: 「ポットごとに
+  `ready`を再送し、タイムアウトで観戦扱いになる」という誤った記述を、
+  実際の仕様(最初のゲーム開始のみをゲートし、後続ポットは自動復活で
+  全員参加。最初の`ready`から10分の卓全体の安全弁)に訂正
+  (`docs/protocol/design.md`、`docs/ai-client-guide.md`、
+  `docs/human-client-guide.md`、`docs/web-client-operations.md`、
+  `clients/mock_ai/mock_ai.py`のコメント)。あわせて使われていなかった
+  `timers.py`の`"ready"`プロンプト種別を削除
+- **`docs/protocol/design.md`のイベント表に欠落していた6件を追加**:
+  `dealer_ready`(ユニキャストのプロンプト)、`chips_paid`、
+  `continue_prompted`、`dealer_changed`、`pot_won`、`pot_wiped_out`
+- 両クライアントガイドのフロー例で`turn_prompt`を「サーバー→全員」と
+  誤記していた箇所をユニキャストに訂正
+- `docs/protocol/design.md`のライフサイクル説明に、参加者全員(作成者
+  含む)のreadyによる自動開始経路を追記
+- human-client-guideの判断ポイント表に`effect_window`行が欠落していた
+  ため追加
+- `docs/web-client-operations.md`の古い「(開発中)」表記を削除
+- READMEのテスト件数表記を実際の件数に更新
+
+### テスト
+
+- 使われていなかった`"ready"`プロンプト種別のテストケースを削除。
+  ユニット・結合テスト257件、全てパス
+
 ## v0.9.0 — プレイ用クライアント: UIブラッシュアップ+スマホ縦対応
 
 ### 変更
