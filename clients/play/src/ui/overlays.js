@@ -5,6 +5,7 @@
 // itself is never rebuilt by these.
 
 import { esc, secondsLeft } from "../../../web-common/utils.js";
+import { cardEffectFor } from "../cardInfo.js";
 
 function countdown(deadline) {
   return `<span data-deadline="${deadline}">${secondsLeft(deadline)}</span>`;
@@ -38,6 +39,21 @@ export function renderStatus(el, state, seatName) {
     }
   }
   el.innerHTML = `<div class="status-line ${mine ? "mine" : ""}">${esc(text)}</div>`;
+}
+
+// A persistent one-line reminder of what my current card actually does --
+// shown near the status line so the player doesn't have to open the full
+// card-effect panel just to recall their own hand's implication (spectators
+// have no hand; between deals yourHand is null, so it's simply empty then).
+export function renderHandInfo(el, state) {
+  if (state.playerType === "spectator" || !state.yourHand) {
+    el.innerHTML = "";
+    return;
+  }
+  const info = cardEffectFor(state.yourHand);
+  el.innerHTML = info
+    ? `<div class="hand-info"><strong>${esc(state.yourHand)}</strong>: ${esc(info.gist)}</div>`
+    : "";
 }
 
 export function renderDock(el, state, actions) {
@@ -80,11 +96,13 @@ export function renderModals(el, state, actions, seatName) {
     // tell that would otherwise reveal who holds a declarable special card.
     // Unicast, so per-hand buttons leak nothing to the rest of the table.
     const label = EFFECT_ACTION_LABELS[state.yourHand];
+    const info = cardEffectFor(state.yourHand);
     html = modal(
       "urgent",
       `<h2>交換を要求されています</h2>
        <p>${esc(seatName(state.effectWindow.requester))} さんがあなたに交換を要求しています。<br>
           あなたの札: <strong>${esc(state.yourHand ?? "?")}</strong></p>
+       ${!label && info ? `<p class="muted hand-info-inline">${esc(info.gist)}</p>` : ""}
        <p class="countdown">残り ${countdown(state.effectWindow.deadline)} 秒</p>
        ${label ? `<button id="effect-declare-btn">${esc(label)}</button>` : ""}
        <button id="effect-pass-btn" class="${label ? "secondary" : ""}">交換に応じる${label ? "(宣言しない)" : ""}</button>`

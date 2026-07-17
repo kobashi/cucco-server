@@ -68,6 +68,13 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 }
 .status-line.mine { border-color: var(--urgent); color: var(--urgent); font-weight: 700; animation: pulse 1.2s infinite; }
 
+#hand-info-holder { padding: 0 0.8rem; }
+.hand-info {
+  text-align: center; padding: 0.2rem 0.8rem; font-size: 0.85rem; color: var(--muted);
+}
+.hand-info strong { color: var(--fg); }
+.hand-info-inline { font-size: 0.9rem; margin-top: 0.4rem; }
+
 #scene-holder { flex: 1; position: relative; min-height: 0; }
 .felt {
   position: absolute; inset: 2% 3%;

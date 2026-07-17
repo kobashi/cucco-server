@@ -12,7 +12,7 @@ import { banner, shake, flipReveal, effectMotion, confirmPulse } from "./anim/ef
 import { createSound } from "./anim/sound.js";
 import { REFUSAL_LABELS, CAUSE_LABELS } from "../../web-common/cards.js";
 import { renderLobby, renderWaiting } from "./ui/panels.js";
-import { renderStatus, renderDock, renderModals, renderLogDrawer } from "./ui/overlays.js";
+import { renderStatus, renderHandInfo, renderDock, renderModals, renderLogDrawer } from "./ui/overlays.js";
 import { mountCardReference } from "./ui/cardReference.js";
 
 const screenEl = document.getElementById("screen");
@@ -410,6 +410,7 @@ function render() {
           <span id="hdr-room"></span><span id="hdr-pot"></span>
         </header>
         <div id="status-holder"></div>
+        <div id="hand-info-holder"></div>
         <div id="scene-holder"></div>
         <div id="dock-holder"></div>
         <div id="log-holder"></div>
@@ -419,6 +420,7 @@ function render() {
     sceneRefs = {
       scene: createTableScene(screenEl.querySelector("#scene-holder")),
       statusEl: screenEl.querySelector("#status-holder"),
+      handInfoEl: screenEl.querySelector("#hand-info-holder"),
       dockEl: screenEl.querySelector("#dock-holder"),
       modalEl: screenEl.querySelector("#modal-holder"),
       logEl: screenEl.querySelector("#log-holder"),
@@ -435,6 +437,7 @@ function render() {
   // sequence ends with its own sync); the overlays always track live state.
   if (justCreated || !queue.busy) sceneRefs.scene.sync(state);
   renderStatus(sceneRefs.statusEl, state, game.seatName);
+  renderHandInfo(sceneRefs.handInfoEl, state);
   renderDock(sceneRefs.dockEl, state, actions);
   renderModals(sceneRefs.modalEl, state, actions, game.seatName);
   renderLogDrawer(sceneRefs.logEl, state);
