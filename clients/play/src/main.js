@@ -404,14 +404,20 @@ function render() {
 
   let justCreated = false;
   if (!sceneRefs) {
+    // Progress message + own-card summary live together in one framed panel
+    // right above the action dock -- near my own seat (bottom of the felt)
+    // and the buttons I'm about to press, instead of stranded at the very
+    // top of the screen where they're easy to miss while looking down here.
     screenEl.innerHTML = `
       <div class="play-root">
         <header class="play-header">
           <span id="hdr-room"></span><span id="hdr-pot"></span>
         </header>
-        <div id="status-holder"></div>
-        <div id="hand-info-holder"></div>
         <div id="scene-holder"></div>
+        <div class="info-frame">
+          <div id="status-holder"></div>
+          <div id="hand-info-holder"></div>
+        </div>
         <div id="dock-holder"></div>
         <div id="log-holder"></div>
         <div id="modal-holder"></div>

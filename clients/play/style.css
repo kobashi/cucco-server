@@ -61,21 +61,25 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
   display: flex; justify-content: space-between; padding: 0.45rem 1rem;
   font-weight: 600; font-size: 0.95rem;
 }
-#status-holder { padding: 0 0.8rem; }
-.status-line {
-  text-align: center; padding: 0.35rem 0.8rem; border-radius: 8px; font-size: 0.98rem;
-  background: var(--panel-bg); border: 1px solid var(--border);
-}
-.status-line.mine { border-color: var(--urgent); color: var(--urgent); font-weight: 700; animation: pulse 1.2s infinite; }
+#scene-holder { flex: 1; position: relative; min-height: 0; }
 
-#hand-info-holder { padding: 0 0.8rem; }
+/* Progress message + own-card effect, grouped into one visible panel just
+   above the action dock (near the seat/buttons the player is looking at,
+   not stranded above the felt where it's easy to miss). */
+.info-frame {
+  margin: 0.4rem 0.8rem 0; padding: 0.5rem 0.8rem;
+  border-radius: 10px; background: var(--panel-bg); border: 1px solid var(--border);
+}
+.status-line {
+  text-align: center; font-size: 1rem;
+}
+.status-line.mine { color: var(--urgent); font-weight: 700; animation: pulse 1.2s infinite; }
 .hand-info {
-  text-align: center; padding: 0.2rem 0.8rem; font-size: 0.85rem; color: var(--muted);
+  text-align: center; font-size: 0.85rem; color: var(--muted);
+  padding-top: 0.3rem; margin-top: 0.3rem; border-top: 1px solid var(--border);
 }
 .hand-info strong { color: var(--fg); }
 .hand-info-inline { font-size: 0.9rem; margin-top: 0.4rem; }
-
-#scene-holder { flex: 1; position: relative; min-height: 0; }
 .felt {
   position: absolute; inset: 2% 3%;
   background: var(--felt);
