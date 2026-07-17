@@ -211,6 +211,22 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 }
 #sound-toggle.off { background: var(--panel-bg); color: var(--muted); border-color: var(--border); }
 
+#card-reference-btn {
+  position: fixed; top: 0.5rem; left: 0.6rem; z-index: 35;
+  padding: 0.35rem 0.8rem; margin: 0;
+  border-radius: 999px; font-size: 0.85rem; font-weight: 700; line-height: 1;
+  white-space: nowrap;
+  background: var(--panel-bg); border: 1px solid var(--border); color: var(--fg);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.card-reference-overlay[hidden] { display: none; }
+.card-ref-list { max-height: 60vh; overflow-y: auto; margin: 0.8rem 0; padding-right: 0.3rem; }
+.card-ref-item { padding: 0.6rem 0; border-bottom: 1px solid var(--border); }
+.card-ref-item:last-child { border-bottom: none; }
+.card-ref-name { font-weight: 800; font-size: 1.05rem; }
+.card-ref-flavor { color: var(--muted); font-style: italic; font-size: 0.88rem; margin-top: 0.1rem; }
+.card-ref-effect { margin: 0.35rem 0 0; line-height: 1.5; }
+
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(194, 37, 37, 0.4); }
   50% { box-shadow: 0 0 0 9px rgba(194, 37, 37, 0); }

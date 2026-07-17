@@ -13,6 +13,7 @@ import { createSound } from "./anim/sound.js";
 import { REFUSAL_LABELS, CAUSE_LABELS } from "../../web-common/cards.js";
 import { renderLobby, renderWaiting } from "./ui/panels.js";
 import { renderStatus, renderDock, renderModals, renderLogDrawer } from "./ui/overlays.js";
+import { mountCardReference } from "./ui/cardReference.js";
 
 const screenEl = document.getElementById("screen");
 
@@ -725,6 +726,7 @@ function wireConnection() {
 wireConnection();
 conn.connect();
 mountSoundToggle();
+mountCardReference();
 
 const saved = loadSession();
 if (saved && saved.sessionToken && saved.roomId) {
