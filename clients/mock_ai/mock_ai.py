@@ -116,9 +116,10 @@ class MockAI:
             await self.conn.send("continue_declare", {"continue": stay})
 
         elif event.type == "pot_result" and self.mode == "normal":
-            # Guide §2: re-declare ready for every pot. The current server
-            # auto-includes everyone in later pots and ignores this, but the
-            # protocol contract says to send it.
+            # Not required by the protocol -- later pots within a game
+            # auto-include everyone (docs/protocol/design.md's `ready` row)
+            # and the server ignores this. Kept as a harmless liveness ping
+            # and as insurance against that behavior ever changing.
             await self.conn.send("ready", {})
         elif event.type == "game_ended":
             self._info(f"game_ended: {p['ranking']}")

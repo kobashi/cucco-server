@@ -18,7 +18,7 @@ def test_effect_window_timeout_uses_player_type():
     assert timeout_for(config, "effect_window", "ai") == 2.0
 
 
-@pytest.mark.parametrize("prompt_type", ["ready", "dealer_ready", "continue"])
+@pytest.mark.parametrize("prompt_type", ["dealer_ready", "continue"])
 def test_non_turn_prompts_reuse_the_turn_timeout(prompt_type):
     config = GameConfig(turn_timeout_human_sec=30.0, turn_timeout_ai_sec=10.0)
     assert timeout_for(config, prompt_type, "human") == 30.0

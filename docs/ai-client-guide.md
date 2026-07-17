@@ -10,7 +10,7 @@
    - 自分で卓を立てる場合: `create_table`を送信し、`table_created`でプレイルームIDを受け取る
    - 既存の卓に参加する場合: 他の参加者から共有されたプレイルームIDを使って`join_table`(`{room_id}`)を送信する
 4. `state_snapshot`で現在の卓の状況を受け取る
-5. `ready`を送信して次のポットへの参加(参加費チップ1枚)を表明する
+5. `ready`を送信してゲーム開始への参加を表明する(参加費チップ1枚はポット開始時に自動で徴収される)
 6. `pot_started`でポット開始を確認する
 
 再接続時は、`join_table`に保存済みの`session_token`を含めて送信すれば、`state_snapshot`(自分の現在の手札`your_hand`を含む)を受け取ってそのまま復帰できる。
@@ -21,13 +21,13 @@ AIクライアントは基本的に「サーバーからの通知を待ち、必
 
 | サーバーからの通知 | 状況 | 送るべきアクション |
 |---|---|---|
-| `pot_result`(または卓参加直後の`state_snapshot`) | 次のポットが始まる前 | `ready`(参加費チップ1枚を払って次のポットへの参加を表明) |
+| 卓参加直後の`state_snapshot`(または連戦時の`game_ended`後) | ゲームが始まる前 | `ready`(ゲーム開始への参加表明) |
 | `deal_started` | 自分が親の場合、配布直後 | `dealer_ready`(「どうぞ」宣言)。クク札を持っていれば代わりに`cucco_declare`も可 |
 | `turn_prompt` | 自分の手番が来た | `cambio_declare`(交換を要求する) / `no_change_declare`(しない) / (クク札を持っていれば)`cucco_declare`(ディール即終了) |
 | `effect_window` | (宣言式ルールの卓のみ)交換を要求された。**保持カードにかかわらず全対象者に届く** | 宣言可能札(人間/馬/猫/家)を持っていれば`effect_declare`(効果発動)または`effect_pass`(交換に応じる)。それ以外の札なら`effect_pass`(交換受諾。`effect_declare`を送っても受諾として扱われる) |
 | `continue_prompt` | 子供の時間(1〜3ディール目)で敗者になった | `continue_declare`(`{continue: true/false}`) |
 
-**`ready`はポットごとに毎回送り直す必要がある**。最初の参加時だけでなく、`pot_result`を受け取るたびに次のポットへの`ready`を送らないと、タイムアウトでそのポットに参加しない(観戦扱い)になってしまう。ただし評価モード(`mode: "evaluation"`)では、1回の`ready`で`game_count`回分のゲームが自動連続実行されるため、この限りではない。
+**`ready`が必要なのはゲーム開始前だけ**。ゲーム進行中の後続ポットは自動復活ルール(`docs/rules/final_rules.md`「次のポットへの参加」)で全員が自動的に参加するため、`pot_result`のたびに`ready`を送り直す必要はない(送っても無害で、サーバーは無視する)。改めて`ready`が要るのは、`game_ended`後に同じ部屋で連戦する場合。ゲーム開始は「参加者全員(作成者含む)のready」「作成者の`start_pot`」「最初の`ready`から10分の安全弁」のいずれかで行われる。評価モード(`mode: "evaluation"`)では、1回の`ready`で`game_count`回分のゲームが自動連続実行される。
 
 上記以外の通知(`exchange_result`, `player_disqualified`, `deal_opened`, `deal_result`, `pot_result`, `game_ended`など)は状態把握のためのイベントであり、応答アクションは不要。`pot_result`はそのポットの決着(勝者確定または持ち越し)、`game_ended`はゲーム全体の終了(チップ数による最終順位)を表す。
 
@@ -57,7 +57,7 @@ AIクライアントは基本的にステートレスに実装できない。以
 サーバー→全員: deal_started        (自分の手札を含む、残り山札枚数を含む)
 サーバー→親:   dealer_ready        (親のみ)
 親→サーバー:   dealer_ready        (「どうぞ」。親がクク保持なら cucco_declare でここでディール即終了も可)
-サーバー→全員: turn_prompt         (1番手の手番)
+サーバー→1番手: turn_prompt        (手番プロンプトは本人にのみ届く。傍観者は続く公開イベントから進行を推測する)
 1番手→サーバー: cambio_declare / no_change_declare / (クク保持なら)cucco_declare
 サーバー→全員: exchange_result     (交換結果、または no_change_declared)
 サーバー→自分: turn_prompt         (自分の手番。クク保持なら cucco_declare も可)

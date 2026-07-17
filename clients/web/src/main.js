@@ -671,8 +671,10 @@ function handleEvent(type, p) {
 // server's own declarations_this_deal only ever records one).
 function isTerminalExchange(p) {
   if (p.result === "accepted" || p.result === "deck_exchange_accepted" || p.result === "deck_draw_refused") return true;
-  if (p.result === "refused") return p.reason === "human" || p.reason === "cat";
-  return false; // refused via 馬/家 -- the request chains onward, not terminal
+  // Actual wire tokens (src/cucco/domain/deal.py): 人間/猫 refusals end the
+  // requester's turn; 馬/家 ("house_horse_skip") chains onward instead.
+  if (p.result === "refused") return p.reason === "human_refusal" || p.reason === "cat_meow";
+  return false;
 }
 
 function handleExchangeResult(p) {
