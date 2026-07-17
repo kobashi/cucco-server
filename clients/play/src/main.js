@@ -361,15 +361,29 @@ function handleOp(op) {
   }
 }
 
-// -- sound toggle (floats outside #screen so re-renders never remove it) --
+// -- tool cluster (floats outside #screen so re-renders never remove it) --
+//
+// One fixed top-right group holding every always-available control (card
+// reference, sound toggle) so they never collide with the header's pot
+// counter and read as a single toolbar. The header reserves space for it.
 
-function mountSoundToggle() {
+function mountToolCluster() {
+  const cluster = document.createElement("div");
+  cluster.id = "tool-cluster";
+  document.body.appendChild(cluster);
+  return cluster;
+}
+
+function mountSoundToggle(cluster) {
   const btn = document.createElement("button");
   btn.id = "sound-toggle";
   btn.type = "button";
   const refresh = () => {
-    // Labeled so it reads as a sound control, not a mystery icon.
-    btn.textContent = sound.enabled ? "🔊 効果音 ON" : "🔇 効果音 OFF";
+    // Labeled so it reads as a sound control, not a mystery icon; the text
+    // part is a .tool-label so narrow screens can keep just the icon.
+    btn.innerHTML = sound.enabled
+      ? '🔊<span class="tool-label"> 効果音 ON</span>'
+      : '🔇<span class="tool-label"> 効果音 OFF</span>';
     btn.title = sound.enabled ? "効果音: ON(クリックでOFF)" : "効果音: OFF(クリックでON)";
     btn.classList.toggle("off", !sound.enabled);
   };
@@ -379,7 +393,7 @@ function mountSoundToggle() {
     refresh();
   });
   refresh();
-  document.body.appendChild(btn);
+  cluster.appendChild(btn);
 }
 
 // -- rendering ----------------------------------------------------------------
@@ -404,17 +418,19 @@ function render() {
 
   let justCreated = false;
   if (!sceneRefs) {
-    // Progress message + own-card summary live together in one framed panel
-    // right above the action dock -- near my own seat (bottom of the felt)
-    // and the buttons I'm about to press, instead of stranded at the very
-    // top of the screen where they're easy to miss while looking down here.
+    // Progress message + own-card summary float over the felt's empty
+    // bottom corners (the ellipse leaves the rectangle's corners unused),
+    // flanking my own seat and the dock -- the space they used to take as
+    // a full-width row goes back to the felt. On narrow (portrait phone)
+    // screens those corners vanish, so CSS folds both holders back into
+    // the normal flow between the scene and the dock.
     screenEl.innerHTML = `
       <div class="play-root">
         <header class="play-header">
           <span id="hdr-room"></span><span id="hdr-pot"></span>
         </header>
-        <div id="scene-holder"></div>
-        <div class="info-frame">
+        <div id="scene-wrap">
+          <div id="scene-holder"></div>
           <div id="status-holder"></div>
           <div id="hand-info-holder"></div>
         </div>
@@ -734,8 +750,9 @@ function wireConnection() {
 
 wireConnection();
 conn.connect();
-mountSoundToggle();
-mountCardReference();
+const toolCluster = mountToolCluster();
+mountCardReference(toolCluster);
+mountSoundToggle(toolCluster);
 
 const saved = loadSession();
 if (saved && saved.sessionToken && saved.roomId) {

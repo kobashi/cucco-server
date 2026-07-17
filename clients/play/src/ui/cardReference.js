@@ -1,17 +1,17 @@
-// Card ability reference: a "？" button that floats outside #screen (so
-// table re-renders never touch it, same trick as the sound toggle) and
-// opens a modal listing every special card's effect + flavor line. Purely
-// informational -- no game state, no server interaction.
+// Card ability reference: a "？" button in the fixed tool cluster (outside
+// #screen, so table re-renders never touch it, same trick as the sound
+// toggle) that opens a modal listing every special card's effect + flavor
+// line. Purely informational -- no game state, no server interaction.
 
 import { esc } from "../../../web-common/utils.js";
 import { CARD_REFERENCE } from "../cardInfo.js";
 
-export function mountCardReference() {
+export function mountCardReference(cluster) {
   const btn = document.createElement("button");
   btn.id = "card-reference-btn";
   btn.type = "button";
   btn.title = "カードの効果一覧";
-  btn.textContent = "？ カード効果";
+  btn.innerHTML = '？<span class="tool-label"> カード効果</span>';
 
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay card-reference-overlay";
@@ -43,5 +43,5 @@ export function mountCardReference() {
     if (e.target === overlay) close();
   });
 
-  document.body.appendChild(btn);
+  cluster.appendChild(btn);
 }
