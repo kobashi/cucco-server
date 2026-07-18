@@ -1,5 +1,6 @@
-// Card ability reference data for the in-client help panel. Text only (no
-// illustrations/icons, per project policy) -- effect summaries condensed
+// Card ability reference data for the in-client help panel (card faces are
+// drawn separately in scene/cardArt.js -- original pictograms only, never
+// the source decks' art) -- effect summaries condensed
 // from docs/rules/final_rules.md「特殊札の効果」, flavor lines from
 // docs/rules/flavor_text.md(正式採用: 日本語宣言セリフ). Ordered strongest
 // to weakest to match how a player actually looks things up mid-deal.

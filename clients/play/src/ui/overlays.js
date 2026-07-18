@@ -6,6 +6,7 @@
 
 import { esc, secondsLeft } from "../../../web-common/utils.js";
 import { cardEffectFor } from "../cardInfo.js";
+import { cardHTML } from "../scene/table.js";
 
 function countdown(deadline) {
   return `<span data-deadline="${deadline}">${secondsLeft(deadline)}</span>`;
@@ -100,8 +101,9 @@ export function renderModals(el, state, actions, seatName) {
     html = modal(
       "urgent",
       `<h2>交換を要求されています</h2>
-       <p>${esc(seatName(state.effectWindow.requester))} さんがあなたに交換を要求しています。<br>
-          あなたの札: <strong>${esc(state.yourHand ?? "?")}</strong></p>
+       <p>${esc(seatName(state.effectWindow.requester))} さんがあなたに交換を要求しています。</p>
+       ${state.yourHand ? `<div class="modal-card">${cardHTML(state.yourHand)}</div>` : ""}
+       <p>あなたの札: <strong>${esc(state.yourHand ?? "?")}</strong></p>
        ${!label && info ? `<p class="muted hand-info-inline">${esc(info.gist)}</p>` : ""}
        <p class="countdown">残り ${countdown(state.effectWindow.deadline)} 秒</p>
        ${label ? `<button id="effect-declare-btn">${esc(label)}</button>` : ""}

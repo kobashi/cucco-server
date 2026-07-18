@@ -1,6 +1,6 @@
 [project]
 name = "cucco"
-version = "0.9.1"
+version = "0.10.0"
 description = "Cucco (Gran Pere / Cambio ruleset) network battle server"
 readme = "README.md"
 license = "MIT"

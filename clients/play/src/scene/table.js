@@ -6,6 +6,7 @@
 
 import { esc } from "../../../web-common/utils.js";
 import { RANK_ORDER } from "../../../web-common/cards.js";
+import { cardInnerHTML } from "./cardArt.js";
 
 // Card markup helpers, shared with the animation layer (flight ghosts use
 // the exact same DOM as the slots they fly between).
@@ -13,7 +14,7 @@ export function cardHTML(rank, elevated = false) {
   if (rank == null) return `<div class="card card-back"></div>`;
   const special = !/^\d+$/.test(rank);
   return `<div class="card card-face ${special ? "special" : ""}" data-rank="${esc(rank)}">
-    <span>${esc(rank)}</span>${elevated ? '<span class="elevated">↑最強</span>' : ""}
+    ${cardInnerHTML(rank)}${elevated ? '<span class="elevated">↑最強</span>' : ""}
   </div>`;
 }
 
@@ -56,6 +57,7 @@ export function createTableScene(root) {
       const y = 50 + 38 * Math.sin(theta);
       const el = document.createElement("div");
       el.className = "player-seat";
+      el.classList.toggle("is-me", s.player_id === state.playerId);
       el.style.left = `${x}%`;
       el.style.top = `${y}%`;
       el.dataset.playerId = s.player_id;

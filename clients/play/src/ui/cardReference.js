@@ -5,6 +5,13 @@
 
 import { esc } from "../../../web-common/utils.js";
 import { CARD_REFERENCE } from "../cardInfo.js";
+import { cardHTML } from "../scene/table.js";
+
+// Which face(s) to show as a thumbnail next to each entry. The plain-card
+// group entry gets one number sample plus the three named-but-plain ranks.
+function thumbRanks(entry) {
+  return entry.rank.startsWith("数字札") ? ["7", "桶", "仮面", "獅子"] : [entry.rank];
+}
 
 export function mountCardReference(cluster) {
   const btn = document.createElement("button");
@@ -23,9 +30,14 @@ export function mountCardReference(cluster) {
         ${CARD_REFERENCE.map(
           (c) => `
           <div class="card-ref-item">
-            <div class="card-ref-name">${esc(c.rank)}</div>
-            ${c.flavor ? `<div class="card-ref-flavor">${esc(c.flavor)}</div>` : ""}
-            <p class="card-ref-effect">${esc(c.effect)}</p>
+            <div class="card-ref-head">
+              <div class="card-ref-thumbs">${thumbRanks(c).map((r) => cardHTML(r)).join("")}</div>
+              <div>
+                <div class="card-ref-name">${esc(c.rank)}</div>
+                ${c.flavor ? `<div class="card-ref-flavor">${esc(c.flavor)}</div>` : ""}
+                <p class="card-ref-effect">${esc(c.effect)}</p>
+              </div>
+            </div>
           </div>`
         ).join("")}
       </div>

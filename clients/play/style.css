@@ -11,7 +11,12 @@
   --felt: radial-gradient(ellipse at 50% 42%, #2e7d4f 0%, #1d5c38 62%, #14432a 100%);
   --felt-rim: #0f3520;
   --card-bg: #fdfcf8;
-  --card-back: repeating-linear-gradient(45deg, #7a2727 0 6px, #6a1f1f 6px 12px);
+  /* Layered back: center medallion ring over a translucent lattice over the
+     opaque diagonal stripes. CSS-only, so deck/slots/ghosts share it free. */
+  --card-back:
+    radial-gradient(circle at 50% 50%, transparent 0 26%, rgba(255,255,255,0.22) 27% 31%, transparent 32%),
+    repeating-linear-gradient(-45deg, rgba(255,255,255,0.06) 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(45deg, #7a2727 0 6px, #6a1f1f 6px 12px);
   font-family: system-ui, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
 }
 @media (prefers-color-scheme: dark) {
@@ -136,19 +141,75 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 .player-seat.is-turn .turn-ring { border-color: #ffd75e; box-shadow: 0 0 14px #ffd75e88; animation: pulse 1.2s infinite; }
 
 /* -- cards -- */
+/* The card interior is always light (--card-bg stays cream in dark mode),
+   so every ink inside a face is a fixed dark value -- never var(--fg). */
 .card {
   width: 54px; height: 76px; border-radius: 7px;
   box-shadow: 0 2px 6px rgba(0,0,0,0.4);
 }
 .card-slot { min-height: 80px; display: flex; justify-content: center; }
-.card-back { background: var(--card-back); border: 2px solid #fff; }
+.card-back {
+  background: var(--card-back); border: 2px solid #f2e8d8;
+  box-shadow: inset 0 0 0 3px rgba(255,255,255,0.22), 0 2px 6px rgba(0,0,0,0.4);
+}
 .card-face {
   background: var(--card-bg); color: #1c1c1e; border: 1px solid #bbb;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  font-weight: 800; font-size: 1.05rem; padding: 2px;
+  gap: 1px; font-weight: 800; font-size: 1.05rem; padding: 3px 2px 2px;
+  position: relative; overflow: hidden;
 }
-.card-face.special { color: var(--accent); border-color: var(--accent); }
-.card-face .elevated { font-size: 0.6rem; color: #b8860b; }
+/* Fixed dark red (not var(--accent)): the dark theme's lighter accent would
+   be low-contrast on the always-cream card interior. */
+.card-face.special { color: #7a2626; border-color: var(--accent); }
+.card-face .elevated {
+  position: absolute; top: 1px; right: 3px;
+  font-size: 0.55rem; color: #7c5a06; /* darker gold: tiny text needs the contrast */
+}
+.card-art {
+  flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+  transition: transform 0.15s ease;
+}
+.card-art--num {
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 700; font-size: 1.25rem; letter-spacing: -0.02em;
+}
+.card-art--icon svg { width: 30px; height: 30px; display: block; }
+.card-art--cucco { color: #b8860b; }
+.card-caption {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.02em;
+  opacity: 0.85; white-space: nowrap;
+}
+
+/* Micro-interactions live on the inner .card-art only -- the WAAPI effects
+   (flipReveal / effectMotion) own transforms on .card-face itself, and the
+   flight ghosts are outside .card-slot so none of this ever hits them. */
+@media (hover: hover) {
+  .card-slot .card-face:hover .card-art { transform: translateY(-2px) scale(1.08); }
+}
+/* Tap feedback only on my own card -- opponents' cards aren't tappable, so
+   a press reaction there would imply an affordance that doesn't exist. */
+.player-seat.is-me .card-slot .card-face:active .card-art { transform: scale(0.92); }
+/* Idle sheen sweep on my own card: background animation on a ::after, so it
+   composites under any transform the animation engine applies. */
+.player-seat.is-me .card-face::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,0.4) 50%, transparent 70%);
+  background-size: 250% 100%; background-position: 130% 0; background-repeat: no-repeat;
+  animation: card-sheen 6s ease-in-out infinite;
+}
+@keyframes card-sheen {
+  0%, 72% { background-position: 130% 0; }
+  88%, 100% { background-position: -60% 0; }
+}
+/* My own card reads slightly larger than the ring. */
+.player-seat.is-me .card { width: 60px; height: 84px; }
+.player-seat.is-me .card-slot { min-height: 88px; }
+/* Belt and braces: never let ambient transitions/animations run on clones. */
+.fly-ghost .card, .fly-ghost .card * { transition: none !important; animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .card-art { transition: none; }
+  .player-seat.is-me .card-face::after { animation: none; }
+}
 
 /* -- dock / log / modals -- */
 #dock-holder {
@@ -174,6 +235,7 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
   max-width: 380px; width: 92%; text-align: center;
 }
 .modal.wide { max-width: 620px; text-align: left; }
+.modal-card { display: flex; justify-content: center; margin: 0.5rem 0 0.2rem; }
 .modal.result {
   background: rgba(255, 255, 255, 0.6); backdrop-filter: blur(4px);
 }
@@ -244,6 +306,13 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 .card-ref-list { max-height: 60vh; overflow-y: auto; margin: 0.8rem 0; padding-right: 0.3rem; }
 .card-ref-item { padding: 0.6rem 0; border-bottom: 1px solid var(--border); }
 .card-ref-item:last-child { border-bottom: none; }
+.card-ref-head { display: flex; gap: 0.7rem; align-items: flex-start; }
+.card-ref-thumbs { display: flex; flex-wrap: wrap; gap: 0.25rem; flex-shrink: 0; }
+/* Mini faces: explicit small sizes (not transform scale) so layout is honest. */
+.card-ref-thumbs .card { width: 40px; height: 56px; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+.card-ref-thumbs .card-art--icon svg { width: 22px; height: 22px; }
+.card-ref-thumbs .card-art--num { font-size: 0.95rem; }
+.card-ref-thumbs .card-caption { font-size: 0.5rem; }
 .card-ref-name { font-weight: 800; font-size: 1.05rem; }
 .card-ref-flavor { color: var(--muted); font-style: italic; font-size: 0.88rem; margin-top: 0.1rem; }
 .card-ref-effect { margin: 0.35rem 0 0; line-height: 1.5; }
@@ -268,6 +337,11 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
   .card { width: 44px; height: 62px; }
   .card-slot { min-height: 66px; }
   .card-face { font-size: 0.9rem; }
+  .card-art--num { font-size: 1rem; }
+  .card-art--icon svg { width: 24px; height: 24px; }
+  .card-caption { font-size: 0.56rem; }
+  .player-seat.is-me .card { width: 48px; height: 67px; }
+  .player-seat.is-me .card-slot { min-height: 71px; }
   .name-plate { font-size: 0.75rem; }
   .chip-count { font-size: 0.72rem; }
   .discard { max-width: 240px; }
