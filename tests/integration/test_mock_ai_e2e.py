@@ -117,3 +117,37 @@ async def test_three_mock_ais_complete_an_evaluation_run():
     finally:
         server.close()
         await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_external_ai_plus_embedded_bots_play_a_normal_game():
+    """`create_table` with `ai_players`: the creator is the only real socket
+    client; the two opponents are server-embedded bots. The game must run to
+    completion over the ordinary human-facing protocol (join -> ready ->
+    all-ready auto-start once the creator readies up)."""
+    server = await _serve()
+    try:
+        port = server.sockets[0].getsockname()[1]
+        url = f"ws://localhost:{port}"
+        config = {
+            "mode": "normal",
+            "end_condition": "chips_zero",
+            "starting_chips": 5,
+            "ai_players": [{"policy": "matrix", "count": 1}, {"policy": "always_change", "count": 1}],
+            **FAST_TIMEOUTS,
+        }
+
+        creator_conn = CuccoConnection(url)
+        async with creator_conn:
+            await creator_conn.identify("Solo", "ai")
+            room_id = await creator_conn.create_table(config)
+            await creator_conn.join_table(room_id)
+            creator = MockAI(creator_conn, make_policy("matrix"), mode="normal")
+            game_ended = await asyncio.wait_for(creator.play(), timeout=30.0)
+
+        assert len(game_ended["ranking"]) == 3
+        ids = {pid for pid, _ in game_ended["ranking"]}
+        assert creator_conn.player_id in ids
+    finally:
+        server.close()
+        await server.wait_closed()

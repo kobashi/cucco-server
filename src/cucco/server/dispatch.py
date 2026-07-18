@@ -19,6 +19,7 @@ import random
 import uuid
 from pathlib import Path
 
+from cucco.ai.policies import POLICIES
 from cucco.domain.errors import IllegalAction
 from cucco.domain.game import Game
 from cucco.evaluation.runner import EvaluationRunner
@@ -44,6 +45,7 @@ from cucco.protocol.actions import (
 )
 from cucco.protocol.envelope import build_envelope, check_protocol_version, parse_envelope
 from cucco.protocol.errors import ProtocolError
+from cucco.server.bots import bot_names, spawn_bot
 from cucco.server.registry import MAX_PLAYERS_PER_TABLE, MAX_SPECTATORS_PER_TABLE, TableRegistry
 from cucco.server.runner import TableRunner, build_state_snapshot
 from cucco.server.session import Connection, PlayerSession
@@ -239,12 +241,20 @@ class ConnectionHandler:
             # that handle_message() catches, so left alone this would crash
             # the whole connection instead of just rejecting the request.
             raise ProtocolError(str(exc)) from exc
+        for policy, _count in action.ai_players:
+            if policy not in POLICIES:
+                raise ProtocolError(f"unknown AI policy {policy!r}; choose from {sorted(POLICIES)}")
+        total_bots = sum(count for _policy, count in action.ai_players)
+        if total_bots > MAX_PLAYERS_PER_TABLE - 1:
+            # At least one seat must remain for the creator (or any human).
+            raise ProtocolError(f"ai_players total must be at most {MAX_PLAYERS_PER_TABLE - 1}")
         table = Table(
             room_id="",
             config=config,
             creator_id=self.session.player_id,
             results_store=self.results_store,
             action_log_dir=self.action_log_dir,
+            pending_ai_players=action.ai_players,
         )
         room_id = self.registry.register(table)
         table.room_id = room_id
@@ -294,6 +304,27 @@ class ConnectionHandler:
         self.session.room_id = table.room_id
         table.add_session(self.session)
         await self._send_raw("state_snapshot", build_state_snapshot(table, self.session.player_id))
+        await self._spawn_pending_bots(table)
+
+    async def _spawn_pending_bots(self, table: Table) -> None:
+        """Seat the table's requested embedded bots, once, right after the
+        first real session joins (see Table.pending_ai_players for why not at
+        create time). Bots go through a full ConnectionHandler handshake, so
+        every protocol rule that applies to an external AI applies to them.
+        The joiner's own snapshot predates the bots; the waiting-room roster
+        poll picks them up moments later, same as any other late joiner."""
+        if not table.pending_ai_players or table.bots_spawned:
+            return
+        table.bots_spawned = True
+        make_handler = lambda conn: ConnectionHandler(  # noqa: E731
+            conn, self.registry, results_store=self.results_store, action_log_dir=self.action_log_dir
+        )
+        for name, policy in bot_names(table, list(table.pending_ai_players)):
+            try:
+                task = await spawn_bot(make_handler, table.room_id, name, policy, table.config.mode)
+                table.bot_tasks.append(task)
+            except Exception:
+                logger.exception("failed to spawn embedded bot %s (policy=%s) for table %s", name, policy, table.room_id)
 
     async def _resend_outstanding_prompt(self, session: PlayerSession) -> None:
         # The runner's prompt envelope went to the pre-reconnect connection;

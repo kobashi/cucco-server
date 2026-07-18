@@ -54,6 +54,10 @@ class CreateTable:
     cucco_window_timeout_ai_sec: float = 2.0
     result_pause_sec: float = 0.0
     effect_declaration: str = "auto"
+    # Server-embedded AI opponents to seat at this table: ((policy, count), ...).
+    # Policy-name validity and the total-seats cap are checked in the server
+    # layer (dispatch), where the policy registry and seat limits live.
+    ai_players: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -241,6 +245,7 @@ def _parse_create_table(payload: dict) -> CreateTable:
     horse_house_reveal = payload.get("horse_house_reveal", False)
     if not isinstance(horse_house_reveal, bool):
         raise ProtocolError("'horse_house_reveal' must be a boolean")
+    ai_players = _parse_ai_players(payload)
     return CreateTable(
         mode=mode,
         game_count=game_count,
@@ -257,7 +262,30 @@ def _parse_create_table(payload: dict) -> CreateTable:
         cucco_window_timeout_ai_sec=_optional_number(payload, "cucco_window_timeout_ai_sec", 2.0),
         result_pause_sec=_optional_number(payload, "result_pause_sec", 0.0),
         effect_declaration=_require_choice(payload, "effect_declaration", VALID_EFFECT_DECLARATIONS, default="auto"),
+        ai_players=ai_players,
     )
+
+
+def _parse_ai_players(payload: dict) -> tuple:
+    """Shape check for `ai_players`: a list of {"policy": str, "count": int>=1}.
+    Policy-name validity and the seats cap are server-layer concerns."""
+    raw = payload.get("ai_players")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ProtocolError("'ai_players' must be a list of {policy, count} objects")
+    specs = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ProtocolError("'ai_players' entries must be objects with 'policy' and 'count'")
+        policy = item.get("policy")
+        if not isinstance(policy, str) or not policy:
+            raise ProtocolError("'ai_players[].policy' must be a non-empty string")
+        count = item.get("count", 1)
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            raise ProtocolError("'ai_players[].count' must be a positive integer")
+        specs.append((policy, count))
+    return tuple(specs)
 
 
 def _parse_join_table(payload: dict) -> JoinTable:

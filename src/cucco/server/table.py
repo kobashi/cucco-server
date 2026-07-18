@@ -50,6 +50,14 @@ class Table:
     # runner's result pause ends early once every seated, connected player
     # is in here. Cleared at the start of each pause.
     result_acks: set[str] = field(default_factory=set)
+    # Server-embedded AI opponents requested via create_table's `ai_players`
+    # ((policy, count), ...). Spawned once, when the FIRST real session joins
+    # -- not at creation, because the bots' immediate `ready` would auto-start
+    # the game before the creator has even taken their seat (the all-ready
+    # auto-start only counts joined players).
+    pending_ai_players: tuple = ()
+    bots_spawned: bool = False
+    bot_tasks: list = field(default_factory=list)
 
     def add_session(self, session: PlayerSession) -> None:
         self.sessions[session.player_id] = session

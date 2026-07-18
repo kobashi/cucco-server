@@ -122,6 +122,12 @@ function renderCreate(el, state, actions) {
         <label>結果確認の待機時間(秒。全員が確認ボタンを押せば短縮)
           <input id="result-pause" type="number" min="0" max="60" step="1" value="15">
         </label>
+        <fieldset class="ai-players">
+          <legend>AIプレイヤーを追加(サーバー内蔵、合計14人まで)</legend>
+          <label>matrix(人数×手札で判断) <input class="ai-count" data-policy="matrix" type="number" min="0" max="14" step="1" value="0"></label>
+          <label>always_change(常にチェンジ) <input class="ai-count" data-policy="always_change" type="number" min="0" max="14" step="1" value="0"></label>
+          <label>always_no_change(常にノーチェンジ) <input class="ai-count" data-policy="always_no_change" type="number" min="0" max="14" step="1" value="0"></label>
+        </fieldset>
         <button type="submit">作成する</button>
         <button type="button" id="back-btn" class="secondary">戻る</button>
       </form>
@@ -149,6 +155,9 @@ function renderCreate(el, state, actions) {
       horse_house_reveal: el.querySelector("#horse-house-reveal").checked,
       effect_declaration: el.querySelector("#effect-declaration").value,
       result_pause_sec: Math.max(0, Math.min(60, Number(el.querySelector("#result-pause").value) || 0)),
+      ai_players: [...el.querySelectorAll(".ai-count")]
+        .map((input) => ({ policy: input.dataset.policy, count: Math.round(Number(input.value)) || 0 }))
+        .filter((spec) => spec.count > 0),
     });
   });
 }

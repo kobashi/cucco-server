@@ -148,6 +148,32 @@ def test_parse_create_table_rejects_an_invalid_disclosure_value():
         parse_action(env("create_table", {"joker_disclosure": "imediate"}))  # typo
 
 
+def test_parse_create_table_ai_players():
+    action = parse_action(
+        env("create_table", {"ai_players": [{"policy": "matrix", "count": 2}, {"policy": "always_change"}]})
+    )
+    # count defaults to 1 per entry; policy-name validity is a server-layer check.
+    assert action.ai_players == (("matrix", 2), ("always_change", 1))
+    assert parse_action(env("create_table", {})).ai_players == ()
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"policy": "matrix"},  # not a list
+        ["matrix"],  # entry not an object
+        [{"count": 2}],  # missing policy
+        [{"policy": "", "count": 1}],  # empty policy
+        [{"policy": "matrix", "count": 0}],  # non-positive count
+        [{"policy": "matrix", "count": True}],  # bool is not an int here
+        [{"policy": "matrix", "count": "2"}],  # string count
+    ],
+)
+def test_parse_create_table_rejects_malformed_ai_players(bad):
+    with pytest.raises(ProtocolError):
+        parse_action(env("create_table", {"ai_players": bad}))
+
+
 def test_parse_join_table():
     action = parse_action(env("join_table", {"room_id": "AB12CD"}))
     assert action == JoinTable(room_id="AB12CD", session_token=None)

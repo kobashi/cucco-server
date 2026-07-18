@@ -157,7 +157,15 @@ class TableRunner:
     # -- low-level I/O -------------------------------------------------------------
 
     async def _send_to(self, session: PlayerSession, type_: str, payload: dict) -> None:
-        await session.send(build_envelope(type_, payload, table_id=self.table.room_id))
+        # A send can raise if the socket closed in the race window before
+        # dispatch's on_disconnect flips `connected` (e.g. a browser tab
+        # closed exactly at game end). One player's dead socket must degrade
+        # to "they're disconnected", never crash the whole table's runner.
+        try:
+            await session.send(build_envelope(type_, payload, table_id=self.table.room_id))
+        except Exception:
+            logger.info("send to %s failed; marking the session disconnected", session.player_id)
+            session.connected = False
 
     async def _broadcast(self, type_: str, payload_for: "callable") -> None:
         # Snapshot the session list before awaiting each send: a

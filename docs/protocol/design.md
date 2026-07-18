@@ -99,9 +99,20 @@
   "cucco_window_timeout_human_sec": "number (デフォルト10)",
   "cucco_window_timeout_ai_sec": "number (デフォルト2)",
   "result_pause_sec": "number (デフォルト0、最大60。「オープン」直後(続行確認の前)とポット決着後に、結果を確認するための待機秒数。`result_pause`イベントとして全員に通知され、着席中の人間全員が`result_ack`を送れば残り時間をスキップする。評価モードでは無視される)",
-  "effect_declaration": "auto | declared (デフォルトauto。declaredの場合、道化を除く特殊札(人間/馬/猫/家)の拒否効果は、交換を要求された保持者が`effect_window`で能動的に宣言した場合のみ発動する。宣言しなければ効果は発動せず交換が成立する。道化の受取失格と、山札から引かれた特殊札の効果は宣言不要で常に自動発動)"
+  "effect_declaration": "auto | declared (デフォルトauto。declaredの場合、道化を除く特殊札(人間/馬/猫/家)の拒否効果は、交換を要求された保持者が`effect_window`で能動的に宣言した場合のみ発動する。宣言しなければ効果は発動せず交換が成立する。道化の受取失格と、山札から引かれた特殊札の効果は宣言不要で常に自動発動)",
+  "ai_players": "[{policy, count}] (省略可。サーバー内蔵のAIプレイヤーをこの卓に着席させる。policyは方策名(always_change / always_no_change / matrix)、countは人数。合計は最大参加人数-1まで — 作成者の席は必ず残る)"
 }
 ```
+
+`ai_players`で指定した内蔵AIは、**最初のセッションが`join_table`した時点で**着席する
+(作成前に着席させると、内蔵AIの全員readyが作成者の参加前に自動開始条件を満たして
+しまうため)。内蔵AIは外部AIクライアントと同一のプロトコル経路(identify →
+join_table → ready → 各宣言)を通る通常の参加者であり、`state_snapshot`の
+`seats[].player_type`は`"ai"`、表示名は`AI-<方策名>-<番号>`。ゲーム終了後も
+退席せず、再び`ready`を送って連戦に応じる。作成者が観戦者(または評価モード)の
+場合、参加資格者は内蔵AIのみになるため、内蔵AIの全員readyで自動開始する
+(AI同士の対局を観戦する用途)。内蔵AIは切断しないため、**内蔵AIが2体以上残る卓は
+人間全員が離脱しても自動終了しない**点に注意(卓の掃除は管理機能の対象、今後対応)。
 
 `joker_disclosure` / `human_disclosure` / `cat_disclosure`は失格原因ごとに独立指定できるが、
 `disqualified_card_disclosure`を指定すると未指定の個別フィールドのデフォルト値として使われる

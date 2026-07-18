@@ -9,6 +9,7 @@
 3. 卓に参加する
    - 自分で卓を立てる場合: `create_table`を送信し、`table_created`でプレイルームIDを受け取る
    - 既存の卓に参加する場合: 他の参加者から共有されたプレイルームIDを使って`join_table`(`{room_id}`)を送信する
+   - 対戦相手が足りない場合は、`create_table`の`ai_players`(例: `[{"policy": "matrix", "count": 2}]`)で**サーバー内蔵のAIプレイヤー**を同席させられる。内蔵AIの方策は`clients/mock_ai`と同一実装(`cucco.ai.policies`)で、通常の参加者として振る舞う
 4. `state_snapshot`で現在の卓の状況を受け取る
 5. `ready`を送信してゲーム開始への参加を表明する(参加費チップ1枚はポット開始時に自動で徴収される)
 6. `pot_started`でポット開始を確認する
