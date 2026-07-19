@@ -18,6 +18,8 @@ class PlayerInfo:
     player_id: str
     name: str
     player_type: str
+    # Built-in policy for server-embedded bots; None otherwise.
+    ai_policy: str | None = None
 
 
 class ResultsStore:
@@ -42,8 +44,8 @@ class ResultsStore:
         for rank, (player_id, chips) in enumerate(ranking, start=1):
             info = by_id.get(player_id)
             self._conn.execute(
-                "INSERT INTO participants (game_id, player_id, name, player_type, final_rank, final_chips) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO participants (game_id, player_id, name, player_type, final_rank, final_chips, ai_policy) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     game_id,
                     player_id,
@@ -51,6 +53,7 @@ class ResultsStore:
                     info.player_type if info is not None else "unknown",
                     rank,
                     chips,
+                    info.ai_policy if info is not None else None,
                 ),
             )
         self._conn.commit()

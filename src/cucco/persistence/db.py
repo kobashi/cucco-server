@@ -24,7 +24,10 @@ CREATE TABLE IF NOT EXISTS participants (
     name TEXT NOT NULL,
     player_type TEXT NOT NULL,
     final_rank INTEGER NOT NULL,
-    final_chips INTEGER NOT NULL
+    final_chips INTEGER NOT NULL,
+    -- Built-in policy name for server-embedded bots; NULL for humans and
+    -- external clients. Added in v0.14.0 (see _migrate for older files).
+    ai_policy TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_participants_game_id ON participants(game_id);
@@ -52,5 +55,15 @@ def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
+    _migrate(conn)
     conn.commit()
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Idempotent, additive-only migrations for result files created by
+    older versions (CREATE TABLE IF NOT EXISTS never alters an existing
+    table, so new columns must be patched in here)."""
+    participant_columns = {row[1] for row in conn.execute("PRAGMA table_info(participants)")}
+    if "ai_policy" not in participant_columns:
+        conn.execute("ALTER TABLE participants ADD COLUMN ai_policy TEXT")

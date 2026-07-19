@@ -137,6 +137,8 @@ async def spawn_bot(make_handler, room_id: str, name: str, policy_name: str, mod
     await loopback.send_action("join_table", {"room_id": room_id})
     await loopback.expect("state_snapshot")
     loopback.room_id = room_id
+    # Tag the session so the results store can attribute games to the policy.
+    loopback.handler.session.ai_policy = policy_name
 
     task = asyncio.create_task(_run_brain(loopback, name, policy_name, mode))
     return task

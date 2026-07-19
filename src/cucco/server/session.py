@@ -44,6 +44,10 @@ class PlayerSession:
     # holds クク. Cleared by the runner when consumed, found invalid, or at
     # deal boundaries.
     pending_cucco: bool = False
+    # Which built-in policy drives this seat, when it's a server-embedded
+    # bot (cucco.server.bots). None for humans, spectators, and external AI
+    # clients. Recorded into the results store for per-policy statistics.
+    ai_policy: str | None = None
 
     async def send(self, message: str) -> None:
         if self.connection is not None and self.connected:

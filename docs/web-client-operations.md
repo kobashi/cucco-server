@@ -186,3 +186,17 @@ https://kobashi.github.io/cucco-server/?ws=xxxx.trycloudflare.com
 `clients/web/README.md`「既知の制約」を参照(成績・統計閲覧UIや評価モード
 専用ダッシュボードは未実装、現在の手番表示はベストエフォート推測、
 リロードをまたいだ場合の失格/未配布の区別が曖昧になる場合がある、など)。
+
+成績の確認はブラウザではなく、サーバーを動かしているマシン上のCLIで行う:
+
+```bash
+python -m cucco.tools.stats                  # プレイヤー別の通算成績
+python -m cucco.tools.stats --policies      # 内蔵AI方策別の成績
+python -m cucco.tools.stats --player 名前    # 1人の直近ゲーム
+python -m cucco.tools.stats --recent 5      # 直近5ゲームの結果
+python -m cucco.tools.stats --evaluations   # 評価モードの実行一覧
+```
+
+読み取り専用なのでサーバー稼働中に実行してよい。出力にはプレイヤーの
+表示名(ゼミ生の実名の場合がある)が含まれるため、**結果をファイルに
+保存して公開リポジトリにコミットしないこと**。

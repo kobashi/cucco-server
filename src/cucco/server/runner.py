@@ -311,7 +311,7 @@ class TableRunner:
     def _record_results(self, game: Game) -> None:
         assert game.final_ranking is not None
         players = [
-            PlayerInfo(pid, session.name, session.player_type)
+            PlayerInfo(pid, session.name, session.player_type, session.ai_policy)
             for pid in game.seats
             if (session := self.table.get(pid)) is not None
         ]
