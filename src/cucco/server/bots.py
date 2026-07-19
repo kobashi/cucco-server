@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 
 from cucco.ai.bot import BotEvent, MockAI
 from cucco.ai.policies import make_policy
-from cucco.protocol.actions import folded_name
+from cucco.protocol.actions import MAX_NAME_LENGTH, folded_name
 from cucco.protocol.envelope import PROTOCOL_VERSION
 
 logger = logging.getLogger("cucco.server.bots")
@@ -108,7 +108,11 @@ def bot_names(table, specs: list[tuple[str, int]]) -> list[tuple[str, str]]:
         numbers = itertools.count(1)
         for _ in range(count):
             while True:
-                name = f"AI-{policy}-{next(numbers)}"
+                suffix = f"-{next(numbers)}"
+                # Long policy names (e.g. counting_conservative) must still
+                # fit the protocol's display-name cap with prefix + suffix.
+                stem = f"AI-{policy}"[: MAX_NAME_LENGTH - len(suffix)]
+                name = stem + suffix
                 if folded_name(name) not in taken:
                     break
             taken.add(folded_name(name))

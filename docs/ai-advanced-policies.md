@@ -1,10 +1,17 @@
 # 上位AI 実装案集(教材)
 
 Mock AIの3基本方策(必ずチェンジ / 必ずノーチェンジ / 人数×ランクのマトリクス。
-`clients/mock_ai/policies.py`)より強いAIを作るための実装案集。**サーバー側では
-実装しない**。ゼミ生が自分のAIクライアントを設計する際の出発点・ヒント集として
-使うこと。プロトコルの詳細は`docs/ai-client-guide.md`、ルールは
-`docs/rules/final_rules.md`を参照。
+`clients/mock_ai/policies.py`)より強いAIを作るための実装案集。ゼミ生が自分の
+AIクライアントを設計する際の出発点・ヒント集として使うこと。プロトコルの詳細は
+`docs/ai-client-guide.md`、ルールは`docs/rules/final_rules.md`を参照。
+
+> **参照実装について**: 案A(+案Dの継続判断)の参照実装が
+> `src/cucco/ai/policies.py`の`CountingPolicy`
+> (`counting_aggressive` / `counting_conservative`)としてサーバーに入った。
+> 共有のカウンティング状態は`src/cucco/ai/context.py`の`CountingTracker`が
+> 管理し、方策は`PolicyContext`スナップショットを見る純粋な判断関数になって
+> いる。**先に自分で設計してから読み比べるのが最良の使い方**。案B〜Eは
+> 引き続き未実装で、ゼミ生の挑戦課題として残してある。
 
 どの案も、AIクライアントが受信できる**公開情報だけ**で成立する。カンニング
 (他人の手札の直接参照)は物理的に不可能な設計になっている。

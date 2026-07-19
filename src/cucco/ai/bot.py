@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from cucco.ai.context import CountingTracker, PolicyContext
 from cucco.ai.policies import BasePolicy
 
 
@@ -49,6 +50,25 @@ class MockAI:
         self.pot_active: set[str] = set()
         self.deal_alive: set[str] = set()
         self.received: list = []
+        # Shared observation state for context-aware policies (案A counting).
+        # Maintained here -- not in the policies -- so every policy sees one
+        # consistent tracker without duplicating event handling.
+        self.tracker = CountingTracker()
+
+    def _context(self, required_chips: int = 1) -> PolicyContext:
+        me = self.conn.player_id
+        return PolicyContext(
+            own_rank=self.my_hand or "",
+            alive_count=self.alive_count,
+            deal_number=self.tracker.deal_number,
+            pot_chips=self.tracker.pot_chips,
+            my_chips=self.my_chips,
+            is_dealer=self.tracker.dealer_id == me,
+            unseen_counts=self.tracker.unseen_counts(self.my_hand, self.deal_alive),
+            known_held=self.tracker.known_held_alive(self.deal_alive, exclude=me),
+            turn_actions_this_deal=self.tracker.turn_actions_this_deal,
+            required_chips=required_chips,
+        )
 
     def _info(self, message: str) -> None:
         if self.log is not None:
@@ -70,6 +90,7 @@ class MockAI:
     async def _handle(self, event) -> dict | None:
         p = event.payload
         me = self.conn.player_id
+        self.tracker.observe(event)
 
         if event.type == "pot_started":
             self.pot_active = set(p["participants"])
@@ -95,18 +116,19 @@ class MockAI:
 
         elif event.type == "dealer_ready":
             # A クク-holding dealer may declare it together with "dōzo".
-            if self.my_hand == "クク" and self.policy.decide_cucco_declare(self.my_hand, self.alive_count):
+            if self.my_hand == "クク" and self.policy.decide_cucco_declare_ctx(self._context()):
                 await self.conn.send("cucco_declare", {})
                 self._info("dealer_ready: declaring クク")
             else:
                 await self.conn.send("dealer_ready", {})
         elif event.type == "turn_prompt":
+            ctx = self._context()
             # クク is offered as a third turn choice to a holder.
-            if self.my_hand == "クク" and self.policy.decide_cucco_declare(self.my_hand, self.alive_count):
+            if self.my_hand == "クク" and self.policy.decide_cucco_declare_ctx(ctx):
                 await self.conn.send("cucco_declare", {})
                 self._info(f"turn: hand={self.my_hand} alive={self.alive_count} -> cucco")
             else:
-                change = self.policy.decide_change(self.my_hand or "", self.alive_count)
+                change = self.policy.decide_change_ctx(ctx)
                 await self.conn.send("cambio_declare" if change else "no_change_declare", {})
                 self._info(f"turn: hand={self.my_hand} alive={self.alive_count} -> {'change' if change else 'no_change'}")
         elif event.type == "effect_window":
@@ -120,7 +142,7 @@ class MockAI:
             else:
                 await self.conn.send("effect_pass", {})
         elif event.type == "continue_prompt":
-            stay = self.policy.decide_continue(self.my_chips, p.get("required_chips", 1))
+            stay = self.policy.decide_continue_ctx(self._context(required_chips=p.get("required_chips", 1)))
             await self.conn.send("continue_declare", {"continue": stay})
 
         elif event.type == "pot_result" and self.mode == "normal":

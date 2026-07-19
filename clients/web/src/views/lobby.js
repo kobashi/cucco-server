@@ -127,6 +127,8 @@ function renderCreate(el, state, actions) {
           <label>matrix(人数×手札で判断) <input class="ai-count" data-policy="matrix" type="number" min="0" max="14" step="1" value="0"></label>
           <label>always_change(常にチェンジ) <input class="ai-count" data-policy="always_change" type="number" min="0" max="14" step="1" value="0"></label>
           <label>always_no_change(常にノーチェンジ) <input class="ai-count" data-policy="always_no_change" type="number" min="0" max="14" step="1" value="0"></label>
+          <label>counting_aggressive(カウンティング・積極型) <input class="ai-count" data-policy="counting_aggressive" type="number" min="0" max="14" step="1" value="0"></label>
+          <label>counting_conservative(カウンティング・堅実型) <input class="ai-count" data-policy="counting_conservative" type="number" min="0" max="14" step="1" value="0"></label>
         </fieldset>
         <button type="submit">作成する</button>
         <button type="button" id="back-btn" class="secondary">戻る</button>

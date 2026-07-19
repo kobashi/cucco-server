@@ -26,7 +26,11 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description="Cucco mock AI client")
     parser.add_argument("--url", default="ws://localhost:8765")
     parser.add_argument("--name", required=True)
-    parser.add_argument("--policy", default="matrix", help="always_change | always_no_change | matrix")
+    parser.add_argument(
+        "--policy",
+        default="matrix",
+        help="always_change | always_no_change | matrix | counting_aggressive | counting_conservative",
+    )
     parser.add_argument("--create", action="store_true", help="create a new table instead of joining")
     parser.add_argument("--room", help="room id to join (when not --create)")
     parser.add_argument("--mode", default="normal", choices=["normal", "evaluation"])
