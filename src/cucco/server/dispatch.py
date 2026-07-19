@@ -95,7 +95,7 @@ async def _start_game(table: Table) -> None:
         # iteration -- this flag is the re-entry guard in the meantime
         # (see Table.evaluation_started's docstring).
         table.evaluation_started = True
-        asyncio.create_task(_run_evaluation_safely(table, participants))
+        table.runner_task = asyncio.create_task(_run_evaluation_safely(table, participants))
         return
 
     # Recorded up front (docs/protocol/design.md 「永続化・成績記録」) so the
@@ -114,7 +114,7 @@ async def _start_game(table: Table) -> None:
     # recorded seed still deterministically reproduces seats + deals alike.
     rng.shuffle(participants)
     table.game = Game(participants, table.config, rng)
-    asyncio.create_task(_run_table_safely(table, action_log))
+    table.runner_task = asyncio.create_task(_run_table_safely(table, action_log))
 
 
 async def _ready_timeout_watchdog(table: Table) -> None:
@@ -192,6 +192,8 @@ class ConnectionHandler:
             await self._send_raw("action_rejected", {"reason": str(exc)})
             return
 
+        if self.table is not None:
+            self.table.touch()  # any client action counts as table activity
         try:
             if isinstance(action, Identify):
                 await self._handle_identify(action)

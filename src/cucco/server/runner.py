@@ -169,6 +169,7 @@ class TableRunner:
             session.connected = False
 
     async def _broadcast(self, type_: str, payload_for: "callable") -> None:
+        self.table.touch()  # outgoing game progress counts as activity too
         # Snapshot the session list before awaiting each send: a
         # join_table arriving mid-broadcast (a different asyncio task)
         # would otherwise mutate table.sessions while this loop iterates

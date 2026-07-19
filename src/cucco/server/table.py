@@ -8,6 +8,7 @@ live `Game` once it's running.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -62,6 +63,18 @@ class Table:
     # it lives here rather than in GameConfig): "grouped" | "pile". Clients
     # read it from state_snapshot so the whole table renders one style.
     discard_display: str = "grouped"
+    # Wall-clock bookkeeping for the admin surface: when the table was
+    # created, and when it last saw any activity (a client action or a
+    # broadcast). "How long has this table been idle" is the operator's
+    # main signal for spotting stuck tables.
+    created_at: float = field(default_factory=time.time)
+    last_activity_at: float = field(default_factory=time.time)
+    # The running TableRunner/EvaluationRunner task, kept so the admin
+    # surface can cancel a stuck game. None while no game is running.
+    runner_task: asyncio.Task | None = None
+
+    def touch(self) -> None:
+        self.last_activity_at = time.time()
 
     def add_session(self, session: PlayerSession) -> None:
         self.sessions[session.player_id] = session

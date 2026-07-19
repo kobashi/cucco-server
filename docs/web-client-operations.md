@@ -200,3 +200,21 @@ python -m cucco.tools.stats --evaluations   # 評価モードの実行一覧
 読み取り専用なのでサーバー稼働中に実行してよい。出力にはプレイヤーの
 表示名(ゼミ生の実名の場合がある)が含まれるため、**結果をファイルに
 保存して公開リポジトリにコミットしないこと**。
+
+## 8. サーバー管理(卓の確認・停止卓の中止)
+
+サーバー起動時に管理リスナーが`127.0.0.1:8766`で立ち上がり、管理トークンが
+起動ログに出力される(`--admin-token`で固定、`--admin-port 0`で無効化)。
+サーバーと同じマシン上で:
+
+```bash
+python -m cucco.tools.admin --token <トークン> list           # 全卓の一覧(無操作時間つき)
+python -m cucco.tools.admin --token <トークン> status <卓ID>  # 卓の詳細(手札は含まれない)
+python -m cucco.tools.admin --token <トークン> abort <卓ID>   # 進行中ゲームを強制終了して卓を閉じる
+python -m cucco.tools.admin --token <トークン> remove <卓ID>  # ゲームの走っていない卓を削除
+```
+
+`abort`すると参加者には通常の`game_ended`(現在チップによる順位)が届き、
+内蔵AIのタスクも停止する。**内蔵AIだけで連戦し続ける卓**(人間全員が離脱
+した後もAIが再readyし続ける)の掃除はこれで行う。管理ポートは
+ローカル専用 — **Cloudflare Tunnelに載せないこと**(`docs/security-notes.md`)。
