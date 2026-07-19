@@ -124,6 +124,17 @@ function renderHand(state) {
 
 function renderDiscardPile(t) {
   if (!t.discard_pile?.length) return `<section><h2>捨て札</h2><p class="muted">まだありません</p></section>`;
+  // Pile style (table-wide preference from create_table's discard_display):
+  // only the most recent discard is visible, like a physical pile.
+  if (t.discard_display === "pile") {
+    const top = t.discard_pile[t.discard_pile.length - 1];
+    return `
+      <section>
+        <h2>捨て山(${t.discard_pile.length}枚)</h2>
+        <p>トップ: <strong>${esc(top.card)}</strong></p>
+      </section>
+    `;
+  }
   // Original holder is deliberately omitted here (per-card provenance stays
   // in provenance_map for the 猫 effect, not this list) -- grouped counts
   // sorted by rank are what's actually useful for counting cards.

@@ -100,6 +100,7 @@
   "cucco_window_timeout_ai_sec": "number (デフォルト2)",
   "result_pause_sec": "number (デフォルト0、最大60。「オープン」直後(続行確認の前)とポット決着後に、結果を確認するための待機秒数。`result_pause`イベントとして全員に通知され、着席中の人間全員が`result_ack`を送れば残り時間をスキップする。評価モードでは無視される)",
   "effect_declaration": "auto | declared (デフォルトauto。declaredの場合、道化を除く特殊札(人間/馬/猫/家)の拒否効果は、交換を要求された保持者が`effect_window`で能動的に宣言した場合のみ発動する。宣言しなければ効果は発動せず交換が成立する。道化の受取失格と、山札から引かれた特殊札の効果は宣言不要で常に自動発動)",
+  "discard_display": "grouped | pile (デフォルトgrouped。捨て札の表示スタイル。groupedは種類ごとの全一覧、pileは物理的な捨て山のように最後に捨てられた1枚のみを表示する。**表示上の卓設定であってルールではない** — 配信されるデータ自体は変わらず、`state_snapshot`の`discard_display`で全クライアントに共有される)",
   "ai_players": "[{policy, count}] (省略可。サーバー内蔵のAIプレイヤーをこの卓に着席させる。policyは方策名(always_change / always_no_change / matrix / counting_aggressive / counting_conservative)、countは人数。合計は最大参加人数-1まで — 作成者の席は必ず残る)"
 }
 ```

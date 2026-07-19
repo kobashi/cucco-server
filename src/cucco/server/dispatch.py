@@ -255,6 +255,7 @@ class ConnectionHandler:
             results_store=self.results_store,
             action_log_dir=self.action_log_dir,
             pending_ai_players=action.ai_players,
+            discard_display=action.discard_display,
         )
         room_id = self.registry.register(table)
         table.room_id = room_id

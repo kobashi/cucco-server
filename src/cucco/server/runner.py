@@ -51,6 +51,7 @@ def build_state_snapshot(table: Table, recipient_id: str | None) -> dict:
     base = {
         "table_id": table.room_id,
         "mode": table.config.mode,
+        "discard_display": table.discard_display,
         "spectators": [s.player_id for s in table.spectators()],
         # The EFFECTIVE organizer: falls to the earliest-joined connected
         # player while the original creator is gone (Table.effective_creator_id),

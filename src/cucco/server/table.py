@@ -58,6 +58,10 @@ class Table:
     pending_ai_players: tuple = ()
     bots_spawned: bool = False
     bot_tasks: list = field(default_factory=list)
+    # Presentation-only preference from create_table (not a domain rule, so
+    # it lives here rather than in GameConfig): "grouped" | "pile". Clients
+    # read it from state_snapshot so the whole table renders one style.
+    discard_display: str = "grouped"
 
     def add_session(self, session: PlayerSession) -> None:
         self.sessions[session.player_id] = session

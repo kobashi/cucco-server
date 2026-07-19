@@ -131,14 +131,27 @@ export function createTableScene(root) {
     root.querySelector("#deck-count").textContent = `${t.deck_remaining_count}`;
     root.querySelector("#pot-count").textContent = `${state.potChips}`;
 
-    // Discard: grouped counts, rank order (matches the reference client).
-    const counts = new Map();
-    for (const d of t.discard_pile ?? []) counts.set(d.card, (counts.get(d.card) ?? 0) + 1);
-    const sorted = [...counts.entries()].sort(([a], [b]) => RANK_ORDER.indexOf(a) - RANK_ORDER.indexOf(b));
-    root.querySelector("#scene-discard").innerHTML = sorted.length
-      ? `<div class="discard-title">捨て札 ${t.discard_pile.length}枚</div>` +
-        sorted.map(([card, n]) => `<span class="discard-chip">${esc(card)}${n > 1 ? `×${n}` : ""}</span>`).join("")
-      : "";
+    // Discard: two table-wide styles (state_snapshot's discard_display).
+    // "grouped" (default): every discard, grouped by rank. "pile": like a
+    // physical pile -- only the most recent card is visible, face-up on top.
+    // Display-only; the underlying data is the same either way.
+    const pile = t.discard_pile ?? [];
+    const discardEl = root.querySelector("#scene-discard");
+    if (t.discard_display === "pile") {
+      const top = pile[pile.length - 1];
+      discardEl.innerHTML = pile.length
+        ? `<div class="discard-title">捨て山 ${pile.length}枚</div>
+           <div class="discard-pile-top">${cardHTML(top.card)}</div>`
+        : "";
+    } else {
+      const counts = new Map();
+      for (const d of pile) counts.set(d.card, (counts.get(d.card) ?? 0) + 1);
+      const sorted = [...counts.entries()].sort(([a], [b]) => RANK_ORDER.indexOf(a) - RANK_ORDER.indexOf(b));
+      discardEl.innerHTML = sorted.length
+        ? `<div class="discard-title">捨て札 ${pile.length}枚</div>` +
+          sorted.map(([card, n]) => `<span class="discard-chip">${esc(card)}${n > 1 ? `×${n}` : ""}</span>`).join("")
+        : "";
+    }
   }
 
   return {

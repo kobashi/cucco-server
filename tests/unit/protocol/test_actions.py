@@ -148,6 +148,13 @@ def test_parse_create_table_rejects_an_invalid_disclosure_value():
         parse_action(env("create_table", {"joker_disclosure": "imediate"}))  # typo
 
 
+def test_parse_create_table_discard_display():
+    assert parse_action(env("create_table", {})).discard_display == "grouped"
+    assert parse_action(env("create_table", {"discard_display": "pile"})).discard_display == "pile"
+    with pytest.raises(ProtocolError):
+        parse_action(env("create_table", {"discard_display": "stack"}))
+
+
 def test_parse_create_table_ai_players():
     action = parse_action(
         env("create_table", {"ai_players": [{"policy": "matrix", "count": 2}, {"policy": "always_change"}]})

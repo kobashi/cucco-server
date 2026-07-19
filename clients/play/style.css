@@ -115,6 +115,15 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
   background: rgba(255,255,255,0.92); color: #222; border-radius: 6px;
   padding: 0.1rem 0.45rem; font-size: 0.85rem; font-weight: 600;
 }
+/* Pile mode: the top card sits on a hinted stack of face-down edges. */
+.discard-pile-top { position: relative; }
+.discard-pile-top .card { position: relative; z-index: 1; }
+.discard-pile-top::before, .discard-pile-top::after {
+  content: ""; position: absolute; inset: 0; border-radius: 7px;
+  background: rgba(0, 0, 0, 0.25);
+}
+.discard-pile-top::before { transform: translate(3px, 3px); }
+.discard-pile-top::after { transform: translate(6px, 6px); z-index: -1; }
 
 /* -- seats -- */
 .player-seat {

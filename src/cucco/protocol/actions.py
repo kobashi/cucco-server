@@ -20,6 +20,7 @@ VALID_MODES = ("normal", "evaluation")
 VALID_END_CONDITIONS = ("chips_zero", "round_limit")
 VALID_DISCLOSURES = ("immediate", "deferred")
 VALID_EFFECT_DECLARATIONS = ("auto", "declared")
+VALID_DISCARD_DISPLAYS = ("grouped", "pile")
 
 # Display names are attacker-controlled and broadcast to every client via
 # state_snapshot (seats[].name), so they must be bounded and sanitized at the
@@ -54,6 +55,12 @@ class CreateTable:
     cucco_window_timeout_ai_sec: float = 2.0
     result_pause_sec: float = 0.0
     effect_declaration: str = "auto"
+    # Presentation-only table preference (NOT a rule): how clients should
+    # render the discard pile. "grouped" = the full grouped list (current
+    # default); "pile" = as a physical pile, top card only. The wire data
+    # itself is unchanged either way -- clients honor this hint from
+    # state_snapshot so every seat at the table sees the same style.
+    discard_display: str = "grouped"
     # Server-embedded AI opponents to seat at this table: ((policy, count), ...).
     # Policy-name validity and the total-seats cap are checked in the server
     # layer (dispatch), where the policy registry and seat limits live.
@@ -262,6 +269,7 @@ def _parse_create_table(payload: dict) -> CreateTable:
         cucco_window_timeout_ai_sec=_optional_number(payload, "cucco_window_timeout_ai_sec", 2.0),
         result_pause_sec=_optional_number(payload, "result_pause_sec", 0.0),
         effect_declaration=_require_choice(payload, "effect_declaration", VALID_EFFECT_DECLARATIONS, default="auto"),
+        discard_display=_require_choice(payload, "discard_display", VALID_DISCARD_DISPLAYS, default="grouped"),
         ai_players=ai_players,
     )
 

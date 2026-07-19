@@ -122,6 +122,12 @@ function renderCreate(el, state, actions) {
         <label>結果確認の待機時間(秒。全員が確認ボタンを押せば短縮)
           <input id="result-pause" type="number" min="0" max="60" step="1" value="15">
         </label>
+        <label>捨て札の表示
+          <select id="discard-display">
+            <option value="grouped" selected>全て一覧表示(種類ごとにまとめる)</option>
+            <option value="pile">捨て山 — 最後の1枚だけ見える</option>
+          </select>
+        </label>
         <fieldset class="ai-players">
           <legend>AIプレイヤーを追加(サーバー内蔵、合計14人まで)</legend>
           <label>matrix(人数×手札で判断) <input class="ai-count" data-policy="matrix" type="number" min="0" max="14" step="1" value="0"></label>
@@ -156,6 +162,7 @@ function renderCreate(el, state, actions) {
       disqualified_card_disclosure: el.querySelector("#disclosure").value,
       horse_house_reveal: el.querySelector("#horse-house-reveal").checked,
       effect_declaration: el.querySelector("#effect-declaration").value,
+      discard_display: el.querySelector("#discard-display").value,
       result_pause_sec: Math.max(0, Math.min(60, Number(el.querySelector("#result-pause").value) || 0)),
       ai_players: [...el.querySelectorAll(".ai-count")]
         .map((input) => ({ policy: input.dataset.policy, count: Math.round(Number(input.value)) || 0 }))

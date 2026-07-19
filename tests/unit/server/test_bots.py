@@ -123,6 +123,18 @@ async def test_bots_re_ready_for_a_rematch():
 
 
 @pytest.mark.asyncio
+async def test_discard_display_preference_reaches_the_snapshot():
+    conn = FakeConnection()
+    handler = ConnectionHandler(conn, TableRegistry())
+    await handler.handle_message(build_envelope("identify", {"name": "Host", "player_type": "human"}))
+    await handler.handle_message(build_envelope("create_table", {"discard_display": "pile"}))
+    room_id = conn.last("table_created")["payload"]["room_id"]
+    await handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    snapshot = conn.last("state_snapshot")
+    assert snapshot["payload"]["discard_display"] == "pile"
+
+
+@pytest.mark.asyncio
 async def test_unknown_policy_is_rejected():
     conn = FakeConnection()
     handler = ConnectionHandler(conn, TableRegistry())
