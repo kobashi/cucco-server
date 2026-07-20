@@ -2,7 +2,16 @@
 // (ニャー! / スキップ / クク宣言!! / 失格) and seat shakes. All animations are
 // registered with the queue so fastForward() can finish them instantly.
 
+// メッセージ確認モード: when the getter says ON, banners become modal cards
+// that wait for a 確認 click instead of flashing past. main.js installs the
+// getter (the toggle lives in the tool cluster).
+let confirmModeOn = () => false;
+export function setConfirmModeGetter(getter) {
+  confirmModeOn = getter;
+}
+
 export function banner(queueRef, text, tone = "info", duration = 1100) {
+  if (confirmModeOn()) return confirmBanner(queueRef, text, tone);
   return new Promise((resolve) => {
     const el = document.createElement("div");
     el.className = `fx-banner ${tone}`;
@@ -23,6 +32,50 @@ export function banner(queueRef, text, tone = "info", duration = 1100) {
       resolve();
     };
     anim.finished.then(done, done);
+  });
+}
+
+// The confirm-mode banner: same card, but modal -- the queue stays parked on
+// this step until 確認 is pressed, so a chain of events reads one card at a
+// time. The wait is registered with the queue as a pseudo-animation
+// (finish()-able, playbackRate-assignable), so the hard rule still holds:
+// fastForward()/clear() release it instantly, and hurry()'s ceiling snaps it
+// -- a confirmation card can never outwait a server timeout.
+function confirmBanner(queueRef, text, tone) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "fx-confirm-overlay";
+    const card = document.createElement("div");
+    card.className = `fx-banner ${tone} confirm`;
+    const label = document.createElement("span");
+    label.textContent = text;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "fx-confirm-btn";
+    btn.textContent = "確認";
+    card.append(label, btn);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    const entrance = card.animate(
+      [
+        { transform: "scale(0.7)", opacity: 0 },
+        { transform: "scale(1)", opacity: 1 },
+      ],
+      { duration: 180, easing: "ease-out" }
+    );
+    queueRef._track(entrance);
+
+    let settle;
+    const finished = new Promise((r) => (settle = r));
+    const gate = { finished, finish: () => settle(), playbackRate: 1 };
+    queueRef._track(gate);
+    btn.addEventListener("click", () => settle());
+    finished.then(() => {
+      overlay.remove();
+      resolve();
+    });
+    btn.focus();
   });
 }
 

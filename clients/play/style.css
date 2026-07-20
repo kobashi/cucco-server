@@ -279,6 +279,27 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 .fx-banner.danger { background: rgba(160, 24, 24, 0.88); }
 .fx-banner.cucco { background: rgba(120, 20, 20, 0.92); font-size: 2rem; border: 2px solid #ffd75e; }
 
+/* メッセージ確認モード: the same banner as a modal card with a 確認 button.
+   Below .modal-overlay (z-20) so real decision modals always win. */
+.fx-confirm-overlay {
+  position: fixed; inset: 0; z-index: 19;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex; align-items: center; justify-content: center;
+}
+.fx-banner.confirm {
+  position: static; transform: none; pointer-events: auto;
+  display: flex; flex-direction: column; align-items: center; gap: 0.8rem;
+  max-width: min(30rem, 90vw); text-align: center;
+}
+.fx-confirm-btn {
+  font-size: 1rem; font-weight: 700; padding: 0.45rem 2.2rem;
+  background: #fff; color: #222; border-radius: 999px;
+}
+#confirm-toggle {
+  background: var(--accent); border: 1px solid var(--accent); color: var(--accent-fg);
+}
+#confirm-toggle.off { background: var(--panel-bg); color: var(--muted); border-color: var(--border); }
+
 .conn-banner {
   position: sticky; top: 0; z-index: 30; padding: 0.5rem 1rem; text-align: center;
   font-weight: 700; color: #fff; background: var(--urgent);

@@ -3,9 +3,11 @@
 A passive loop: waits for server notifications and answers the decision
 points (turn / continue / dealer_ready / effect window), delegating the
 actual choices to a policy from `cucco.ai.policies`. クク is fire-and-forget
-(`cucco_declare` may be sent at any moment); this bot only declares it at
-its own prompts (turn / dealer_ready), which is a legal simplification --
-declaring is always optional.
+(`cucco_declare` may be sent at any moment); by default this bot declares
+it only at its own prompts (turn / dealer_ready) -- a legal simplification.
+A policy can opt into `declare_cucco_eagerly` instead, firing the
+declaration the moment クク is in hand (クク cannot refuse an exchange, so
+sitting on it for a round leaves it stealable by the left neighbor).
 
 The brain is transport-agnostic: `conn` is anything with
 `send(type, payload)`, `events()` (async iterator of objects with
@@ -54,6 +56,13 @@ class MockAI:
         # Maintained here -- not in the policies -- so every policy sees one
         # consistent tracker without duplicating event handling.
         self.tracker = CountingTracker()
+        # One eager/prompt クク declaration per deal is plenty -- the server
+        # ignores duplicates anyway, this just keeps the wire quiet.
+        self._cucco_declared_this_deal = False
+
+    async def _declare_cucco(self) -> None:
+        self._cucco_declared_this_deal = True
+        await self.conn.send("cucco_declare", {})
 
     def _context(self, required_chips: int = 1) -> PolicyContext:
         me = self.conn.player_id
@@ -101,6 +110,7 @@ class MockAI:
         elif event.type == "deal_started":
             self.my_hand = p.get("your_hand")
             self.deal_alive = set(self.pot_active)
+            self._cucco_declared_this_deal = False
         elif event.type == "player_disqualified":
             self.deal_alive.discard(p["player_id"])
             if p["player_id"] == me:
@@ -117,7 +127,7 @@ class MockAI:
         elif event.type == "dealer_ready":
             # A クク-holding dealer may declare it together with "dōzo".
             if self.my_hand == "クク" and self.policy.decide_cucco_declare_ctx(self._context()):
-                await self.conn.send("cucco_declare", {})
+                await self._declare_cucco()
                 self._info("dealer_ready: declaring クク")
             else:
                 await self.conn.send("dealer_ready", {})
@@ -125,7 +135,7 @@ class MockAI:
             ctx = self._context()
             # クク is offered as a third turn choice to a holder.
             if self.my_hand == "クク" and self.policy.decide_cucco_declare_ctx(ctx):
-                await self.conn.send("cucco_declare", {})
+                await self._declare_cucco()
                 self._info(f"turn: hand={self.my_hand} alive={self.alive_count} -> cucco")
             else:
                 change = self.policy.decide_change_ctx(ctx)
@@ -159,4 +169,18 @@ class MockAI:
             return p
         elif event.type == "action_rejected":
             self._info(f"action_rejected: {p.get('reason')}")
+
+        # Eager クク (declare_cucco_eagerly policies): fire the moment the
+        # hand updates to クク -- deal_started or an exchange that handed it
+        # to us -- instead of sitting on a stealable card until our prompt.
+        # Fire-and-forget on the wire: a pre-どうぞ send is deferred by the
+        # server, an invalid one is silently dropped, so this is always safe.
+        if (
+            self.my_hand == "クク"
+            and not self._cucco_declared_this_deal
+            and event.type in ("deal_started", "exchange_result")
+            and self.policy.declare_cucco_eagerly(self._context())
+        ):
+            await self._declare_cucco()
+            self._info(f"eager クク declaration on {event.type}")
         return None

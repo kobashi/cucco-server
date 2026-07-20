@@ -89,6 +89,14 @@ class BasePolicy:
     def decide_continue_ctx(self, ctx) -> bool:
         return self.decide_continue(ctx.my_chips, ctx.required_chips)
 
+    def declare_cucco_eagerly(self, ctx) -> bool:
+        """Should the brain fire `cucco_declare` the moment it HOLDS クク,
+        without waiting for its own prompt? Baselines keep the historical
+        prompt-only simplification (False) so their behavior -- and the
+        evaluation baselines built on them -- stay put; enhanced policies
+        override this (see CountingPolicy for why waiting is a real leak)."""
+        return False
+
 
 class AlwaysChange(BasePolicy):
     name = "always_change"
@@ -173,10 +181,18 @@ class CountingPolicy(BasePolicy):
         return p_weaker < cutoff
 
     def decide_cucco_declare_ctx(self, ctx) -> bool:
-        # This brain can only declare at its own prompts, and at a prompt an
-        # immediate declaration dominates: holding クク we cannot lose the
-        # open, but waiting one more round risks the left neighbor's cambio
-        # taking クク away. (Out-of-band anytime-timing is future work.)
+        # At a prompt an immediate declaration dominates: holding クク we
+        # cannot lose the open, but waiting risks losing the card itself.
+        return True
+
+    def declare_cucco_eagerly(self, ctx) -> bool:
+        # クク cannot refuse a player-to-player exchange, so the left
+        # neighbor's cambio can simply TAKE it -- waiting for our own prompt
+        # leaves the card stealable for a whole round (observed in live
+        # play: a human lifted クク straight out of a bot's hand). The
+        # protocol's fire-and-forget declaration exists precisely so a
+        # holder never has to wait: declare the instant we hold it. (The
+        # server defers a non-dealer's pre-どうぞ declaration on its own.)
         return True
 
     def decide_continue_ctx(self, ctx) -> bool:

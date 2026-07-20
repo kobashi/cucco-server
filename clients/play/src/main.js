@@ -8,7 +8,7 @@ import { sanitizeWsHost } from "../../web-common/utils.js";
 import { createGameState } from "./gameState.js";
 import { createTableScene, cardHTML } from "./scene/table.js";
 import { createQueue, fly, pause } from "./anim/queue.js";
-import { banner, shake, flipReveal, effectMotion, confirmPulse } from "./anim/effects.js";
+import { banner, shake, flipReveal, effectMotion, confirmPulse, setConfirmModeGetter } from "./anim/effects.js";
 import { createSound } from "./anim/sound.js";
 import { REFUSAL_LABELS, CAUSE_LABELS } from "../../web-common/cards.js";
 import { renderLobby, renderWaiting } from "./ui/panels.js";
@@ -372,6 +372,35 @@ function mountToolCluster() {
   cluster.id = "tool-cluster";
   document.body.appendChild(cluster);
   return cluster;
+}
+
+// メッセージ確認モード: ON にすると進行メッセージ(バナー)が1枚ずつモーダル
+// カードになり、確認ボタンを押すまで次の演出へ進まない(自分のプロンプト
+// 到着時は既存のfast-forward規則で自動解除されるので、サーバーのタイム
+// アウトを待たせることはない)。設定はlocalStorageで永続化。
+let confirmMode = localStorage.getItem("cucco_confirm_mode") === "1";
+setConfirmModeGetter(() => confirmMode);
+
+function mountConfirmToggle(cluster) {
+  const btn = document.createElement("button");
+  btn.id = "confirm-toggle";
+  btn.type = "button";
+  const refresh = () => {
+    btn.innerHTML = confirmMode
+      ? '✋<span class="tool-label"> 確認モード ON</span>'
+      : '💨<span class="tool-label"> 確認モード OFF</span>';
+    btn.title = confirmMode
+      ? "メッセージ確認モード: ON — 進行メッセージを1枚ずつ確認(クリックでOFF)"
+      : "メッセージ確認モード: OFF — 進行メッセージは自動で流れる(クリックでON)";
+    btn.classList.toggle("off", !confirmMode);
+  };
+  btn.addEventListener("click", () => {
+    confirmMode = !confirmMode;
+    localStorage.setItem("cucco_confirm_mode", confirmMode ? "1" : "0");
+    refresh();
+  });
+  refresh();
+  cluster.appendChild(btn);
 }
 
 function mountSoundToggle(cluster) {
@@ -751,6 +780,7 @@ function wireConnection() {
 wireConnection();
 conn.connect();
 const toolCluster = mountToolCluster();
+mountConfirmToggle(toolCluster);
 mountCardReference(toolCluster);
 mountSoundToggle(toolCluster);
 
