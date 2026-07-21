@@ -83,6 +83,19 @@ let connectionStatus = "connecting";
 
 const scene = () => sceneRefs?.scene ?? null;
 const syncStep = () => queue.enqueue(async () => sceneRefs?.scene?.sync(state));
+// The reveal point for MY own card: advance the presentation mirror
+// (shownHand) to the authoritative hand, then sync the scene + hand-info so
+// my seat and effect line update together -- and only here, so an effect
+// animation earlier in the queue finishes first. Enqueue this in place of a
+// plain syncStep for any op that can change my hand (exchange / deck draw /
+// deal). For others' exchanges yourHand is unchanged, so it's a harmless sync.
+const revealHandStep = () =>
+  queue.enqueue(async () => {
+    if (!sceneRefs) return;
+    state.shownHand = state.yourHand;
+    sceneRefs.scene.sync(state);
+    renderHandInfo(sceneRefs.handInfoEl, state);
+  });
 
 function handleOp(op) {
   switch (op.kind) {
@@ -152,7 +165,7 @@ function handleOp(op) {
           await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(pid), html: cardHTML(null), duration: 160 });
         }
       });
-      syncStep();
+      revealHandStep(); // reveal my freshly dealt card after the dealing flight
       return;
     }
 
@@ -191,12 +204,12 @@ function handleOp(op) {
           fly(queue, { fromEl: sc.slotEl(target), toEl: sc.slotEl(requester), html: cardHTML(null), duration: FLIGHT_MS }),
         ]);
       });
-      syncStep();
-      // Confirm mode only: after the swap settles, pause on a card that names
-      // what I received -- the payoff of the whole (possibly skip-chained)
-      // cambio. Enqueued only when confirm mode is on, so normal play gets no
-      // extra banner. banner() itself renders it as the modal confirm card.
-      if (confirmMode && yourNewCard) {
+      revealHandStep(); // reveal my new card here, after any effect animation
+      // Confirm mode: pause on a card naming what I received, but ONLY when I
+      // was the exchange TARGET -- someone else's cambio landed on me, which I
+      // didn't initiate and might miss. When I'm the turn player (requester) I
+      // chose the cambio and watch my own card flip, so the modal is redundant.
+      if (confirmMode && yourNewCard && target === state.playerId) {
         queue.enqueue(async (instant) => {
           if (instant) return;
           await banner(queue, `交換成立 — あなたの新しい手札: ${yourNewCard}`, "info");
@@ -214,7 +227,11 @@ function handleOp(op) {
         // card face-up to the actor so everyone sees what came off the deck.
         sound.play("deal");
         await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(actor), html: cardHTML(newCard), duration: FLIGHT_MS });
+        // A deck draw is public and lands face-up, so this IS the reveal point
+        // for the actor's (possibly my) new card -- advance shownHand here.
+        if (actor === state.playerId) state.shownHand = state.yourHand;
         sc.sync(state); // the actor's slot now holds the revealed drawn card
+        renderHandInfo(sceneRefs.handInfoEl, state);
         await banner(queue, `${game.seatName(actor)} が山札から ${newCard} を引く`, "info");
         await pause(queue, REVEAL_HOLD_MS);
         // The card given up lands face-up on the discard pile.
@@ -514,7 +531,12 @@ function render() {
     : "";
   // While animations are in flight, the scene is owned by the queue (each
   // sequence ends with its own sync); the overlays always track live state.
-  if (justCreated || !queue.busy) sceneRefs.scene.sync(state);
+  // When idle, everything has been animated, so the presentation mirror
+  // catches up to the authoritative hand (safety net for any reveal path).
+  if (justCreated || !queue.busy) {
+    state.shownHand = state.yourHand;
+    sceneRefs.scene.sync(state);
+  }
   renderStatus(sceneRefs.statusEl, state, game.seatName);
   renderHandInfo(sceneRefs.handInfoEl, state);
   renderDock(sceneRefs.dockEl, state, actions);

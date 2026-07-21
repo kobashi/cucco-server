@@ -47,13 +47,16 @@ export function renderStatus(el, state, seatName) {
 // card-effect panel just to recall their own hand's implication (spectators
 // have no hand; between deals yourHand is null, so it's simply empty then).
 export function renderHandInfo(el, state) {
-  if (state.playerType === "spectator" || !state.yourHand) {
+  // shownHand, not yourHand: track what my seat currently DISPLAYS so the
+  // effect line never gets ahead of the card reveal animation.
+  const hand = state.shownHand;
+  if (state.playerType === "spectator" || !hand) {
     el.innerHTML = "";
     return;
   }
-  const info = cardEffectFor(state.yourHand);
+  const info = cardEffectFor(hand);
   el.innerHTML = info
-    ? `<div class="hand-info"><strong>${esc(state.yourHand)}</strong>: ${esc(info.gist)}</div>`
+    ? `<div class="hand-info"><strong>${esc(hand)}</strong>: ${esc(info.gist)}</div>`
     : "";
 }
 

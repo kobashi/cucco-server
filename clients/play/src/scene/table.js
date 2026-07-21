@@ -120,7 +120,9 @@ export function createTableScene(root) {
         // animation delivered it), so the seat is empty.
         slot.innerHTML = "";
       } else if (s.player_id === state.playerId) {
-        slot.innerHTML = state.yourHand ? cardFaceHTML(state.yourHand) : "";
+        // shownHand (not yourHand): my slot reveals a new card only at the
+        // animation step that earns it, never mid-effect-animation.
+        slot.innerHTML = state.shownHand ? cardFaceHTML(state.shownHand) : "";
       } else if (revealed !== undefined) {
         slot.innerHTML = cardFaceHTML(revealed);
       } else {

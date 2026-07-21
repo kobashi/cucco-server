@@ -25,6 +25,14 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
     currentTurnSeat: null, // best-effort guess for bystander display
     potChips: 0,
     yourHand: null,
+    // Presentation-only mirror of yourHand: the card my own seat + hand-info
+    // panel currently SHOW. yourHand is authoritative and updates the instant
+    // an event arrives; shownHand lags, advanced by the animation layer only
+    // at the step that actually reveals my new card -- so a 馬/家 skip's
+    // mid-chain sync can't flash the exchange result before its effect
+    // animation finishes. Managed entirely in main.js (the presentation
+    // layer); declared here so it rides the shared state object.
+    shownHand: null,
     disqualifiedThisDeal: false,
     disqualifiedIdsThisDeal: new Set(),
     disqualifiedInfo: {},
