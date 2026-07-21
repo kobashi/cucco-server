@@ -72,6 +72,13 @@ class Table:
     # The running TableRunner/EvaluationRunner task, kept so the admin
     # surface can cancel a stuck game. None while no game is running.
     runner_task: asyncio.Task | None = None
+    # When the table was first observed with NO connected real participant
+    # (human/spectator/external-AI -- embedded bots don't count). Set and
+    # measured by the GC sweep, NOT by last_activity_at: a bot-only table
+    # that rematches forever keeps broadcasting, so its idle time never grows
+    # -- "how long has nobody real been here" is the signal that actually
+    # catches it. None while someone real is connected.
+    real_absent_since: float | None = None
 
     def touch(self) -> None:
         self.last_activity_at = time.time()

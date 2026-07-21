@@ -106,7 +106,78 @@ def _table_summary(table: Table) -> dict:
         "pot_number": game.pot_number if game is not None else 0,
         "created_at": table.created_at,
         "idle_sec": round(time.time() - table.last_activity_at, 1),
+        "real_absent_sec": round(time.time() - table.real_absent_since, 1) if table.real_absent_since is not None else None,
     }
+
+
+# -- automatic garbage collection ------------------------------------------------
+#
+# Generous defaults, all well above runner.py's RECONNECT_GRACE_SEC, so a
+# brief network blip or a page reload never loses a live table.
+GC_INTERVAL_SEC = 60.0
+GC_EMPTY_GRACE_SEC = 600.0  # no connected real client -> remove after 10 min
+GC_FINISHED_GRACE_SEC = 300.0  # crashed/finished + idle -> remove after 5 min
+
+
+def real_participant_connected(table: Table) -> bool:
+    """Is anyone real (human / spectator / external-AI client) still on this
+    table? Embedded bots (ai_policy set) don't count -- a table where only
+    bots are connected has nobody left to serve. External AI clients carry no
+    policy tag, so a legitimate AI-vs-AI run over real sockets still reads as
+    occupied and is never swept."""
+    return any(s.connected and s.ai_policy is None for s in table.sessions.values())
+
+
+def sweep_gc(
+    registry: TableRegistry,
+    *,
+    now: float,
+    empty_grace_sec: float = GC_EMPTY_GRACE_SEC,
+    finished_grace_sec: float = GC_FINISHED_GRACE_SEC,
+) -> list[Table]:
+    """Return the tables due for garbage collection, updating each table's
+    real_absent_since bookkeeping as it goes. Free of I/O so the decision is
+    unit-testable with injected timestamps; the loop below does the removing.
+
+    Two triggers:
+    - a crashed/finished room left idle past finished_grace_sec, and
+    - a room with no connected real participant past empty_grace_sec
+      (abandoned lobby, a bot-only table that kept rematching after its
+      watcher left, or a table created but never joined).
+    """
+    doomed: list[Table] = []
+    for table in _tables(registry):
+        if table.finished and now - table.last_activity_at >= finished_grace_sec:
+            doomed.append(table)
+            continue
+        if real_participant_connected(table):
+            table.real_absent_since = None
+            continue
+        if table.real_absent_since is None:
+            table.real_absent_since = now  # start the empty timer
+        elif now - table.real_absent_since >= empty_grace_sec:
+            doomed.append(table)
+    return doomed
+
+
+async def run_gc_loop(
+    registry: TableRegistry,
+    *,
+    interval_sec: float = GC_INTERVAL_SEC,
+    empty_grace_sec: float = GC_EMPTY_GRACE_SEC,
+    finished_grace_sec: float = GC_FINISHED_GRACE_SEC,
+) -> None:
+    """Periodically sweep abandoned/idle tables for the life of the server."""
+    while True:
+        await asyncio.sleep(interval_sec)
+        try:
+            for table in sweep_gc(
+                registry, now=time.time(), empty_grace_sec=empty_grace_sec, finished_grace_sec=finished_grace_sec
+            ):
+                await _shutdown_table(registry, table, notify_reason=None)
+                logger.info("GC removed abandoned table %s", table.room_id)
+        except Exception:
+            logger.exception("table GC sweep failed")
 
 
 async def abort_table(registry: TableRegistry, table: Table) -> dict:
