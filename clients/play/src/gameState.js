@@ -405,7 +405,15 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         }
         log(`${seatName(p.requester)} が ${seatName(p.target)} とカンビオ`);
         turnOwner = p.requester;
-        emit({ kind: "exchange", requester: p.requester, target: p.target });
+        // Carry my resulting card on the op (captured now, not read from
+        // state later) so confirm mode can show what landed in my hand --
+        // especially after a 馬/家 skip chain resolves onto a new partner.
+        emit({
+          kind: "exchange",
+          requester: p.requester,
+          target: p.target,
+          yourNewCard: p.requester === me || p.target === me ? p.your_new_card : null,
+        });
         break;
       case "deck_exchange_accepted":
         if (p.actor === me) state.yourHand = p.new_card;

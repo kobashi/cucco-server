@@ -19,6 +19,12 @@ export function createQueue() {
   let rate = 1; // >1 while catching up; applied to every tracked animation
   let hurryTimer = null;
   const activeAnimations = new Set();
+  // メッセージ確認モード: when ON, the human drives pacing by clicking each
+  // confirm card, so the auto-advance escape hatches (hurry catch-up, the
+  // fastForward safety nets) must stand down -- otherwise they finish the
+  // confirm gate before the human can press it. clear() (reconnect/rebuild)
+  // still force-finishes everything; that's a hard scene reset, not pacing.
+  let confirmMode = () => false;
 
   const busy = () => running || steps.length > 0;
 
@@ -43,6 +49,11 @@ export function createQueue() {
   // zero duration. Synchronous from the caller's perspective except for
   // microtasks -- by the next frame the scene shows the end state.
   function fastForward() {
+    // In confirm mode the human is deliberately gating on their own clicks;
+    // snapping past a confirm card is exactly what they don't want. No-op
+    // here so the queued reveal step still runs in order once they catch up.
+    // (deal/pot boundaries call clear() to keep that backlog bounded.)
+    if (confirmMode()) return;
     instant = true;
     for (const a of activeAnimations) a.finish();
   }
@@ -52,6 +63,9 @@ export function createQueue() {
       steps.push(step);
       pump();
     },
+    setConfirmMode(getter) {
+      confirmMode = getter;
+    },
     fastForward,
     // Speed the remaining recap up (rather than skipping it) so the player
     // about to act still sees what happened. A realistic backlog compresses
@@ -60,6 +74,10 @@ export function createQueue() {
     // ceiling snaps whatever remains if an animation stalls (e.g. a throttled
     // background tab never settles its `finished` promise).
     hurry() {
+      // Confirm mode: don't rush the recap the human is reading card by card.
+      // Their action buttons still live off state; they just have to click
+      // through the pending confirmations to reach them.
+      if (confirmMode()) return;
       if (!busy()) return;
       rate = HURRY_RATE;
       for (const a of activeAnimations) {

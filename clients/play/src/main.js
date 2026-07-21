@@ -120,15 +120,29 @@ function handleOp(op) {
       // server does not wait for animations, so if the queue is still busy
       // after this grace period, snap the remaining steps and show the pane
       // anyway -- a late pane is bad, a pane the player never sees is worse.
-      setTimeout(() => {
-        if (revealed) return;
-        queue.fastForward();
-        requestAnimationFrame(reveal); // let the flushed ghosts clear first
-      }, RESULT_PANE_GRACE_MS);
+      // Skipped in confirm mode: there the human is deliberately gating on
+      // clicks, so the reveal must stay behind the confirm cards in the queue
+      // rather than jumping the line (drainToLatest at the next deal boundary
+      // keeps the backlog bounded if they fall behind).
+      if (!confirmMode) {
+        setTimeout(() => {
+          if (revealed) return;
+          queue.fastForward();
+          requestAnimationFrame(reveal); // let the flushed ghosts clear first
+        }, RESULT_PANE_GRACE_MS);
+      }
       return;
     }
 
     case "deal_started": {
+      // Confirm-mode backlog bound: a new deal (incl. a new pot's first deal)
+      // is a hard chapter boundary. If the human fell behind on confirm cards
+      // -- e.g. they were out of the pot and the AIs raced through the last
+      // deal -- drop the stale cards and snap to the deal now on the table
+      // rather than making them click through history. clear() empties the
+      // queue and dismisses the active card without setting the instant flag,
+      // so this deal's own dealing animation (enqueued just below) still plays.
+      if (confirmMode) queue.clear();
       const seatsInOrder = (state.table?.seats ?? []).filter((s) => s.in_current_pot !== false).map((s) => s.player_id);
       queue.enqueue(async (instant) => {
         const sc = scene();
@@ -167,7 +181,7 @@ function handleOp(op) {
     }
 
     case "exchange": {
-      const { requester, target } = op;
+      const { requester, target, yourNewCard } = op;
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
@@ -178,6 +192,16 @@ function handleOp(op) {
         ]);
       });
       syncStep();
+      // Confirm mode only: after the swap settles, pause on a card that names
+      // what I received -- the payoff of the whole (possibly skip-chained)
+      // cambio. Enqueued only when confirm mode is on, so normal play gets no
+      // extra banner. banner() itself renders it as the modal confirm card.
+      if (confirmMode && yourNewCard) {
+        queue.enqueue(async (instant) => {
+          if (instant) return;
+          await banner(queue, `交換成立 — あなたの新しい手札: ${yourNewCard}`, "info");
+        });
+      }
       return;
     }
 
@@ -351,6 +375,9 @@ function handleOp(op) {
     }
 
     case "game_ended":
+      // Same chapter-boundary drain: don't leave stale confirm cards stacked
+      // behind the final ranking modal.
+      if (confirmMode) queue.clear();
       sound.play("pot_win");
       syncStep();
       return;
@@ -380,6 +407,7 @@ function mountToolCluster() {
 // アウトを待たせることはない)。設定はlocalStorageで永続化。
 let confirmMode = localStorage.getItem("cucco_confirm_mode") === "1";
 setConfirmModeGetter(() => confirmMode);
+queue.setConfirmMode(() => confirmMode);
 
 function mountConfirmToggle(cluster) {
   const btn = document.createElement("button");
