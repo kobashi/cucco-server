@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cucco-server 管理コンソール</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1c1c1e; --bg: #f4f2ee; --panel: #fff; --border: #d8d4cc;
+    --muted: #6d6960; --accent: #8a2b2b; --ok: #1d7a41; --warn: #a86400; --danger: #b3261e;
+    font-family: system-ui, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #ececec; --bg: #17171a; --panel: #232327; --border: #3b3b40;
+            --muted: #9a958c; --accent: #c9534f; --ok: #4ec27c; --warn: #d9a13a; --danger: #e5645a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-size: 14px; }
+  header {
+    display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: center;
+    padding: .7rem 1rem; border-bottom: 1px solid var(--border); background: var(--panel);
+    position: sticky; top: 0; z-index: 5;
+  }
+  h1 { font-size: 1.05rem; margin: 0 1rem 0 0; }
+  .grow { flex: 1; }
+  input, button, select { font: inherit; }
+  input[type=password], input[type=text] {
+    padding: .35rem .5rem; border: 1px solid var(--border); border-radius: 7px;
+    background: var(--bg); color: var(--fg); min-width: 15rem;
+  }
+  button {
+    padding: .35rem .8rem; border: 1px solid var(--border); border-radius: 7px;
+    background: var(--panel); color: var(--fg); cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  button:disabled { opacity: .5; cursor: default; }
+  .dot { width: .6rem; height: .6rem; border-radius: 50%; display: inline-block; margin-right: .35rem; background: var(--muted); }
+  .dot.on { background: var(--ok); }
+  .dot.off { background: var(--danger); }
+  main { padding: 1rem; }
+  .msg { padding: .6rem .8rem; border-radius: 8px; margin-bottom: .8rem; border: 1px solid var(--border); background: var(--panel); }
+  .msg.error { border-color: var(--danger); color: var(--danger); }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  th, td { padding: .45rem .6rem; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-size: .82rem; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .room { font-weight: 700; letter-spacing: .06em; }
+  .tag { display: inline-block; padding: .05rem .45rem; border-radius: 999px; font-size: .78rem; border: 1px solid var(--border); }
+  .tag.live { color: var(--ok); border-color: var(--ok); }
+  .tag.idle { color: var(--muted); }
+  .tag.eval { color: var(--warn); border-color: var(--warn); }
+  .tag.done { color: var(--danger); border-color: var(--danger); }
+  .warn { color: var(--warn); }
+  .danger { color: var(--danger); }
+  .muted { color: var(--muted); }
+  .empty { padding: 2rem; text-align: center; color: var(--muted); }
+  details.detail { margin-top: 1rem; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: .6rem .8rem; }
+  pre { overflow-x: auto; font-size: .8rem; line-height: 1.45; }
+  .row-actions { display: flex; gap: .35rem; }
+  footer { padding: 0 1rem 2rem; color: var(--muted); font-size: .82rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>cucco-server 管理コンソール</h1>
+  <span><span id="dot" class="dot"></span><span id="conn">未接続</span></span>
+  <input id="token" type="password" placeholder="管理トークン" autocomplete="off">
+  <button id="connect" class="primary">接続</button>
+  <span class="grow"></span>
+  <label><input id="auto" type="checkbox" checked> 自動更新</label>
+  <select id="interval">
+    <option value="2000">2秒</option>
+    <option value="5000" selected>5秒</option>
+    <option value="15000">15秒</option>
+  </select>
+  <button id="refresh">更新</button>
+</header>
+
+<main>
+  <div id="msg" class="msg" hidden></div>
+  <div id="tables"><div class="empty">接続すると卓の一覧が表示されます。</div></div>
+  <details class="detail" id="detailBox" hidden>
+    <summary>卓の詳細 <span id="detailRoom" class="muted"></span></summary>
+    <pre id="detail"></pre>
+  </details>
+</main>
+
+<footer>
+  このコンソールは管理リスナー(127.0.0.1のみ)が配信しています。
+  <strong>このポートを公開・トンネルに載せないでください。</strong>
+  手札は表示されません(観戦者視点の情報のみ)。
+</footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let ws = null, pending = [], timer = null, lastTables = [];
+
+function setConn(state, text) {
+  $("dot").className = "dot " + state;
+  $("conn").textContent = text;
+}
+// Action results are "sticky": the periodic refresh must not wipe them, or an
+// operator who clicks 中止/削除 can miss the outcome before the next poll.
+let stickyMsg = false;
+function showMsg(text, isError, sticky) {
+  const el = $("msg");
+  el.hidden = !text;
+  el.textContent = text || "";
+  el.className = "msg" + (isError ? " error" : "");
+  stickyMsg = Boolean(sticky && text);
+}
+
+// One reply per request, delivered in order by the server.
+function send(req) {
+  return new Promise((resolve, reject) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return reject(new Error("未接続です"));
+    pending.push({ resolve, reject });
+    ws.send(JSON.stringify(Object.assign({ token: $("token").value }, req)));
+  });
+}
+
+function connect() {
+  const token = $("token").value.trim();
+  if (!token) return showMsg("管理トークンを入力してください(サーバー起動ログ、または --admin-token の値)。", true);
+  sessionStorage.setItem("cucco_admin_token", token);
+  if (ws) { try { ws.close(); } catch (e) {} }
+  setConn("", "接続中…");
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/");
+  ws.onopen = () => { setConn("on", "接続済み"); showMsg(""); refresh(); };
+  ws.onclose = () => { setConn("off", "切断"); pending.splice(0).forEach((p) => p.reject(new Error("切断されました"))); };
+  ws.onerror = () => setConn("off", "接続エラー");
+  ws.onmessage = (ev) => {
+    const p = pending.shift();
+    if (!p) return;
+    try { p.resolve(JSON.parse(ev.data)); } catch (e) { p.reject(e); }
+  };
+}
+
+function fmtAge(sec) {
+  if (sec == null) return "—";
+  if (sec < 60) return Math.round(sec) + "秒";
+  if (sec < 3600) return Math.floor(sec / 60) + "分";
+  return Math.floor(sec / 3600) + "時間";
+}
+function fmtTime(epoch) {
+  if (!epoch) return "—";
+  const d = new Date(epoch * 1000);
+  return String(d.getMonth() + 1).padStart(2, "0") + "/" + String(d.getDate()).padStart(2, "0") + " " +
+         String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+function stateTag(t) {
+  if (t.finished) return '<span class="tag done">終了</span>';
+  if (t.game_active) return '<span class="tag live">対局中</span>';
+  if (t.evaluation_started) return '<span class="tag eval">評価中</span>';
+  return '<span class="tag idle">待機</span>';
+}
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// GC removes a table after 10 min with nobody real connected; flag the ones
+// heading that way so the operator can tell "about to be swept" from "stuck".
+// real_absent_sec is only stamped by the GC sweep, so an empty table reads as
+// null until the next sweep -- real_connected is the live truth.
+function absentCell(t) {
+  if (t.real_connected) return '<span class="muted">在席</span>';
+  if (t.real_absent_sec == null) return '<span class="warn">無人(計測中)</span>';
+  const cls = t.real_absent_sec >= 300 ? "danger" : "warn";
+  return '<span class="' + cls + '">無人 ' + fmtAge(t.real_absent_sec) + "</span>";
+}
+
+function renderTables(tables) {
+  lastTables = tables;
+  if (!tables.length) {
+    $("tables").innerHTML = '<div class="empty">卓はありません。</div>';
+    return;
+  }
+  const rows = tables
+    .slice()
+    .sort((a, b) => (b.real_absent_sec ?? -1) - (a.real_absent_sec ?? -1))
+    .map((t) => `<tr>
+      <td class="room">${esc(t.room_id)}</td>
+      <td>${stateTag(t)}</td>
+      <td>${esc(t.mode)}</td>
+      <td class="num">${t.players}<span class="muted"> (AI ${t.bots})</span></td>
+      <td class="num">${t.humans_connected}</td>
+      <td class="num">${t.spectators}</td>
+      <td class="num">${t.pot_number}</td>
+      <td class="num">${fmtAge(t.idle_sec)}</td>
+      <td class="num">${absentCell(t)}</td>
+      <td class="muted">${fmtTime(t.created_at)}</td>
+      <td><div class="row-actions">
+        <button data-act="status" data-room="${esc(t.room_id)}">詳細</button>
+        <button class="danger" data-act="abort" data-room="${esc(t.room_id)}">中止</button>
+        <button class="danger" data-act="remove" data-room="${esc(t.room_id)}">削除</button>
+      </div></td>
+    </tr>`).join("");
+  $("tables").innerHTML = `<table>
+    <thead><tr>
+      <th>卓</th><th>状態</th><th>モード</th><th>参加</th><th>接続人間</th><th>観戦</th>
+      <th>ポット</th><th>無操作</th><th>無人</th><th>作成</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function refresh() {
+  try {
+    const reply = await send({ action: "list_tables" });
+    if (!reply.ok) return showMsg("エラー: " + reply.error, true);
+    if (!stickyMsg) showMsg(""); // keep the last action's result visible
+    renderTables(reply.tables);
+  } catch (e) {
+    showMsg(e.message, true);
+  }
+}
+
+async function act(action, room) {
+  const labels = { abort: "中止(進行中のゲームを強制終了)", remove: "削除" };
+  if (action !== "status" && !confirm(`卓 ${room} を${labels[action]}します。よろしいですか?`)) return;
+  showMsg(""); // drop the previous action's sticky result
+  try {
+    const reply = await send({ action: action === "status" ? "table_status" : action + "_table", room_id: room });
+    if (!reply.ok) return showMsg("エラー: " + reply.error, true, true);
+    if (action === "status") {
+      $("detailBox").hidden = false;
+      $("detailBox").open = true;
+      $("detailRoom").textContent = room;
+      $("detail").textContent = JSON.stringify(reply, null, 2);
+    } else {
+      showMsg(`卓 ${room} を${action === "abort" ? "中止" : "削除"}しました。`, false, true);
+      if ($("detailRoom").textContent === room) $("detailBox").hidden = true;
+    }
+    refresh();
+  } catch (e) {
+    showMsg(e.message, true);
+  }
+}
+
+$("tables").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-act]");
+  if (btn) act(btn.dataset.act, btn.dataset.room);
+});
+$("connect").addEventListener("click", connect);
+$("token").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+$("refresh").addEventListener("click", refresh);
+
+function reschedule() {
+  clearInterval(timer);
+  if ($("auto").checked) timer = setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) refresh(); }, Number($("interval").value));
+}
+$("auto").addEventListener("change", reschedule);
+$("interval").addEventListener("change", reschedule);
+reschedule();
+
+// Token is never embedded by the server -- it stays a real gate. Remembered
+// per browser session only, so closing the tab forgets it.
+const saved = sessionStorage.getItem("cucco_admin_token");
+if (saved) { $("token").value = saved; connect(); }
+</script>
+</body>
+</html>

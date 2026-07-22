@@ -234,3 +234,40 @@ async def test_gc_sweeps_a_bot_only_table_whose_watcher_left():
     await _shutdown_table(registry, table, notify_reason=None)
     assert registry.get(room_id) is None
     assert all(t.done() for t in table.bot_tasks)
+
+
+# -- browser console (HTTP on the admin listener) ---------------------------------
+
+
+class _FakeRequest:
+    def __init__(self, path, headers=None):
+        self.path = path
+        self.headers = headers or {}
+
+
+def test_console_request_serves_the_page():
+    from cucco.server.admin import console_html, handle_console_request
+
+    resp = handle_console_request(None, _FakeRequest("/"))
+    assert resp.status_code == 200
+    assert resp.headers["Content-Type"].startswith("text/html")
+    assert resp.headers["Cache-Control"] == "no-store"
+    assert resp.body == console_html()
+    assert b"cucco-server" in resp.body and b"WebSocket" in resp.body
+    # The token must never be baked into the page -- it stays a real gate.
+    assert b"admin token (this run only)" not in resp.body
+
+
+def test_console_request_lets_websocket_handshakes_through():
+    from cucco.server.admin import handle_console_request
+
+    assert handle_console_request(None, _FakeRequest("/", {"Upgrade": "websocket"})) is None
+    assert handle_console_request(None, _FakeRequest("/", {"Upgrade": "WebSocket"})) is None
+
+
+def test_console_request_404s_other_paths():
+    from cucco.server.admin import handle_console_request
+
+    assert handle_console_request(None, _FakeRequest("/secrets")).status_code == 404
+    # Query strings on the console path still serve the page.
+    assert handle_console_request(None, _FakeRequest("/?x=1")).status_code == 200

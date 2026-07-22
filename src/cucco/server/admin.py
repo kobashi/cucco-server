@@ -35,6 +35,7 @@ import contextlib
 import json
 import logging
 import time
+from pathlib import Path
 
 from cucco.protocol.envelope import build_envelope
 from cucco.protocol.wire_events import translate
@@ -106,6 +107,11 @@ def _table_summary(table: Table) -> dict:
         "pot_number": game.pot_number if game is not None else 0,
         "created_at": table.created_at,
         "idle_sec": round(time.time() - table.last_activity_at, 1),
+        # Live check -- real_absent_sec alone is ambiguous, because the GC only
+        # stamps real_absent_since on its (60s) sweep: a table everyone just
+        # left reads as None until the next sweep, which must not look like
+        # "someone is here".
+        "real_connected": real_participant_connected(table),
         "real_absent_sec": round(time.time() - table.real_absent_since, 1) if table.real_absent_since is not None else None,
     }
 
@@ -225,8 +231,61 @@ async def _cancel(task: asyncio.Task | None) -> None:
         await task
 
 
+# -- browser console -------------------------------------------------------------
+#
+# The same loopback listener also serves a small HTML console over plain HTTP,
+# so the operator can manage tables from a browser instead of the CLI. It lives
+# here (NOT under clients/) on purpose: clients/ is published to GitHub Pages by
+# CI, and an admin console has no business being on the public web. The token is
+# deliberately NOT embedded in the page -- it stays a real gate even if this
+# port is ever reachable from somewhere it shouldn't be.
+CONSOLE_PATHS = ("/", "/index.html", "/console")
+_CONSOLE_FILE = Path(__file__).with_name("admin_console.html")
+
+
+def console_html() -> bytes:
+    """Read the console page. Read per request (not cached) so editing the
+    file during a session takes effect on reload."""
+    return _CONSOLE_FILE.read_bytes()
+
+
+def handle_console_request(connection, request):
+    """`process_request` hook: answer plain HTTP with the console page and let
+    WebSocket handshakes fall through to the admin protocol (return None)."""
+    from websockets.datastructures import Headers
+    from websockets.http11 import Response
+
+    if request.headers.get("Upgrade", "").lower() == "websocket":
+        return None  # not for us: continue the WebSocket handshake
+
+    def _response(status: int, reason: str, body: bytes, content_type: str) -> "Response":
+        return Response(
+            status,
+            reason,
+            Headers(
+                {
+                    "Content-Type": content_type,
+                    "Content-Length": str(len(body)),
+                    # Never let a proxy/browser hold on to an admin surface.
+                    "Cache-Control": "no-store",
+                }
+            ),
+            body,
+        )
+
+    path = request.path.split("?", 1)[0]
+    if path in CONSOLE_PATHS:
+        try:
+            return _response(200, "OK", console_html(), "text/html; charset=utf-8")
+        except OSError:
+            logger.exception("admin console page is missing or unreadable")
+            return _response(500, "Internal Server Error", b"console unavailable\n", "text/plain; charset=utf-8")
+    return _response(404, "Not Found", b"not found\n", "text/plain; charset=utf-8")
+
+
 async def serve_admin(registry: TableRegistry, *, host: str = "127.0.0.1", port: int = 8766, token: str):
-    """Start the admin listener. Returns the websockets server object."""
+    """Start the admin listener (WebSocket protocol + HTML console over HTTP).
+    Returns the websockets server object."""
     import websockets  # local import: keep the module usable without sockets in tests
 
     async def _handler(websocket):
@@ -243,6 +302,8 @@ async def serve_admin(registry: TableRegistry, *, host: str = "127.0.0.1", port:
                 reply = {"ok": False, "error": "internal error (see server log)"}
             await websocket.send(json.dumps(reply, ensure_ascii=False))
 
-    server = await websockets.serve(_handler, host, port)
-    logger.info("admin listener on ws://%s:%d (local only -- do NOT tunnel this port)", host, port)
+    server = await websockets.serve(_handler, host, port, process_request=handle_console_request)
+    logger.info(
+        "admin console on http://%s:%d (local only -- do NOT tunnel this port)", host, port
+    )
     return server
