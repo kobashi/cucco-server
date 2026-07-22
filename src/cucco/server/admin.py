@@ -35,8 +35,10 @@ import contextlib
 import json
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from cucco.persistence import stats
 from cucco.protocol.envelope import build_envelope
 from cucco.protocol.wire_events import translate
 from cucco.server.registry import TableRegistry
@@ -46,14 +48,25 @@ from cucco.server.table import Table
 logger = logging.getLogger("cucco.server.admin")
 
 
-async def handle_admin_request(registry: TableRegistry, token: str, request: dict) -> dict:
+async def handle_admin_request(
+    registry: TableRegistry,
+    token: str,
+    request: dict,
+    *,
+    results_store=None,
+    action_log_dir: Path | None = None,
+) -> dict:
     """One admin request -> one reply dict. Transport-independent so tests
-    can drive it without sockets."""
+    can drive it without sockets. `results_store` / `action_log_dir` enable
+    the stats and maintenance actions; without them those report clearly
+    that persistence isn't configured."""
     if not isinstance(request, dict) or request.get("token") != token:
         return {"ok": False, "error": "invalid admin token"}
     action = request.get("action")
     if action == "list_tables":
         return {"ok": True, "tables": [_table_summary(t) for t in _tables(registry)]}
+    if action in _STATS_ACTIONS or action in _MAINTENANCE_ACTIONS:
+        return _handle_data_request(action, request, results_store, action_log_dir)
 
     room_id = request.get("room_id")
     table = registry.get(room_id) if isinstance(room_id, str) else None
@@ -88,6 +101,111 @@ async def handle_admin_request(registry: TableRegistry, token: str, request: dic
 
 def _tables(registry: TableRegistry) -> list[Table]:
     return [t for t in registry._tables.values() if isinstance(t, Table)]
+
+
+# -- stats & maintenance ---------------------------------------------------------
+
+_STATS_ACTIONS = ("stats_overview", "stats_recent", "stats_evaluations")
+_MAINTENANCE_ACTIONS = ("storage_info", "purge_results", "purge_action_logs")
+
+
+def _career_row(row) -> dict:
+    return {
+        "name": row.name,
+        "player_type": row.player_type,
+        "ai_policy": row.ai_policy,
+        "games": row.games,
+        "wins": row.wins,
+        "win_rate": round(row.win_rate, 4),
+        "avg_rank": round(row.avg_rank, 3),
+        "avg_chips": round(row.avg_chips, 2),
+        "last_played": row.last_played,
+    }
+
+
+def _cutoff_iso(before_days) -> str | None:
+    """`before_days` -> an ISO timestamp, or None for "everything". The stored
+    timestamps are `now_iso()` (UTC with a +00:00 offset), so plain string
+    comparison against another one orders correctly."""
+    if before_days in (None, "", "all"):
+        return None
+    days = float(before_days)
+    if days < 0:
+        raise ValueError("before_days must not be negative")
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+def _action_log_files(action_log_dir: Path | None) -> list[Path]:
+    if action_log_dir is None or not action_log_dir.is_dir():
+        return []
+    return [p for p in action_log_dir.glob("*.jsonl") if p.is_file()]
+
+
+def _handle_data_request(action: str, request: dict, results_store, action_log_dir: Path | None) -> dict:
+    if results_store is None:
+        return {"ok": False, "error": "この構成では成績データが無効です(results_store 未設定)"}
+    limit = request.get("limit", 20)
+    if not isinstance(limit, int) or not 1 <= limit <= 200:
+        return {"ok": False, "error": "'limit' must be an integer between 1 and 200"}
+
+    try:
+        if action in _STATS_ACTIONS:
+            conn = stats.open_readonly(results_store.path)  # read-only: safe while games run
+            try:
+                if action == "stats_overview":
+                    return {
+                        "ok": True,
+                        "by_name": [_career_row(r) for r in stats.career_by_name(conn)],
+                        "by_policy": [_career_row(r) for r in stats.career_by_policy(conn)],
+                    }
+                if action == "stats_recent":
+                    return {
+                        "ok": True,
+                        "games": [
+                            {
+                                "game": dict(entry["game"]),
+                                "standings": [dict(s) for s in entry["standings"]],
+                            }
+                            for entry in stats.recent_games(conn, limit=limit)
+                        ],
+                    }
+                return {"ok": True, "runs": stats.evaluation_runs(conn, limit=limit)}
+            finally:
+                conn.close()
+
+        if action == "storage_info":
+            files = _action_log_files(action_log_dir)
+            summary = results_store.storage_summary()
+            summary.update(
+                action_log_dir=str(action_log_dir) if action_log_dir else None,
+                action_log_files=len(files),
+                action_log_bytes=sum(p.stat().st_size for p in files),
+            )
+            return {"ok": True, "storage": summary}
+
+        cutoff = _cutoff_iso(request.get("before_days"))
+        if action == "purge_results":
+            deleted = results_store.delete_results(before_iso=cutoff)
+            logger.warning("admin purged results (before=%s): %s", cutoff or "ALL", deleted)
+            return {"ok": True, "deleted": deleted, "before": cutoff}
+
+        # purge_action_logs: file cleanup, by modification time.
+        threshold = None if cutoff is None else datetime.fromisoformat(cutoff).timestamp()
+        removed, freed = 0, 0
+        for path in _action_log_files(action_log_dir):
+            stat = path.stat()
+            if threshold is not None and stat.st_mtime >= threshold:
+                continue
+            with contextlib.suppress(OSError):
+                path.unlink()
+                removed += 1
+                freed += stat.st_size
+        logger.warning("admin purged action logs (before=%s): %d files, %d bytes", cutoff or "ALL", removed, freed)
+        return {"ok": True, "removed_files": removed, "freed_bytes": freed, "before": cutoff}
+    except FileNotFoundError as exc:
+        return {"ok": False, "error": str(exc)}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def _table_summary(table: Table) -> dict:
@@ -283,7 +401,15 @@ def handle_console_request(connection, request):
     return _response(404, "Not Found", b"not found\n", "text/plain; charset=utf-8")
 
 
-async def serve_admin(registry: TableRegistry, *, host: str = "127.0.0.1", port: int = 8766, token: str):
+async def serve_admin(
+    registry: TableRegistry,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8766,
+    token: str,
+    results_store=None,
+    action_log_dir: Path | None = None,
+):
     """Start the admin listener (WebSocket protocol + HTML console over HTTP).
     Returns the websockets server object."""
     import websockets  # local import: keep the module usable without sockets in tests
@@ -296,7 +422,9 @@ async def serve_admin(registry: TableRegistry, *, host: str = "127.0.0.1", port:
                 await websocket.send(json.dumps({"ok": False, "error": "invalid JSON"}))
                 continue
             try:
-                reply = await handle_admin_request(registry, token, request)
+                reply = await handle_admin_request(
+                    registry, token, request, results_store=results_store, action_log_dir=action_log_dir
+                )
             except Exception:
                 logger.exception("admin request failed")
                 reply = {"ok": False, "error": "internal error (see server log)"}

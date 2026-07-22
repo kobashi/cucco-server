@@ -57,7 +57,9 @@ async def serve(
         token = admin_token or uuid.uuid4().hex
         if admin_token is None:
             logger.info("admin token (this run only): %s", token)
-        admin_server = await serve_admin(registry, port=admin_port, token=token)
+        admin_server = await serve_admin(
+            registry, port=admin_port, token=token, results_store=results_store, action_log_dir=action_log_dir
+        )
 
     # Background sweep that removes abandoned/idle tables (a bot-only table
     # rematching after its watcher left, an unjoined lobby, a crashed room).

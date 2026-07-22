@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 
 import pytest
@@ -271,3 +272,101 @@ def test_console_request_404s_other_paths():
     assert handle_console_request(None, _FakeRequest("/secrets")).status_code == 404
     # Query strings on the console path still serve the page.
     assert handle_console_request(None, _FakeRequest("/?x=1")).status_code == 200
+
+
+# -- stats & maintenance ----------------------------------------------------------
+
+
+@pytest.fixture
+def store_and_logs(tmp_path):
+    """A throwaway results store + action-log dir with one recorded game."""
+    from cucco.persistence.results_store import PlayerInfo, ResultsStore
+
+    store = ResultsStore(tmp_path / "results.db")
+    logs = tmp_path / "action_logs"
+    logs.mkdir()
+    for name in ("fresh-1.jsonl", "fresh-2.jsonl"):
+        (logs / name).write_text("{}\n")
+    stale = logs / "stale.jsonl"
+    stale.write_text("{}\n")
+    old = time.time() - 86400 * 30
+    os.utime(stale, (old, old))
+    store.record_game_ended(
+        table_id="T1", mode="normal",
+        players=[PlayerInfo("a", "Alice", "human"), PlayerInfo("b", "AI-matrix-1", "ai", ai_policy="matrix")],
+        ranking=(("a", 30), ("b", 10)), action_log_path=None,
+    )
+    return store, logs
+
+
+async def _data_call(store, logs, **req):
+    return await handle_admin_request(
+        TableRegistry(), TOKEN, {"token": TOKEN, **req}, results_store=store, action_log_dir=logs
+    )
+
+
+@pytest.mark.asyncio
+async def test_stats_actions_report_careers_and_games(store_and_logs):
+    store, logs = store_and_logs
+    overview = await _data_call(store, logs, action="stats_overview")
+    assert overview["ok"]
+    assert [r["name"] for r in overview["by_name"]] == ["Alice", "AI-matrix-1"]
+    assert overview["by_policy"][0]["name"] == "matrix"
+    assert overview["by_name"][0]["wins"] == 1
+
+    recent = await _data_call(store, logs, action="stats_recent", limit=5)
+    assert recent["ok"] and recent["games"][0]["game"]["table_id"] == "T1"
+    assert [s["final_rank"] for s in recent["games"][0]["standings"]] == [1, 2]
+
+    evals = await _data_call(store, logs, action="stats_evaluations", limit=5)
+    assert evals["ok"] and evals["runs"] == []
+
+
+@pytest.mark.asyncio
+async def test_storage_info_counts_db_and_logs(store_and_logs):
+    store, logs = store_and_logs
+    reply = await _data_call(store, logs, action="storage_info")
+    assert reply["ok"]
+    s = reply["storage"]
+    assert s["games"] == 1 and s["participants"] == 2
+    assert s["db_bytes"] > 0
+    assert s["action_log_files"] == 3 and s["action_log_bytes"] > 0
+
+
+@pytest.mark.asyncio
+async def test_purge_action_logs_by_age_then_all(store_and_logs):
+    store, logs = store_and_logs
+    dated = await _data_call(store, logs, action="purge_action_logs", before_days=7)
+    assert dated["ok"] and dated["removed_files"] == 1  # only the 30-day-old one
+    assert len(list(logs.glob("*.jsonl"))) == 2
+
+    everything = await _data_call(store, logs, action="purge_action_logs")
+    assert everything["ok"] and everything["removed_files"] == 2
+    assert list(logs.glob("*.jsonl")) == []
+
+
+@pytest.mark.asyncio
+async def test_purge_results_keeps_recent_and_then_clears_all(store_and_logs):
+    store, logs = store_and_logs
+    # The game was just recorded, so a 7-day cutoff must not touch it.
+    dated = await _data_call(store, logs, action="purge_results", before_days=7)
+    assert dated["ok"] and dated["deleted"]["games"] == 0
+    assert (await _data_call(store, logs, action="storage_info"))["storage"]["games"] == 1
+
+    everything = await _data_call(store, logs, action="purge_results")
+    assert everything["ok"]
+    assert everything["deleted"] == {"games": 1, "participants": 2, "evaluation_summaries": 0}
+    after = (await _data_call(store, logs, action="storage_info"))["storage"]
+    assert after["games"] == 0 and after["participants"] == 0
+
+
+@pytest.mark.asyncio
+async def test_data_actions_need_a_store_and_validate_limit(store_and_logs):
+    store, logs = store_and_logs
+    # Not configured: a clear refusal rather than a crash.
+    no_store = await handle_admin_request(TableRegistry(), TOKEN, {"token": TOKEN, "action": "stats_overview"})
+    assert not no_store["ok"] and "results_store" in no_store["error"]
+    bad = await _data_call(store, logs, action="stats_recent", limit=9999)
+    assert not bad["ok"] and "limit" in bad["error"]
+    negative = await _data_call(store, logs, action="purge_results", before_days=-1)
+    assert not negative["ok"]

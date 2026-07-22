@@ -61,6 +61,26 @@
   pre { overflow-x: auto; font-size: .8rem; line-height: 1.45; }
   .row-actions { display: flex; gap: .35rem; }
   footer { padding: 0 1rem 2rem; color: var(--muted); font-size: .82rem; }
+  nav.tabs { display: flex; gap: .3rem; padding: .5rem 1rem 0; border-bottom: 1px solid var(--border); background: var(--panel); }
+  nav.tabs button {
+    border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0;
+    background: transparent; padding: .4rem 1rem;
+  }
+  nav.tabs button[aria-selected="true"] { background: var(--bg); font-weight: 700; }
+  section.panel { margin-bottom: 1.5rem; }
+  section.panel h2 { font-size: .95rem; margin: 0 0 .4rem; }
+  .cards { display: flex; flex-wrap: wrap; gap: .8rem; margin-bottom: 1rem; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: .6rem .9rem; min-width: 9rem;
+  }
+  .card .k { color: var(--muted); font-size: .78rem; }
+  .card .v { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .danger-zone { border: 1px solid var(--danger); border-radius: 8px; padding: .8rem 1rem; background: var(--panel); }
+  .danger-zone h2 { color: var(--danger); }
+  .form-row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .5rem 0; }
+  input[type=number] { width: 6rem; padding: .3rem .4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+  .hint { color: var(--muted); font-size: .82rem; }
 </style>
 </head>
 <body>
@@ -79,13 +99,57 @@
   <button id="refresh">更新</button>
 </header>
 
+<nav class="tabs">
+  <button data-tab="tables" aria-selected="true">卓</button>
+  <button data-tab="stats" aria-selected="false">成績</button>
+  <button data-tab="maint" aria-selected="false">メンテナンス</button>
+</nav>
+
 <main>
   <div id="msg" class="msg" hidden></div>
-  <div id="tables"><div class="empty">接続すると卓の一覧が表示されます。</div></div>
-  <details class="detail" id="detailBox" hidden>
-    <summary>卓の詳細 <span id="detailRoom" class="muted"></span></summary>
-    <pre id="detail"></pre>
-  </details>
+
+  <div id="tab-tables">
+    <div id="tables"><div class="empty">接続すると卓の一覧が表示されます。</div></div>
+    <details class="detail" id="detailBox" hidden>
+      <summary>卓の詳細 <span id="detailRoom" class="muted"></span></summary>
+      <pre id="detail"></pre>
+    </details>
+  </div>
+
+  <div id="tab-stats" hidden>
+    <div class="form-row">
+      <button id="statsLoad" class="primary">成績を読み込む</button>
+      <span class="hint">表示名には実名が含まれることがあります。画面の共有・保存に注意してください。</span>
+    </div>
+    <section class="panel"><h2>プレイヤー別の通算成績</h2><div id="byName"><div class="empty">未読み込み</div></div></section>
+    <section class="panel"><h2>内蔵AI方策別の成績</h2><div id="byPolicy"><div class="empty">未読み込み</div></div></section>
+    <section class="panel"><h2>直近のゲーム</h2><div id="recent"><div class="empty">未読み込み</div></div></section>
+    <section class="panel"><h2>評価モードの実行</h2><div id="evals"><div class="empty">未読み込み</div></div></section>
+  </div>
+
+  <div id="tab-maint" hidden>
+    <div class="form-row"><button id="storageLoad" class="primary">保存状況を読み込む</button></div>
+    <div class="cards" id="storage"></div>
+    <div class="hint" id="storagePaths"></div>
+
+    <section class="panel danger-zone" style="margin-top:1.2rem">
+      <h2>データの削除(取り消せません)</h2>
+      <p class="hint">
+        削除は元に戻せません。実行前に <code>data/</code> のバックアップを取ってください。
+        行動ログは対局のリプレイ用データで、成績DBとは別に増え続けます。
+      </p>
+      <div class="form-row">
+        <label><input type="number" id="resultsDays" min="1" value="90"> 日より古い成績を削除</label>
+        <button class="danger" id="purgeResultsOld">実行</button>
+        <button class="danger" id="purgeResultsAll">成績を全件削除</button>
+      </div>
+      <div class="form-row">
+        <label><input type="number" id="logsDays" min="1" value="30"> 日より古い行動ログを削除</label>
+        <button class="danger" id="purgeLogsOld">実行</button>
+        <button class="danger" id="purgeLogsAll">行動ログを全件削除</button>
+      </div>
+    </section>
+  </div>
 </main>
 
 <footer>
@@ -245,9 +309,136 @@ $("connect").addEventListener("click", connect);
 $("token").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
 $("refresh").addEventListener("click", refresh);
 
+// -- tabs ----------------------------------------------------------------------
+let activeTab = "tables";
+document.querySelector("nav.tabs").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-tab]");
+  if (!btn) return;
+  activeTab = btn.dataset.tab;
+  document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", String(b === btn)));
+  ["tables", "stats", "maint"].forEach((t) => { $("tab-" + t).hidden = t !== activeTab; });
+  reschedule(); // polling only makes sense on the live table list
+});
+
+// -- stats ---------------------------------------------------------------------
+function careerTable(rows) {
+  if (!rows.length) return '<div class="empty">記録がありません。</div>';
+  return `<table><thead><tr>
+      <th>名前</th><th>種別</th><th>対局</th><th>勝利</th><th>勝率</th><th>平均順位</th><th>平均チップ</th><th>最終対局</th>
+    </tr></thead><tbody>` +
+    rows.map((r) => `<tr>
+      <td>${esc(r.name)}</td>
+      <td class="muted">${esc(r.ai_policy || r.player_type)}</td>
+      <td class="num">${r.games}</td><td class="num">${r.wins}</td>
+      <td class="num">${r.win_rate.toFixed(3)}</td>
+      <td class="num">${r.avg_rank.toFixed(2)}</td>
+      <td class="num">${r.avg_chips.toFixed(1)}</td>
+      <td class="muted">${esc((r.last_played || "").slice(0, 16).replace("T", " "))}</td>
+    </tr>`).join("") + "</tbody></table>";
+}
+
+function recentTable(games) {
+  if (!games.length) return '<div class="empty">記録がありません。</div>';
+  return `<table><thead><tr><th>終了</th><th>卓</th><th>モード</th><th>結果</th></tr></thead><tbody>` +
+    games.map((g) => {
+      const standings = g.standings
+        .map((s) => `${s.final_rank}. ${esc(s.name)}${s.ai_policy ? ' <span class="muted">(' + esc(s.ai_policy) + ")</span>" : ""} ${s.final_chips}枚`)
+        .join(" / ");
+      return `<tr>
+        <td class="muted">${esc((g.game.ended_at || "").slice(0, 16).replace("T", " "))}</td>
+        <td class="room">${esc(g.game.table_id)}</td>
+        <td class="muted">${esc(g.game.mode)}</td>
+        <td style="white-space:normal">${standings}</td>
+      </tr>`;
+    }).join("") + "</tbody></table>";
+}
+
+function evalTable(runs) {
+  if (!runs.length) return '<div class="empty">記録がありません。</div>';
+  return `<table><thead><tr><th>記録</th><th>卓</th><th>ゲーム数</th><th>プレイヤー(勝率/平均順位)</th></tr></thead><tbody>` +
+    runs.map((r) => {
+      const players = Object.entries(r.summary.players || {})
+        .map(([pid, st]) => `${esc(pid.slice(0, 8))}: ${st.win_rate.toFixed(2)}/${st.avg_rank.toFixed(2)}`)
+        .join(" / ");
+      return `<tr>
+        <td class="muted">${esc((r.recorded_at || "").slice(0, 16).replace("T", " "))}</td>
+        <td class="room">${esc(r.table_id)}</td>
+        <td class="num">${r.games_played}/${r.game_count}</td>
+        <td style="white-space:normal" class="muted">${players}</td>
+      </tr>`;
+    }).join("") + "</tbody></table>";
+}
+
+async function loadStats() {
+  try {
+    const overview = await send({ action: "stats_overview" });
+    if (!overview.ok) return showMsg("エラー: " + overview.error, true, true);
+    $("byName").innerHTML = careerTable(overview.by_name);
+    $("byPolicy").innerHTML = careerTable(overview.by_policy);
+    const recent = await send({ action: "stats_recent", limit: 20 });
+    if (recent.ok) $("recent").innerHTML = recentTable(recent.games);
+    const evals = await send({ action: "stats_evaluations", limit: 10 });
+    if (evals.ok) $("evals").innerHTML = evalTable(evals.runs);
+    showMsg("");
+  } catch (e) { showMsg(e.message, true); }
+}
+$("statsLoad").addEventListener("click", loadStats);
+
+// -- maintenance ---------------------------------------------------------------
+const fmtBytes = (n) => (n >= 1 << 30 ? (n / (1 << 30)).toFixed(1) + " GB"
+  : n >= 1 << 20 ? (n / (1 << 20)).toFixed(1) + " MB"
+  : n >= 1 << 10 ? (n / (1 << 10)).toFixed(1) + " KB" : n + " B");
+
+async function loadStorage() {
+  try {
+    const reply = await send({ action: "storage_info" });
+    if (!reply.ok) return showMsg("エラー: " + reply.error, true, true);
+    const s = reply.storage;
+    const card = (k, v) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+    $("storage").innerHTML =
+      card("ゲーム記録", s.games) + card("参加記録", s.participants) +
+      card("評価モード", s.evaluation_summaries) + card("DBサイズ", fmtBytes(s.db_bytes)) +
+      card("行動ログ", s.action_log_files + " 件") + card("ログ容量", fmtBytes(s.action_log_bytes));
+    $("storagePaths").innerHTML =
+      `DB: <code>${esc(s.db_path)}</code> / 行動ログ: <code>${esc(s.action_log_dir || "(なし)")}</code>` +
+      (s.oldest_game ? `<br>最古の記録: ${esc(s.oldest_game.slice(0, 16).replace("T", " "))} / 最新: ${esc((s.newest_game || "").slice(0, 16).replace("T", " "))}` : "");
+    showMsg("");
+  } catch (e) { showMsg(e.message, true); }
+}
+$("storageLoad").addEventListener("click", loadStorage);
+
+// Deleting research data is irreversible: a plain confirm for the dated purge,
+// and a typed confirmation for "everything".
+async function purge(action, days, label) {
+  if (days == null) {
+    if (prompt(`${label}を全件削除します。取り消せません。\n実行するには「削除」と入力してください。`) !== "削除") return;
+  } else if (!confirm(`${days}日より古い${label}を削除します。取り消せません。よろしいですか?`)) {
+    return;
+  }
+  showMsg("");
+  try {
+    const req = { action };
+    if (days != null) req.before_days = days;
+    const reply = await send(req);
+    if (!reply.ok) return showMsg("エラー: " + reply.error, true, true);
+    const done = reply.deleted
+      ? `成績を削除しました(ゲーム${reply.deleted.games}件・参加${reply.deleted.participants}件・評価${reply.deleted.evaluation_summaries}件)。`
+      : `行動ログを削除しました(${reply.removed_files}件・${fmtBytes(reply.freed_bytes)})。`;
+    showMsg(done, false, true);
+    loadStorage();
+  } catch (e) { showMsg(e.message, true); }
+}
+const daysOf = (id) => Math.max(1, Number($(id).value) || 1);
+$("purgeResultsOld").addEventListener("click", () => purge("purge_results", daysOf("resultsDays"), "成績"));
+$("purgeResultsAll").addEventListener("click", () => purge("purge_results", null, "成績"));
+$("purgeLogsOld").addEventListener("click", () => purge("purge_action_logs", daysOf("logsDays"), "行動ログ"));
+$("purgeLogsAll").addEventListener("click", () => purge("purge_action_logs", null, "行動ログ"));
+
 function reschedule() {
   clearInterval(timer);
-  if ($("auto").checked) timer = setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) refresh(); }, Number($("interval").value));
+  if ($("auto").checked && activeTab === "tables") {
+    timer = setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) refresh(); }, Number($("interval").value));
+  }
 }
 $("auto").addEventListener("change", reschedule);
 $("interval").addEventListener("change", reschedule);
