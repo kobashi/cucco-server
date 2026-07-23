@@ -22,13 +22,15 @@ export function createTableScene(root) {
   root.innerHTML = `
     <div class="felt">
       <div class="center">
-        <div class="deck" id="scene-deck">
-          <div class="card card-back"></div>
-          <div class="deck-count" id="deck-count"></div>
-        </div>
-        <div class="pot" id="scene-pot">
-          <div class="pot-stack">💰</div>
-          <div class="pot-count" id="pot-count"></div>
+        <div class="pile-area">
+          <div class="deck" id="scene-deck">
+            <div class="card card-back"></div>
+            <div class="deck-count" id="deck-count"></div>
+          </div>
+          <div class="pot" id="scene-pot">
+            <div class="pot-stack">💰</div>
+            <div class="pot-count" id="pot-count"></div>
+          </div>
         </div>
         <div class="discard" id="scene-discard"></div>
       </div>
