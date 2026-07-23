@@ -2,16 +2,20 @@
 // (ニャー! / スキップ / クク宣言!! / 失格) and seat shakes. All animations are
 // registered with the queue so fastForward() can finish them instantly.
 
-// メッセージ確認モード: when the getter says ON, banners become modal cards
-// that wait for a 確認 click instead of flashing past. main.js installs the
+// メッセージ確認モード (3-state): "off" | "min" | "full". In "full" every
+// banner becomes a modal confirm card; in "min" only banners flagged
+// `important` do (deal-changing events -- 失格 / クク宣言), while events an
+// animation + sound already make obvious just flash by. main.js installs the
 // getter (the toggle lives in the tool cluster).
-let confirmModeOn = () => false;
+let confirmModeGetter = () => "off";
 export function setConfirmModeGetter(getter) {
-  confirmModeOn = getter;
+  confirmModeGetter = getter;
 }
 
-export function banner(queueRef, text, tone = "info", duration = 1100) {
-  if (confirmModeOn()) return confirmBanner(queueRef, text, tone);
+export function banner(queueRef, text, tone = "info", duration = 1100, important = false) {
+  const mode = confirmModeGetter();
+  const asModal = mode === "full" || (mode === "min" && important);
+  if (asModal) return confirmBanner(queueRef, text, tone);
   return new Promise((resolve) => {
     const el = document.createElement("div");
     el.className = `fx-banner ${tone}`;

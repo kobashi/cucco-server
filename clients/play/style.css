@@ -299,6 +299,12 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
   background: var(--accent); border: 1px solid var(--accent); color: var(--accent-fg);
 }
 #confirm-toggle.off { background: var(--panel-bg); color: var(--muted); border-color: var(--border); }
+/* 最小 sits between off and full -- a muted-gold to read as "partial". */
+#confirm-toggle[data-mode="min"] { background: #b8860b; border-color: #b8860b; color: #fff; }
+#auto-continue-toggle {
+  background: var(--accent); border: 1px solid var(--accent); color: var(--accent-fg);
+}
+#auto-continue-toggle.off { background: var(--panel-bg); color: var(--muted); border-color: var(--border); }
 
 .conn-banner {
   position: sticky; top: 0; z-index: 30; padding: 0.5rem 1rem; text-align: center;

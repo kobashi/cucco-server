@@ -104,6 +104,14 @@ function handleOp(op) {
       return;
 
     case "prompt":
+      // 子供の時間 自動続行: a continue prompt only ever appears in the child's
+      // time, so if the toggle is on, pay and continue without showing it.
+      // (autoContinue is declared below; hoisted `let` initialized by then.)
+      if (autoContinue && state.continuePrompt) {
+        actions.sendContinue(true);
+        showToast("子供の時間: チップを払って自動で続行しました");
+        return;
+      }
       // Don't hard-snap the scene -- speed the pending effect chain up so I
       // still see what just happened before deciding. My action buttons are
       // already live off state, so this never blocks me.
@@ -137,7 +145,7 @@ function handleOp(op) {
       // clicks, so the reveal must stay behind the confirm cards in the queue
       // rather than jumping the line (drainToLatest at the next deal boundary
       // keeps the backlog bounded if they fall behind).
-      if (!confirmMode) {
+      if (confirmMode === "off") {
         setTimeout(() => {
           if (revealed) return;
           queue.fastForward();
@@ -155,7 +163,7 @@ function handleOp(op) {
       // rather than making them click through history. clear() empties the
       // queue and dismisses the active card without setting the instant flag,
       // so this deal's own dealing animation (enqueued just below) still plays.
-      if (confirmMode) queue.clear();
+      if (confirmMode !== "off") queue.clear();
       const seatsInOrder = (state.table?.seats ?? []).filter((s) => s.in_current_pot !== false).map((s) => s.player_id);
       queue.enqueue(async (instant) => {
         const sc = scene();
@@ -209,7 +217,7 @@ function handleOp(op) {
       // was the exchange TARGET -- someone else's cambio landed on me, which I
       // didn't initiate and might miss. When I'm the turn player (requester) I
       // chose the cambio and watch my own card flip, so the modal is redundant.
-      if (confirmMode && yourNewCard && target === state.playerId) {
+      if (confirmMode === "full" && yourNewCard && target === state.playerId) {
         queue.enqueue(async (instant) => {
           if (instant) return;
           await banner(queue, `交換成立 — あなたの新しい手札: ${yourNewCard}`, "info");
@@ -296,7 +304,8 @@ function handleOp(op) {
         const cardEl = sc.slotEl(player)?.querySelector(".card-face");
         await flipReveal(queue, cardEl);
         await effectMotion(queue, cardEl, "cucco");
-        await banner(queue, `クク宣言!! — ${game.seatName(player)}`, "cucco", 1500);
+        // important=true: ends the deal, so it gets a modal even in 最小 mode.
+        await banner(queue, `クク宣言!! — ${game.seatName(player)}`, "cucco", 1500, true);
         await pause(queue, REVEAL_HOLD_MS);
       });
       syncStep();
@@ -318,13 +327,14 @@ function handleOp(op) {
           const cardEl = slot.querySelector(".card-face");
           await flipReveal(queue, cardEl);
           if (card === "道化") await effectMotion(queue, cardEl, "joker");
-          await banner(queue, `${game.seatName(player)} 失格 — ${label}`, "danger");
+          // important=true: a player leaving the deal is worth a modal in 最小.
+          await banner(queue, `${game.seatName(player)} 失格 — ${label}`, "danger", 1100, true);
           await pause(queue, REVEAL_HOLD_MS);
           sound.play("deal");
           await fly(queue, { fromEl: slot, toEl: sc.discardEl(), html: cardHTML(card), duration: FLIGHT_MS });
         } else {
           // Disclosure deferred (card hidden): still announce who and why.
-          await banner(queue, `${game.seatName(player)} 失格 — ${label}`, "danger");
+          await banner(queue, `${game.seatName(player)} 失格 — ${label}`, "danger", 1100, true);
           await pause(queue, REVEAL_HOLD_MS);
         }
       });
@@ -394,7 +404,7 @@ function handleOp(op) {
     case "game_ended":
       // Same chapter-boundary drain: don't leave stale confirm cards stacked
       // behind the final ranking modal.
-      if (confirmMode) queue.clear();
+      if (confirmMode !== "off") queue.clear();
       sound.play("pot_win");
       syncStep();
       return;
@@ -418,30 +428,72 @@ function mountToolCluster() {
   return cluster;
 }
 
-// メッセージ確認モード: ON にすると進行メッセージ(バナー)が1枚ずつモーダル
-// カードになり、確認ボタンを押すまで次の演出へ進まない(自分のプロンプト
-// 到着時は既存のfast-forward規則で自動解除されるので、サーバーのタイム
-// アウトを待たせることはない)。設定はlocalStorageで永続化。
-let confirmMode = localStorage.getItem("cucco_confirm_mode") === "1";
+// メッセージ確認モード (3-state): "off" | "min" | "full".
+//  - full: 進行メッセージが1枚ずつモーダルになり、確認を押すまで進まない
+//  - min : 失格・クク宣言などディールを左右する重要イベントだけモーダル。
+//          アニメと効果音で分かる交換・スキップ等は自動で流れる
+//  - off : すべて自動で流れる
+// 自分のプロンプト到着時は既存のfast-forward規則で解除され、サーバーの
+// タイムアウトを待たせない。設定はlocalStorageで永続化(旧 "1"/"0" も移行)。
+const CONFIRM_MODES = ["off", "min", "full"];
+function loadConfirmMode() {
+  const v = localStorage.getItem("cucco_confirm_mode");
+  if (v === "1") return "full"; // migrate the old boolean
+  if (v === "0" || v == null) return "off";
+  return CONFIRM_MODES.includes(v) ? v : "off";
+}
+let confirmMode = loadConfirmMode();
+const confirmActive = () => confirmMode !== "off";
 setConfirmModeGetter(() => confirmMode);
-queue.setConfirmMode(() => confirmMode);
+queue.setConfirmMode(confirmActive);
+
+const CONFIRM_LABELS = {
+  off: ['💨', ' 確認 OFF', "メッセージ確認: OFF — すべて自動で流れる(クリックで切替)"],
+  min: ['🔔', ' 確認 最小', "メッセージ確認: 最小 — 失格・クク宣言など重要な場面だけ確認(クリックで切替)"],
+  full: ['✋', ' 確認 フル', "メッセージ確認: フル — 進行メッセージを1枚ずつ確認(クリックで切替)"],
+};
 
 function mountConfirmToggle(cluster) {
   const btn = document.createElement("button");
   btn.id = "confirm-toggle";
   btn.type = "button";
   const refresh = () => {
-    btn.innerHTML = confirmMode
-      ? '✋<span class="tool-label"> 確認モード ON</span>'
-      : '💨<span class="tool-label"> 確認モード OFF</span>';
-    btn.title = confirmMode
-      ? "メッセージ確認モード: ON — 進行メッセージを1枚ずつ確認(クリックでOFF)"
-      : "メッセージ確認モード: OFF — 進行メッセージは自動で流れる(クリックでON)";
-    btn.classList.toggle("off", !confirmMode);
+    const [icon, label, title] = CONFIRM_LABELS[confirmMode];
+    btn.innerHTML = `${icon}<span class="tool-label">${label}</span>`;
+    btn.title = title;
+    btn.classList.toggle("off", confirmMode === "off");
+    btn.dataset.mode = confirmMode;
   };
   btn.addEventListener("click", () => {
-    confirmMode = !confirmMode;
-    localStorage.setItem("cucco_confirm_mode", confirmMode ? "1" : "0");
+    confirmMode = CONFIRM_MODES[(CONFIRM_MODES.indexOf(confirmMode) + 1) % CONFIRM_MODES.length];
+    localStorage.setItem("cucco_confirm_mode", confirmMode);
+    refresh();
+  });
+  refresh();
+  cluster.appendChild(btn);
+}
+
+// 子供の時間 自動続行: ON にすると、子供の時間(1〜3ディール目)の敗者に
+// 出る「続行しますか?」を、必ずチップを払って続行するよう自動で応答する
+// (続行確認はそもそも子供の時間にしか出ないので、常に続行=true でよい)。
+let autoContinue = localStorage.getItem("cucco_auto_continue") === "1";
+
+function mountAutoContinueToggle(cluster) {
+  const btn = document.createElement("button");
+  btn.id = "auto-continue-toggle";
+  btn.type = "button";
+  const refresh = () => {
+    btn.innerHTML = autoContinue
+      ? '▶️<span class="tool-label"> 子の時間 自動続行</span>'
+      : '⏸️<span class="tool-label"> 子の時間 手動</span>';
+    btn.title = autoContinue
+      ? "子供の時間: チップを払って自動で続行する(クリックで手動に)"
+      : "子供の時間: 続行/離脱を毎回選ぶ(クリックで自動続行に)";
+    btn.classList.toggle("off", !autoContinue);
+  };
+  btn.addEventListener("click", () => {
+    autoContinue = !autoContinue;
+    localStorage.setItem("cucco_auto_continue", autoContinue ? "1" : "0");
     refresh();
   });
   refresh();
@@ -831,6 +883,7 @@ wireConnection();
 conn.connect();
 const toolCluster = mountToolCluster();
 mountConfirmToggle(toolCluster);
+mountAutoContinueToggle(toolCluster);
 mountCardReference(toolCluster);
 mountSoundToggle(toolCluster);
 
