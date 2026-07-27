@@ -190,6 +190,47 @@ async def test_reconnect_with_session_token_restores_your_hand():
 
 
 @pytest.mark.asyncio
+async def test_reconnect_and_disconnect_broadcast_presence_to_the_rest_of_the_table():
+    # The 「切断」 badge has to clear the moment a player is back, not at the
+    # next deal boundary's state_snapshot -- and the notice must be a presence
+    # delta, not a snapshot (a snapshot makes clients rebuild the whole scene
+    # and drop any animation in flight).
+    registry = TableRegistry()
+
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "ai"}))
+    await creator.handle_message(build_envelope("create_table", {"starting_chips": 25}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    creator_token = creator.session.session_token
+    creator_id = creator.session.player_id
+
+    other = ConnectionHandler(FakeConnection(), registry)
+    await other.handle_message(build_envelope("identify", {"name": "Bob", "player_type": "ai"}))
+    await other.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    snapshots_from_joining = sum(1 for m in other.connection.sent if m["type"] == "state_snapshot")
+
+    # Alice drops: Bob hears about it immediately.
+    await creator.on_disconnect()
+    presence = [m for m in other.connection.sent if m["type"] == "presence_changed"]
+    assert presence[-1]["payload"] == {"player_id": creator_id, "connected": False}
+
+    # Alice reconnects with her token: Bob hears about that too.
+    reconnecting = ConnectionHandler(FakeConnection(), registry)
+    await reconnecting.handle_message(
+        build_envelope("join_table", {"room_id": room_id, "session_token": creator_token})
+    )
+    presence = [m for m in other.connection.sent if m["type"] == "presence_changed"]
+    assert presence[-1]["payload"] == {"player_id": creator_id, "connected": True}
+    # The reconnecting player gets their own snapshot; Bob got none beyond the
+    # one his own join produced.
+    assert sum(1 for m in other.connection.sent if m["type"] == "state_snapshot") == snapshots_from_joining
+    assert any(m["type"] == "state_snapshot" for m in reconnecting.connection.sent)
+    # And no seat is told about its own presence.
+    assert not any(m["type"] == "presence_changed" for m in reconnecting.connection.sent)
+
+
+@pytest.mark.asyncio
 async def test_spectator_cannot_declare_ready():
     registry = TableRegistry()
     handler = ConnectionHandler(FakeConnection(), registry)

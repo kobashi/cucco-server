@@ -60,6 +60,23 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 .ws-host-details { margin-top: 1.2rem; font-size: 0.9em; }
 .ws-host-details summary { cursor: pointer; color: var(--muted); }
 
+/* AI seat steppers: label on the left, [− n +] on the right. Touch-sized
+   buttons (no native number spinner) with a fixed-width readout so the row
+   never reflows as the count changes. */
+.ai-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.6rem;
+  margin: 0.35rem 0;
+}
+.ai-label { font-size: 0.9rem; }
+.stepper { display: flex; align-items: center; gap: 0.35rem; flex: none; }
+.stepper .step-btn {
+  width: 2.2rem; min-height: 2.2rem; padding: 0; flex: none;
+  font-size: 1.1rem; font-weight: 700; line-height: 1; border-radius: 8px;
+}
+.stepper .step-btn:disabled { opacity: 0.35; cursor: default; }
+.ai-readout { min-width: 1.6rem; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ai-total { margin: 0.5rem 0 0; font-size: 0.9rem; }
+
 /* -- play screen ------------------------------------------------------------ */
 /* 100dvh (with a vh fallback) so mobile browser chrome never clips the dock. */
 .play-root { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
@@ -169,7 +186,13 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
   width: 54px; height: 76px; border-radius: 7px;
   box-shadow: 0 2px 6px rgba(0,0,0,0.4);
 }
-.card-slot { min-height: 80px; display: flex; justify-content: center; }
+/* min-width, not just min-height: an empty slot must keep a card's footprint.
+   A flex box with no children measures zero-width, and fly() treats a
+   zero-width target as "nothing to animate" -- so between deals (slots
+   emptied by the discard sweep) the whole deal-out flight would silently
+   vanish. Holding the footprint also keeps the seat from reflowing every
+   time a card leaves it. */
+.card-slot { min-height: 80px; min-width: 54px; display: flex; justify-content: center; }
 .card-back {
   background: var(--card-back); border: 2px solid #f2e8d8;
   box-shadow: inset 0 0 0 3px rgba(255,255,255,0.22), 0 2px 6px rgba(0,0,0,0.4);
@@ -225,7 +248,7 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 }
 /* My own card reads slightly larger than the ring. */
 .player-seat.is-me .card { width: 60px; height: 84px; }
-.player-seat.is-me .card-slot { min-height: 88px; }
+.player-seat.is-me .card-slot { min-height: 88px; min-width: 60px; }
 /* Belt and braces: never let ambient transitions/animations run on clones. */
 .fly-ghost .card, .fly-ghost .card * { transition: none !important; animation: none !important; }
 @media (prefers-reduced-motion: reduce) {
@@ -384,13 +407,13 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
   /* Smaller seats/cards so a full ring still fits a ~375px-wide felt. */
   .player-seat { width: 84px; }
   .card { width: 44px; height: 62px; }
-  .card-slot { min-height: 66px; }
+  .card-slot { min-height: 66px; min-width: 44px; }
   .card-face { font-size: 0.9rem; }
   .card-art--num { font-size: 1rem; }
   .card-art--icon svg { width: 24px; height: 24px; }
   .card-caption { font-size: 0.56rem; }
   .player-seat.is-me .card { width: 48px; height: 67px; }
-  .player-seat.is-me .card-slot { min-height: 71px; }
+  .player-seat.is-me .card-slot { min-height: 71px; min-width: 48px; }
   .name-plate { font-size: 0.75rem; }
   .chip-count { font-size: 0.72rem; }
   /* Narrower box + tighter gap so [deck | discard] still fits a ~375px felt. */
@@ -403,7 +426,18 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
   #dock-holder button { min-height: 44px; }
 
   .modal { width: 94%; padding: 1rem; }
-  .fx-banner { font-size: 1.15rem; padding: 0.5rem 1rem; }
+
+  /* Popups keep clear of the action dock. On a phone the dock sits just below
+     the felt, so a vertically centred popup lands right on カンビオ/どうぞ --
+     the 確認 button of a confirm card ends up a thumb's width from a game
+     action. Pin popups to the top of the felt instead and reserve the bottom
+     strip (dock + log drawer) for the buttons; tall panes (the result table)
+     scroll inside the space above it. */
+  .modal-overlay, .fx-confirm-overlay {
+    align-items: flex-start; justify-content: center;
+    padding: 2.5vh 0 9rem; overflow-y: auto;
+  }
+  .fx-banner { font-size: 1.15rem; padding: 0.5rem 1rem; top: 32%; }
   .fx-banner.cucco { font-size: 1.5rem; }
 
   .panel { margin: 2vh auto; width: 94%; }

@@ -218,6 +218,30 @@ class ConnectionHandler:
         table_id = self.table.room_id if self.table else None
         await self.connection.send(build_envelope(type_, payload, table_id=table_id))
 
+    async def _broadcast_presence(self, table: Table, player_id: str, connected: bool) -> None:
+        """Tell the rest of the table that a seat came back (or dropped).
+
+        A full `state_snapshot` would carry this too, but the runner only
+        broadcasts one at pot/deal boundaries -- so without this a player who
+        reloaded mid-deal stayed labelled 「切断」 on everyone else's screen
+        until the next deal started. Deliberately a tiny presence delta rather
+        than a snapshot: clients rebuild the whole scene from a snapshot
+        (dropping any animation in flight), which is far too heavy a hammer
+        for "this seat's connection state changed".
+
+        Best effort by design: a send that fails here just means that
+        recipient is itself disconnected, which their own presence event
+        already covers.
+        """
+        payload = {"player_id": player_id, "connected": connected}
+        for session in list(table.sessions.values()):
+            if session.player_id == player_id:
+                continue
+            try:
+                await session.send(build_envelope("presence_changed", payload, table_id=table.room_id))
+            except Exception:
+                logger.info("presence broadcast to %s failed; ignoring", session.player_id)
+
     async def _handle_identify(self, action: Identify) -> None:
         player_id = uuid.uuid4().hex
         session_token = uuid.uuid4().hex
@@ -280,6 +304,9 @@ class ConnectionHandler:
             self.session = existing
             await self._send_raw("state_snapshot", build_state_snapshot(table, existing.player_id))
             await self._resend_outstanding_prompt(existing)
+            # Clear everyone else's 「切断」 label for this seat right away,
+            # rather than at the next deal boundary's snapshot.
+            await self._broadcast_presence(table, existing.player_id, connected=True)
             return
 
         if self.session is None:
@@ -428,3 +455,5 @@ class ConnectionHandler:
         # force_end once fewer than 2 players look connected).
         if self.session is not None and self.session.connection is self.connection:
             self.session.connected = False
+            if self.table is not None:
+                await self._broadcast_presence(self.table, self.session.player_id, connected=False)

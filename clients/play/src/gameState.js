@@ -313,6 +313,20 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         break;
       }
 
+      // A seat's connection changed (someone reloaded, dropped, or came
+      // back). Only the seat's badge is affected, so this is a targeted
+      // update -- never a scene rebuild, which would drop whatever animation
+      // is mid-flight for everyone else at the table.
+      case "presence_changed": {
+        if (!state.table) return;
+        const seat = state.table.seats.find((s) => s.player_id === p.player_id);
+        if (!seat || seat.connected === p.connected) return;
+        seat.connected = p.connected;
+        log(`${seatName(p.player_id)} が${p.connected ? "復帰しました" : "切断しました"}`);
+        emit({ kind: "presence_changed", player: p.player_id, connected: p.connected });
+        break;
+      }
+
       case "dealer_changed":
         if (state.table) state.table.dealer_seat = p.player_id;
         emit({ kind: "dealer_changed", player: p.player_id });

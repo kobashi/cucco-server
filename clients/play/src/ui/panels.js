@@ -89,6 +89,61 @@ function renderChoice(el, state, actions) {
   el.querySelector("#join-btn").addEventListener("click", () => actions.setPhase("join"));
 }
 
+// AI seats are set with −/+ steppers rather than number fields: on a phone a
+// number spinner means summoning the numeric keyboard and hitting native
+// arrows a few pixels tall, and the value is a single digit almost every
+// time. The authoritative count still lives in a hidden `.ai-count` input per
+// policy, so the create payload below is built exactly as before.
+const MAX_AI_TOTAL = 14;
+const AI_POLICIES = [
+  ["matrix", "matrix(人数×手札で判断)"],
+  ["always_change", "always_change(常にチェンジ)"],
+  ["always_no_change", "always_no_change(常にノーチェンジ)"],
+  ["counting_aggressive", "counting_aggressive(カウンティング・積極型)"],
+  ["counting_conservative", "counting_conservative(カウンティング・堅実型)"],
+];
+
+function aiStepperHTML([policy, label]) {
+  return `
+    <div class="ai-row">
+      <span class="ai-label">${esc(label)}</span>
+      <span class="stepper">
+        <button type="button" class="step-btn" data-policy="${policy}" data-step="-1" aria-label="${esc(label)} を1人減らす">−</button>
+        <output class="ai-readout" data-policy="${policy}">0</output>
+        <button type="button" class="step-btn" data-policy="${policy}" data-step="1" aria-label="${esc(label)} を1人増やす">+</button>
+      </span>
+      <input class="ai-count" data-policy="${policy}" type="hidden" value="0">
+    </div>`;
+}
+
+// Wire the steppers: clamp each policy at 0 and the table at MAX_AI_TOTAL,
+// and keep the buttons' disabled state honest so the limits are visible
+// rather than silently enforced on click.
+function wireAiSteppers(el) {
+  const fieldset = el.querySelector(".ai-players");
+  const countFor = (policy) => fieldset.querySelector(`.ai-count[data-policy="${policy}"]`);
+  const total = () => [...fieldset.querySelectorAll(".ai-count")].reduce((n, i) => n + Number(i.value), 0);
+  const refresh = () => {
+    const sum = total();
+    el.querySelector("#ai-total").textContent = `${sum}`;
+    for (const btn of fieldset.querySelectorAll(".step-btn")) {
+      btn.disabled =
+        btn.dataset.step === "-1" ? Number(countFor(btn.dataset.policy).value) <= 0 : sum >= MAX_AI_TOTAL;
+    }
+  };
+  fieldset.addEventListener("click", (e) => {
+    const btn = e.target.closest(".step-btn");
+    if (!btn || btn.disabled) return;
+    const input = countFor(btn.dataset.policy);
+    const next = Number(input.value) + Number(btn.dataset.step);
+    if (next < 0 || next > MAX_AI_TOTAL) return;
+    input.value = `${next}`;
+    fieldset.querySelector(`.ai-readout[data-policy="${btn.dataset.policy}"]`).textContent = `${next}`;
+    refresh();
+  });
+  refresh();
+}
+
 function renderCreate(el, state, actions) {
   el.innerHTML = `
     <div class="panel">
@@ -127,12 +182,9 @@ function renderCreate(el, state, actions) {
           </select>
         </label>
         <fieldset class="ai-players">
-          <legend>AIプレイヤーを追加(サーバー内蔵、合計14人まで)</legend>
-          <label>matrix(人数×手札で判断) <input class="ai-count" data-policy="matrix" type="number" min="0" max="14" step="1" value="0"></label>
-          <label>always_change(常にチェンジ) <input class="ai-count" data-policy="always_change" type="number" min="0" max="14" step="1" value="0"></label>
-          <label>always_no_change(常にノーチェンジ) <input class="ai-count" data-policy="always_no_change" type="number" min="0" max="14" step="1" value="0"></label>
-          <label>counting_aggressive(カウンティング・積極型) <input class="ai-count" data-policy="counting_aggressive" type="number" min="0" max="14" step="1" value="0"></label>
-          <label>counting_conservative(カウンティング・堅実型) <input class="ai-count" data-policy="counting_conservative" type="number" min="0" max="14" step="1" value="0"></label>
+          <legend>AIプレイヤーを追加(サーバー内蔵、合計${MAX_AI_TOTAL}人まで)</legend>
+          ${AI_POLICIES.map(aiStepperHTML).join("")}
+          <p class="ai-total muted">追加するAI: <span id="ai-total">0</span> 人</p>
         </fieldset>
         <button type="submit">作成する</button>
         <button type="button" id="back-btn" class="secondary">戻る</button>
@@ -145,6 +197,7 @@ function renderCreate(el, state, actions) {
     el.querySelector("#round-limit-row").style.display = endCondition.value === "round_limit" ? "" : "none";
   });
   el.querySelector("#back-btn").addEventListener("click", () => actions.setPhase("lobby"));
+  wireAiSteppers(el);
   el.querySelector("#create-form").addEventListener("submit", (e) => {
     e.preventDefault();
     actions.createTable({

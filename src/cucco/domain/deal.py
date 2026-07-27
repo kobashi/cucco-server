@@ -152,12 +152,32 @@ class Deal:
         deck on someone else's behalf. This can mean the deck is exchanged
         with more than once in a single deal (once per player whose own
         turn happens to fall off the end of `order`).
+
+        Returns None once mid-deal disqualifications have decided the deal
+        (see `is_decided_by_disqualification`): a lone survivor has nothing
+        left to play for, so they are not offered a turn.
         """
+        if self.is_decided_by_disqualification:
+            return None
         for pid in self.order:
             if pid in self.disqualified or pid in self.turn_acted:
                 continue
             return pid
         return None
+
+    @property
+    def is_decided_by_disqualification(self) -> bool:
+        """True once at most one seat is still in the deal.
+
+        Mid-deal disqualifications can wipe out everyone but one player (or
+        everyone, via a mutual Joker exchange). From that moment the outcome
+        no longer depends on any card: `open()` gives a lone survivor no
+        losers to be weaker than, so remaining turns cannot change anything.
+        Playing them on would be worse than pointless -- a survivor talked
+        into one more deck exchange can draw the Joker and disqualify
+        themselves out of a deal they had already effectively won.
+        """
+        return sum(1 for pid in self.order if pid not in self.disqualified) <= 1
 
     @property
     def is_awaiting_open(self) -> bool:

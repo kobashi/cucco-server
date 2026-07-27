@@ -581,6 +581,19 @@ function handleEvent(type, p) {
       });
       return;
 
+    // A seat dropped or came back. state_snapshot carries `connected` too,
+    // but only at pot/deal boundaries -- this keeps the roster honest in
+    // between (a player who reloads mid-deal is back within a second).
+    case "presence_changed":
+      update(() => {
+        if (!state.table) return;
+        const seat = state.table.seats.find((s) => s.player_id === p.player_id);
+        if (!seat || seat.connected === p.connected) return;
+        seat.connected = p.connected;
+        pushLog(state, `${seatName(state, p.player_id)} が${p.connected ? "復帰" : "切断"}しました`);
+      });
+      return;
+
     case "chips_paid":
       update(() => {
         if (!state.table) return;

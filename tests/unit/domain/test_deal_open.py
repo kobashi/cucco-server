@@ -1,4 +1,7 @@
+import pytest
+
 from cucco.domain.cards import Rank
+from cucco.domain.errors import IllegalAction
 from tests.unit.domain.helpers import build_deal
 
 
@@ -45,18 +48,34 @@ def test_open_moves_all_compared_hands_to_discard_not_just_losers():
 
 
 def test_sole_survivor_of_mid_deal_disqualifications_is_not_a_loser():
-    # A requests B (holds 人間) and is disqualified. B never independently
-    # acted, so B still gets a normal turn; B no-changes. Only B remains
+    # A requests B (holds 人間) and is disqualified. Only B remains
     # un-disqualified -- B must not be treated as "weakest" against nobody.
     deal = build_deal({"A": Rank.N5, "B": Rank.HUMAN}, dealer_id="B")
     deal.submit_cambio("A")
     assert deal.disqualified == {"A"}
-    assert deal.legal_actor() == "B"
-    deal.submit_no_change("B")
+
+    # The deal is already decided, so B is offered no turn: exchanging would
+    # be pointless at best (nobody left to beat) and self-destructive at
+    # worst (a deck draw can hand the lone survivor the Joker).
+    assert deal.is_decided_by_disqualification
+    assert deal.legal_actor() is None
+    assert deal.is_awaiting_open
+    with pytest.raises(IllegalAction):
+        deal.submit_cambio("B")
 
     opened = deal.open()[0]
     assert opened.losers == ()
     assert opened.hands == {"B": Rank.HUMAN}
+
+
+def test_deal_stays_live_while_two_players_remain():
+    # The counterpart guard: one disqualification out of three leaves two
+    # seats still competing, so turns must continue as normal.
+    deal = build_deal({"A": Rank.N5, "B": Rank.HUMAN, "C": Rank.N9}, dealer_id="C")
+    deal.submit_cambio("A")  # A is disqualified by B's 人間
+    assert deal.disqualified == {"A"}
+    assert not deal.is_decided_by_disqualification
+    assert deal.legal_actor() == "B"
 
 
 def test_full_deal_happy_path_all_no_change():

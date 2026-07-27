@@ -97,6 +97,28 @@ const revealHandStep = () =>
     renderHandInfo(sceneRefs.handInfoEl, state);
   });
 
+// Clear the table before a new deal is dealt out: every card still sitting in
+// a seat belongs to the deal that just ended (the open turned them face-up and
+// the result pane held them there), so send them to the discard pile first.
+// Without this the incoming cards land on top of last deal's hands and read as
+// being stacked onto them -- and the slots are emptied here, before the
+// flights start, so nothing shows through underneath mid-animation.
+async function sweepToDiscard(sc) {
+  const slots = [...sc.root.querySelectorAll(".card-slot")].filter((s) => s.firstElementChild);
+  if (!slots.length) return;
+  const flights = slots.map((slot) => {
+    // fly() measures both rects synchronously, so emptying the slot on the
+    // very next line keeps the hand-off invisible -- and measures the slot
+    // while it still has a card in it (an empty slot can measure zero-width,
+    // which fly() treats as "nothing to animate").
+    const flight = fly(queue, { fromEl: slot, toEl: sc.discardEl(), html: slot.innerHTML, duration: 320 });
+    slot.innerHTML = "";
+    return flight;
+  });
+  sound.play("flip");
+  await Promise.all(flights);
+}
+
 function handleOp(op) {
   switch (op.kind) {
     case "rejected":
@@ -168,6 +190,7 @@ function handleOp(op) {
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
+        await sweepToDiscard(sc);
         for (const pid of seatsInOrder) {
           sound.play("deal");
           await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(pid), html: cardHTML(null), duration: 160 });
