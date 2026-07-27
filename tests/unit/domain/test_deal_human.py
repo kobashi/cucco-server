@@ -29,6 +29,31 @@ def test_human_revealed_regardless_of_horse_house_reveal_setting():
     assert refusal.revealed_rank is Rank.HUMAN
 
 
+def test_human_drawn_from_deck_disqualifies_a_non_dealer_drawer_too():
+    # The card reference and docs/rules/final_rules.md say the player who DREW
+    # is disqualified -- not "the dealer". Those differ whenever a 馬/家 chain
+    # runs off the end of turn order: the chain's own requester exchanges with
+    # the deck instead of the dealer. Here B (the seat before the dealer)
+    # requests, the dealer C refuses with 馬, so B draws -- and B, not C, must
+    # be the one disqualified by the Human that comes up.
+    deal = build_deal(
+        {"A": Rank.N5, "B": Rank.N3, "C": Rank.HORSE},
+        dealer_id="C",
+        deck_tail=[Rank.HUMAN],
+    )
+    deal.submit_no_change("A")
+
+    events = deal.submit_cambio("B")
+
+    drawn = next(e for e in events if isinstance(e, DeckDrawRefused))
+    assert drawn.actor == "B"
+    assert drawn.reason == "human_deck_draw"
+    dq = next(e for e in events if isinstance(e, PlayerDisqualified))
+    assert dq.player_id == "B"  # the drawer, not the dealer
+    assert deal.disqualified == {"B"}
+    assert deal.hands["C"] is Rank.HORSE  # the dealer kept their card and their seat
+
+
 def test_human_drawn_from_deck_disqualifies_the_deck_exchange_actor():
     # A, B act (no-change), leaving C (the dealer) to draw from the deck.
     deal = build_deal(
