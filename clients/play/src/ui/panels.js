@@ -3,6 +3,63 @@
 // sendReady/sendStartPot/reconnect/forgetSession/setWsHost).
 
 import { esc } from "../../../web-common/utils.js";
+import { serverInviteUrl, tableInviteUrl, copyText } from "../../../web-common/invite.js";
+
+const currentWsHost = () => localStorage.getItem("cucco_ws_host") || `${location.hostname}:8765`;
+
+// Copy feedback and the invite <details> state live outside the DOM these
+// renders keep destroying, for the same reason wsHostOpen does above: the
+// waiting screen re-renders on every roster/presence update, which would wipe
+// the confirmation a fraction of a second after the organizer clicked コピー.
+let inviteStatusFor = null; // which invite block the message belongs to
+let inviteStatusText = "";
+let inviteDetailsOpen = false;
+let inviteStatusTimer = null;
+
+function setInviteStatus(el, id, text) {
+  inviteStatusFor = id;
+  inviteStatusText = text;
+  const node = el.querySelector(`#${id}-status`);
+  if (node) node.textContent = text;
+  clearTimeout(inviteStatusTimer);
+  inviteStatusTimer = setTimeout(() => {
+    inviteStatusFor = null;
+    inviteStatusText = "";
+    const live = document.querySelector(`#${id}-status`);
+    if (live) live.textContent = "";
+  }, 6000);
+}
+
+// A shared invite link: shown in a read-only field (so it is visible and
+// selectable even where the clipboard API is unavailable) with a copy button
+// that reports what happened.
+function inviteBlockHTML(id, label, url, hint) {
+  return `
+    <div class="invite-block">
+      <label for="${id}-url">${esc(label)}</label>
+      <div class="invite-row">
+        <input id="${id}-url" class="invite-url" readonly value="${esc(url)}">
+        <button type="button" id="${id}-copy" class="secondary">コピー</button>
+      </div>
+      <p class="muted invite-hint">${hint}</p>
+      <p class="invite-status" id="${id}-status" role="status">${
+        inviteStatusFor === id ? esc(inviteStatusText) : ""
+      }</p>
+    </div>`;
+}
+
+function wireInviteBlock(el, id) {
+  const field = el.querySelector(`#${id}-url`);
+  el.querySelector(`#${id}-copy`)?.addEventListener("click", async () => {
+    const ok = await copyText(field.value);
+    if (!ok) field.select(); // fall back to "selected, press ⌘C yourself"
+    setInviteStatus(
+      el,
+      id,
+      ok ? "コピーしました" : "コピーできませんでした — 上のリンクを選択してコピーしてください"
+    );
+  });
+}
 
 // The name screen's whole panel is torn down and rebuilt (innerHTML = "...")
 // on every render() -- including connectionStatus flipping to "open" moments
@@ -25,6 +82,14 @@ function renderName(el, state, actions) {
   el.innerHTML = `
     <div class="panel">
       <h1>Cucco <span class="sub">プレイ用クライアント</span></h1>
+      ${
+        state.invitedRoomId
+          ? `<div class="callout">
+              <p>卓 <strong class="room-id">${esc(state.invitedRoomId)}</strong> に招待されています。</p>
+              <p class="muted">名前を入れて「つづける」を押すと、そのまま参加します。</p>
+            </div>`
+          : ""
+      }
       ${
         state.savedSession
           ? `<div class="callout">
@@ -83,10 +148,23 @@ function renderChoice(el, state, actions) {
       <button id="create-btn">卓を作る</button>
       <button id="join-btn">プレイルームIDで参加する</button>
       ${state.error ? `<p class="error">${esc(state.error)}</p>` : ""}
+      <details class="invite-details" ${inviteDetailsOpen ? "open" : ""}>
+        <summary>Cuccoに招待するリンク(システムの紹介用)</summary>
+        ${inviteBlockHTML(
+          "server-invite",
+          "ゲームサーバー付きの招待リンク",
+          serverInviteUrl(currentWsHost()),
+          "このリンクを開いた人は、接続先の設定なしでクライアントを選んで遊べます。" +
+            "卓に誘うときは、卓を立てたあとの待機画面に出る<strong>卓の招待リンク</strong>を使ってください。"
+        )}
+      </details>
     </div>
   `;
   el.querySelector("#create-btn").addEventListener("click", () => actions.setPhase("create"));
   el.querySelector("#join-btn").addEventListener("click", () => actions.setPhase("join"));
+  const details = el.querySelector(".invite-details");
+  details.addEventListener("toggle", () => (inviteDetailsOpen = details.open));
+  wireInviteBlock(el, "server-invite");
 }
 
 // AI seats are set with −/+ steppers rather than number fields: on a phone a
@@ -253,6 +331,12 @@ export function renderWaiting(el, state, actions) {
       <h1>待機中</h1>
       <p>プレイルームID: <strong class="room-id">${esc(state.roomId)}</strong>
         <button id="copy-btn" class="secondary">コピー</button></p>
+      ${inviteBlockHTML(
+        "table-invite",
+        "この卓の招待リンク",
+        tableInviteUrl(currentWsHost(), state.roomId ?? ""),
+        "同じサーバーの同じ卓に直接入れます。受け取った人は名前を入れるだけで参加できます。"
+      )}
       <h2>参加者</h2>
       <ul class="seat-list">
         ${seats
@@ -283,6 +367,7 @@ export function renderWaiting(el, state, actions) {
     </div>
   `;
   el.querySelector("#copy-btn").addEventListener("click", () => navigator.clipboard?.writeText(state.roomId));
+  wireInviteBlock(el, "table-invite");
   el.querySelector("#ready-btn")?.addEventListener("click", () => actions.sendReady());
   el.querySelector("#start-pot-btn")?.addEventListener("click", () => actions.sendStartPot());
 }

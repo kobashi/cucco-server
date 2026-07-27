@@ -17,11 +17,21 @@ import { mountCardReference } from "./ui/cardReference.js";
 
 const screenEl = document.getElementById("screen");
 
-const wsParam = new URLSearchParams(location.search).get("ws");
-if (wsParam) {
-  localStorage.setItem("cucco_ws_host", sanitizeWsHost(wsParam));
+// Invite links (docs/web-client-operations.md「招待リンク」): `?ws=host[:port]`
+// carries the game server so a guest never has to configure one, and
+// `?room=ID` carries the table to join. Both are consumed once and stripped
+// from the URL -- the host is persisted, and the room is a one-shot
+// instruction for this visit (a reload should resume the saved session, not
+// re-join whatever table the link named).
+const params = new URLSearchParams(location.search);
+const wsParam = params.get("ws");
+const roomParam = params.get("room");
+const invitedRoomFromUrl = /^[A-Za-z0-9]{6}$/.test(roomParam ?? "") ? roomParam.toUpperCase() : null;
+if (wsParam) localStorage.setItem("cucco_ws_host", sanitizeWsHost(wsParam));
+if (wsParam || roomParam) {
   const url = new URL(location.href);
   url.searchParams.delete("ws");
+  url.searchParams.delete("room");
   history.replaceState(null, "", url);
 }
 
@@ -67,6 +77,9 @@ const game = createGameState({
   onToast: showToast,
 });
 const state = game.state;
+// The table this visit was invited to, if any: the name screen announces it,
+// and identify() consumes it by joining that table (cleared either way).
+state.invitedRoomId = invitedRoomFromUrl;
 
 // UI-only state (which screen family is showing)
 let uiPhase = "name"; // name | lobby | create | join | waiting | table
@@ -711,6 +724,15 @@ const actions = {
       state.playerType = playerType;
       state.error = null;
       uiPhase = "lobby";
+      // Came in through a table invite link: go straight to that table
+      // instead of making the guest re-type an ID they were just handed.
+      // Consumed once -- a failure leaves them on the lobby with the error.
+      if (state.invitedRoomId) {
+        const roomId = state.invitedRoomId;
+        state.invitedRoomId = null;
+        await actions.joinTable(roomId, { invited: true });
+        return;
+      }
     } catch (err) {
       state.error = err.message;
     }
@@ -728,7 +750,7 @@ const actions = {
     }
   },
 
-  async joinTable(roomId) {
+  async joinTable(roomId, { invited = false } = {}) {
     try {
       const snapshot = await conn.joinTable(roomId, null);
       state.roomId = roomId;
@@ -736,7 +758,13 @@ const actions = {
       game.applySnapshot(snapshot.payload ?? snapshot);
       persist();
     } catch (err) {
-      state.error = err.message;
+      // An invite link the guest didn't type is the one case where the raw
+      // protocol error explains nothing they can act on -- the usual cause is
+      // a table that has since ended.
+      state.error = invited
+        ? `招待された卓 ${roomId} に参加できませんでした(${err.message})。` +
+          "卓がすでに終了している可能性があります。新しい招待リンクをもらうか、下のボタンから卓を作ってください。"
+        : err.message;
     }
     render();
   },

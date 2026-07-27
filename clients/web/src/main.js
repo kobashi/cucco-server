@@ -16,11 +16,19 @@ const { state, notify, subscribe } = createStore();
 // (e.g. a GitHub Pages-hosted client pointing at a cloudflared-tunneled
 // server on a different, possibly-random, hostname). Persist it and strip it
 // from the URL so a later reload/share doesn't need the param repeated.
-const wsParam = new URLSearchParams(location.search).get("ws");
-if (wsParam) {
-  localStorage.setItem("cucco_ws_host", sanitizeWsHost(wsParam));
+// `?room=ID` rides along on a table invite link (clients/web-common/invite.js).
+// The landing page forwards the whole query string to whichever client the
+// guest picks, so the reference client honours it too -- otherwise an invited
+// player who chose this client would silently land on the lobby.
+const params = new URLSearchParams(location.search);
+const wsParam = params.get("ws");
+const roomParam = params.get("room");
+let invitedRoomId = /^[A-Za-z0-9]{6}$/.test(roomParam ?? "") ? roomParam.toUpperCase() : null;
+if (wsParam) localStorage.setItem("cucco_ws_host", sanitizeWsHost(wsParam));
+if (wsParam || roomParam) {
   const url = new URL(location.href);
   url.searchParams.delete("ws");
+  url.searchParams.delete("room");
   history.replaceState(null, "", url);
 }
 
@@ -123,6 +131,11 @@ const actions = {
         state.screen = "lobby";
         state.error = null;
       });
+      if (invitedRoomId) {
+        const roomId = invitedRoomId;
+        invitedRoomId = null; // one-shot: a failure leaves the lobby showing why
+        await actions.joinTable(roomId);
+      }
     } catch (err) {
       update(() => (state.error = err.message));
     }
