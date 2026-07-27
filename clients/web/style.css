@@ -37,6 +37,14 @@ h1, h2 { margin: 0.4em 0; }
 
 form label { display: block; margin: 0.6rem 0; }
 input, select { width: 100%; padding: 0.4rem; margin-top: 0.2rem; }
+/* Checkboxes/radios opt out of the full-width rule above -- at 100% they end
+   up on a line of their own, visibly detached from their label text. */
+input[type="checkbox"], input[type="radio"] {
+  width: 1.05rem; height: 1.05rem; flex: none; margin: 0; padding: 0;
+}
+form label:has(> input[type="checkbox"]), form label:has(> input[type="radio"]) {
+  display: flex; align-items: center; gap: 0.5rem; cursor: pointer;
+}
 fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 .ws-host-details { margin-top: 1.2rem; font-size: 0.9em; }
 .ws-host-details summary { cursor: pointer; color: var(--muted); }

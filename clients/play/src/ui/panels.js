@@ -2,10 +2,19 @@
 // simplified: same actions contract (identify/createTable/joinTable/
 // sendReady/sendStartPot/reconnect/forgetSession/setWsHost).
 
-import { esc } from "../../../web-common/utils.js";
+import { esc, sanitizeWsHost } from "../../../web-common/utils.js";
 import { serverInviteUrl, tableInviteUrl, copyText } from "../../../web-common/invite.js";
 
 const currentWsHost = () => localStorage.getItem("cucco_ws_host") || `${location.hostname}:8765`;
+
+// The host that goes INTO invite links, kept separate from the host this
+// browser connects to (`cucco_ws_host`). The organiser usually runs the server
+// on the same machine and connects to localhost, while guests need the public
+// tunnel domain -- so the announcement URL cannot just reuse the local
+// connection target. Remembered so a new tunnel domain is typed once, not
+// once per link.
+const INVITE_HOST_KEY = "cucco_invite_host";
+const invitePublishHost = () => localStorage.getItem(INVITE_HOST_KEY) || currentWsHost();
 
 // Copy feedback and the invite <details> state live outside the DOM these
 // renders keep destroying, for the same reason wsHostOpen does above: the
@@ -30,15 +39,24 @@ function setInviteStatus(el, id, text) {
   }, 6000);
 }
 
-// A shared invite link: shown in a read-only field (so it is visible and
-// selectable even where the clipboard API is unavailable) with a copy button
-// that reports what happened.
-function inviteBlockHTML(id, label, url, hint) {
+// An invite link: the server domain to publish (editable, remembered), the
+// resulting link in a read-only field -- visible and selectable even where the
+// clipboard API is unavailable -- and a copy button that reports what happened.
+// `buildUrl(host)` is what makes the block server-invite or table-invite.
+function inviteBlockHTML(id, label, hint, buildUrl) {
+  const host = invitePublishHost();
   return `
     <div class="invite-block">
+      <label for="${id}-host">ゲームサーバーのドメイン名</label>
+      <input id="${id}-host" class="invite-host" value="${esc(host)}" placeholder="xxxx.trycloudflare.com"
+             autocapitalize="off" autocorrect="off" spellcheck="false">
+      <p class="muted invite-hint">
+        招待リンクに載せる公開ドメイン。外から繋いでもらうトンネルのドメインを入れる
+        (この欄はリンク用で、この画面自身の接続先は変わりません)。
+      </p>
       <label for="${id}-url">${esc(label)}</label>
       <div class="invite-row">
-        <input id="${id}-url" class="invite-url" readonly value="${esc(url)}">
+        <input id="${id}-url" class="invite-url" readonly value="${esc(buildUrl(host))}">
         <button type="button" id="${id}-copy" class="secondary">コピー</button>
       </div>
       <p class="muted invite-hint">${hint}</p>
@@ -48,11 +66,23 @@ function inviteBlockHTML(id, label, url, hint) {
     </div>`;
 }
 
-function wireInviteBlock(el, id) {
-  const field = el.querySelector(`#${id}-url`);
+function wireInviteBlock(el, id, buildUrl) {
+  const hostField = el.querySelector(`#${id}-host`);
+  const urlField = el.querySelector(`#${id}-url`);
+
+  // Rebuild the link as the domain is typed. The raw text stays in the field
+  // (sanitising mid-typing would fight the user, e.g. eating a "/" they are
+  // still typing past); only the stored and published values are normalised.
+  hostField?.addEventListener("input", () => {
+    const host = sanitizeWsHost(hostField.value);
+    if (host) localStorage.setItem(INVITE_HOST_KEY, host);
+    else localStorage.removeItem(INVITE_HOST_KEY); // empty = fall back to the connection host
+    urlField.value = buildUrl(host || currentWsHost());
+  });
+
   el.querySelector(`#${id}-copy`)?.addEventListener("click", async () => {
-    const ok = await copyText(field.value);
-    if (!ok) field.select(); // fall back to "selected, press ⌘C yourself"
+    const ok = await copyText(urlField.value);
+    if (!ok) urlField.select(); // fall back to "selected, press ⌘C yourself"
     setInviteStatus(
       el,
       id,
@@ -153,9 +183,9 @@ function renderChoice(el, state, actions) {
         ${inviteBlockHTML(
           "server-invite",
           "ゲームサーバー付きの招待リンク",
-          serverInviteUrl(currentWsHost()),
           "このリンクを開いた人は、接続先の設定なしでクライアントを選んで遊べます。" +
-            "卓に誘うときは、卓を立てたあとの待機画面に出る<strong>卓の招待リンク</strong>を使ってください。"
+            "卓に誘うときは、卓を立てたあとの待機画面に出る<strong>卓の招待リンク</strong>を使ってください。",
+          serverInviteUrl
         )}
       </details>
     </div>
@@ -164,7 +194,7 @@ function renderChoice(el, state, actions) {
   el.querySelector("#join-btn").addEventListener("click", () => actions.setPhase("join"));
   const details = el.querySelector(".invite-details");
   details.addEventListener("toggle", () => (inviteDetailsOpen = details.open));
-  wireInviteBlock(el, "server-invite");
+  wireInviteBlock(el, "server-invite", serverInviteUrl);
 }
 
 // AI seats are set with −/+ steppers rather than number fields: on a phone a
@@ -334,8 +364,8 @@ export function renderWaiting(el, state, actions) {
       ${inviteBlockHTML(
         "table-invite",
         "この卓の招待リンク",
-        tableInviteUrl(currentWsHost(), state.roomId ?? ""),
-        "同じサーバーの同じ卓に直接入れます。受け取った人は名前を入れるだけで参加できます。"
+        "同じサーバーの同じ卓に直接入れます。受け取った人は名前を入れるだけで参加できます。",
+        (host) => tableInviteUrl(host, state.roomId ?? "")
       )}
       <h2>参加者</h2>
       <ul class="seat-list">
@@ -367,7 +397,7 @@ export function renderWaiting(el, state, actions) {
     </div>
   `;
   el.querySelector("#copy-btn").addEventListener("click", () => navigator.clipboard?.writeText(state.roomId));
-  wireInviteBlock(el, "table-invite");
+  wireInviteBlock(el, "table-invite", (host) => tableInviteUrl(host, state.roomId ?? ""));
   el.querySelector("#ready-btn")?.addEventListener("click", () => actions.sendReady());
   el.querySelector("#start-pot-btn")?.addEventListener("click", () => actions.sendStartPot());
 }
