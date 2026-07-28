@@ -589,6 +589,10 @@ let confirmMode = loadConfirmMode();
 const confirmActive = () => confirmMode !== "off";
 setConfirmModeGetter(() => confirmMode);
 queue.setConfirmMode(confirmActive);
+// Re-render when the presentation catches up, so the turn buttons the dock
+// greyed out (see renderDock's `pending`) come back the instant they may be
+// used, rather than on the next unrelated state change.
+queue.setOnDrain(() => { if (uiPhase === "table") render(); });
 
 const CONFIRM_LABELS = {
   off: ['💨', ' 確認 OFF', "メッセージ確認: OFF — すべて自動で流れる(クリックで切替)"],
@@ -737,7 +741,7 @@ function render() {
   }
   renderStatus(sceneRefs.statusEl, state, game.seatName);
   renderHandInfo(sceneRefs.handInfoEl, state);
-  renderDock(sceneRefs.dockEl, state, actions);
+  renderDock(sceneRefs.dockEl, state, actions, { pending: queue.busy });
   renderModals(sceneRefs.modalEl, state, actions, game.seatName);
   renderLogDrawer(sceneRefs.logEl, state);
   prependConnBanner();

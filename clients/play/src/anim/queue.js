@@ -25,6 +25,7 @@ export function createQueue() {
   // confirm gate before the human can press it. clear() (reconnect/rebuild)
   // still force-finishes everything; that's a hard scene reset, not pacing.
   let confirmMode = () => false;
+  let onDrain = null;
 
   const busy = () => running || steps.length > 0;
 
@@ -43,6 +44,10 @@ export function createQueue() {
     instant = false;
     rate = 1; // back to real time once the backlog has drained
     clearTimeout(hurryTimer);
+    // The dock disables the turn buttons while the presentation is behind, so
+    // it has to be told the moment it catches up -- otherwise they stay greyed
+    // out until the next state change happens to trigger a render.
+    onDrain?.();
   }
 
   // Drop the catch-up state so whatever is enqueued next plays in full.
@@ -72,6 +77,9 @@ export function createQueue() {
     },
     setConfirmMode(getter) {
       confirmMode = getter;
+    },
+    setOnDrain(fn) {
+      onDrain = fn;
     },
     fastForward,
     // Speed the remaining recap up (rather than skipping it) so the player

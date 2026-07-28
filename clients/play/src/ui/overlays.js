@@ -60,7 +60,16 @@ export function renderHandInfo(el, state) {
     : "";
 }
 
-export function renderDock(el, state, actions) {
+// `pending` = the presentation queue is still catching up, so what is on
+// screen is behind the authoritative state. The turn buttons are held
+// disabled until it clears: the server only prompts a turn AFTER the dealer's
+// 「どうぞ」, but the animation for the deal-out is usually still playing when
+// that prompt lands, so the buttons would otherwise go live while the cards
+// are still being dealt and before the 「どうぞ」 has been shown. The wait is
+// bounded -- a prompt for me triggers queue.hurry(), which compresses the
+// backlog and hard-caps it -- and クク宣言 stays live throughout, since it is
+// fire-and-forget by design and must never be gated on pacing.
+export function renderDock(el, state, actions, { pending = false } = {}) {
   if (state.playerType === "spectator") {
     el.innerHTML = "";
     return;
@@ -77,10 +86,12 @@ export function renderDock(el, state, actions) {
       <span class="dock-timer">${countdown(state.dealerReadyPrompt.deadline)}秒</span>
       <button id="dealer-ready-btn">どうぞ</button>${cuccoBtn}`;
   } else if (state.turnPrompt) {
+    const off = pending ? " disabled" : "";
     html = `
       <span class="dock-timer">${countdown(state.turnPrompt.deadline)}秒</span>
-      <button id="cambio-btn">カンビオ(交換)</button>
-      <button id="no-change-btn" class="secondary">ノンカンビオ</button>${cuccoBtn}`;
+      <button id="cambio-btn"${off}>カンビオ(交換)</button>
+      <button id="no-change-btn" class="secondary"${off}>ノンカンビオ</button>${cuccoBtn}
+      ${pending ? '<span class="dock-wait">配り終わるまでお待ちください</span>' : ""}`;
   } else if (cuccoBtn) {
     html = cuccoBtn;
   }
