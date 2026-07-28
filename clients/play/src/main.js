@@ -338,26 +338,26 @@ function handleOp(op) {
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
-        // Drawing from the deck is public at a physical table: fly the drawn
-        // card face-up to the actor so everyone sees what came off the deck.
-        // The card being replaced leaves the seat as the new one sets off, so
-        // the seat is empty while the draw is in the air rather than showing
-        // the old card until the new one lands on top of it.
-        sound.play("deal");
+        // Two beats, in the order the hands actually move at a table: the card
+        // being given up goes to the discard FIRST, and only then does the new
+        // one come off the deck. Doing it the other way round read as the new
+        // card landing on top of a seat that was still holding the old one.
         const actorSlot = sc.slotEl(actor);
-        const flight = fly(queue, { fromEl: sc.deckEl(), toEl: actorSlot, html: cardHTML(newCard), duration: FLIGHT_MS });
-        if (actorSlot) actorSlot.innerHTML = "";
-        await flight;
-        // A deck draw is public and lands face-up, so this IS the reveal point
-        // for the actor's (possibly my) new card -- advance shownHand here.
+        // 1. The given-up card lands face-up on the discard pile.
+        sound.play("flip");
+        const discarded = fly(queue, { fromEl: actorSlot, toEl: sc.discardEl(), html: cardHTML(givenUp), duration: FLIGHT_MS });
+        if (actorSlot) actorSlot.innerHTML = ""; // measured by fly() already
+        await discarded;
+        // 2. The draw is public at a physical table, so it travels face-up.
+        sound.play("deal");
+        await fly(queue, { fromEl: sc.deckEl(), toEl: actorSlot, html: cardHTML(newCard), duration: FLIGHT_MS });
+        // It lands face-up, so this IS the reveal point for the actor's
+        // (possibly my) new card -- advance shownHand here.
         if (actor === state.playerId) state.shownHand = newCard;
         sc.sync(state); // the actor's slot now holds the revealed drawn card
         renderHandInfo(sceneRefs.handInfoEl, state);
         await banner(queue, `${game.seatName(actor)} が山札から ${newCard} を引く`, "info");
         await pause(queue, REVEAL_HOLD_MS);
-        // The card given up lands face-up on the discard pile.
-        sound.play("flip");
-        await fly(queue, { fromEl: sc.slotEl(actor), toEl: sc.discardEl(), html: cardHTML(givenUp), duration: FLIGHT_MS });
       });
       syncStep();
       return;

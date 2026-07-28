@@ -315,10 +315,20 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
       case "player_disqualified": {
         log(`${seatName(p.player_id)} が失格(${CAUSE_LABELS[p.cause] ?? p.cause})`);
         state.disqualifiedIdsThisDeal.add(p.player_id);
-        // `card` = 何の札か判明しているか(即時公開のみ非null)。
+        // `card` = 何の札か判明しているか(サーバーは即時公開のときだけ載せる)。
         // `onTable` = その札がまだ失格者の手元にあるか。この2つは別物で、
         // 遅延公開の札は「不明だが場にある」(伏せたまま置かれている)。
-        state.disqualifiedInfo[p.player_id] = { cause: p.cause, card: p.card ?? null, onTable: true };
+        //
+        // 遅延公開でも、失格したのが自分なら自分の札は自分が知っている
+        // (マット(道化)を渡されたケースなら`your_new_card`で受け取っている)。
+        // 伏せて見せない理由がないので、自分の画面にだけ表向きで残す。これは
+        // このクライアント内の表示だけの話で、他家に配信されるものではない。
+        const isMe = p.player_id === state.playerId;
+        state.disqualifiedInfo[p.player_id] = {
+          cause: p.cause,
+          card: p.card ?? (isMe ? state.yourHand ?? null : null),
+          onTable: true,
+        };
         delete state.table?.provenance_map?.[p.player_id];
         delete state.revealedCards[p.player_id];
         // A disclosed card is NOT added to the discard pile here: it stays
@@ -326,9 +336,9 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         // holds it back the same way), and disqualifiedInfo above is what the
         // seat renders it from. `deal_result` brings in the authoritative
         // pile once the deal is over.
-        if (p.player_id === state.playerId) {
+        if (isMe) {
           state.disqualifiedThisDeal = true;
-          state.yourHand = null;
+          state.yourHand = null; // 手札は場を離れた。表示は disqualifiedInfo が持つ
           state.turnPrompt = null;
           state.dealerReadyPrompt = null;
           state.effectWindow = null;
