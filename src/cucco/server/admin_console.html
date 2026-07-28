@@ -118,13 +118,27 @@
 
   <div id="tab-stats" hidden>
     <div class="form-row">
+      <label>集計期間 <select id="periodSel"><option value="current">開催中</option></select></label>
       <button id="statsLoad" class="primary">成績を読み込む</button>
       <span class="hint">表示名には実名が含まれることがあります。画面の共有・保存に注意してください。</span>
     </div>
-    <section class="panel"><h2>プレイヤー別の通算成績</h2><div id="byName"><div class="empty">未読み込み</div></div></section>
+    <section class="panel"><h2>プレイヤー別の成績 <span id="periodLabel" class="muted"></span></h2><div id="byName"><div class="empty">未読み込み</div></div></section>
     <section class="panel"><h2>内蔵AI方策別の成績</h2><div id="byPolicy"><div class="empty">未読み込み</div></div></section>
     <section class="panel"><h2>直近のゲーム</h2><div id="recent"><div class="empty">未読み込み</div></div></section>
     <section class="panel"><h2>評価モードの実行</h2><div id="evals"><div class="empty">未読み込み</div></div></section>
+
+    <section class="panel" style="margin-top:1.2rem">
+      <h2>集計期間の管理</h2>
+      <p class="hint">
+        「〆る」と開催中の期間が締め切られ、次の期間が始まります。成績表は新しい期間の分だけを数えなおしますが、
+        <strong>締めた期間の記録は削除されません</strong> — 上のプルダウンでいつでも見返せます。
+      </p>
+      <div id="periodList"><div class="empty">未読み込み</div></div>
+      <div class="form-row" style="margin-top:.6rem">
+        <label>次の期間名 <input type="text" id="nextPeriodName" placeholder="空欄なら「第N期」" maxlength="60" size="24"></label>
+        <button class="danger" id="closePeriod">開催中の集計を〆る</button>
+      </div>
+    </section>
   </div>
 
   <div id="tab-maint" hidden>
@@ -137,6 +151,8 @@
       <p class="hint">
         削除は元に戻せません。実行前に <code>data/</code> のバックアップを取ってください。
         行動ログは対局のリプレイ用データで、成績DBとは別に増え続けます。
+        <strong>期間を区切りたいだけなら「成績」タブの「〆る」を使ってください</strong> — こちらは記録そのものを消します
+        (成績の全件削除は集計期間の履歴も消し、新しい第1期から始めなおします)。
       </p>
       <div class="form-row">
         <label><input type="number" id="resultsDays" min="1" value="90"> 日より古い成績を削除</label>
@@ -369,20 +385,74 @@ function evalTable(runs) {
     }).join("") + "</tbody></table>";
 }
 
+// -- 集計期間 -------------------------------------------------------------------
+// The picker keeps its selection across reloads so that 〆ing, or just
+// refreshing, doesn't silently swap which period is on screen.
+const spanOf = (p) => `${(p.started_at || "").slice(0, 10)} 〜 ${p.closed_at ? p.closed_at.slice(0, 10) : "開催中"}`;
+
+function fillPeriodSelect(periods) {
+  const sel = $("periodSel");
+  const keep = sel.value;
+  const open = periods.find((p) => !p.closed_at);
+  sel.innerHTML =
+    `<option value="current">開催中${open ? "(" + esc(open.name) + ")" : ""}</option>` +
+    `<option value="all">全期間の通算</option>` +
+    periods.filter((p) => p.closed_at)
+      .map((p) => `<option value="${p.id}">${esc(p.name)} — ${esc(spanOf(p))} (${p.games}戦)</option>`)
+      .join("");
+  if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+}
+
+function periodTable(periods) {
+  if (!periods.length) return '<div class="empty">集計期間がありません。</div>';
+  return `<table><thead><tr><th>期間</th><th>開始</th><th>終了</th><th>対局</th><th>状態</th></tr></thead><tbody>` +
+    periods.map((p) => `<tr>
+      <td>${esc(p.name)}</td>
+      <td class="muted">${esc((p.started_at || "").slice(0, 16).replace("T", " "))}</td>
+      <td class="muted">${p.closed_at ? esc(p.closed_at.slice(0, 16).replace("T", " ")) : "—"}</td>
+      <td class="num">${p.games}</td>
+      <td>${p.closed_at ? '<span class="muted">〆済み</span>' : "<strong>開催中</strong>"}</td>
+    </tr>`).join("") + "</tbody></table>";
+}
+
 async function loadStats() {
   try {
-    const overview = await send({ action: "stats_overview" });
+    const period = $("periodSel").value;
+    const overview = await send({ action: "stats_overview", period });
     if (!overview.ok) return showMsg("エラー: " + overview.error, true, true);
+    fillPeriodSelect(overview.periods);
+    $("periodList").innerHTML = periodTable(overview.periods);
+    const shown = overview.periods.find((p) => p.id === overview.period_id);
+    $("periodLabel").textContent = overview.period_id == null
+      ? "(全期間の通算)"
+      : shown ? `(${shown.name} / ${spanOf(shown)})` : "";
     $("byName").innerHTML = careerTable(overview.by_name);
     $("byPolicy").innerHTML = careerTable(overview.by_policy);
-    const recent = await send({ action: "stats_recent", limit: 20 });
+    const recent = await send({ action: "stats_recent", limit: 20, period });
     if (recent.ok) $("recent").innerHTML = recentTable(recent.games);
-    const evals = await send({ action: "stats_evaluations", limit: 10 });
+    const evals = await send({ action: "stats_evaluations", limit: 10, period });
     if (evals.ok) $("evals").innerHTML = evalTable(evals.runs);
-    showMsg("");
+    if (!stickyMsg) showMsg(""); // a reload triggered by 〆る must not eat its own result
   } catch (e) { showMsg(e.message, true); }
 }
 $("statsLoad").addEventListener("click", loadStats);
+$("periodSel").addEventListener("change", loadStats);
+
+// Closing a period is reversible in the sense that nothing is deleted, but it
+// does start a new aggregation for everyone -- confirm before sending.
+$("closePeriod").addEventListener("click", async () => {
+  const next = $("nextPeriodName").value.trim();
+  if (!confirm(`開催中の集計を〆て、次の期間${next ? "「" + next + "」" : ""}を開始します。\nこれまでの記録は削除されず、成績表が新しい期間の分に切り替わります。よろしいですか?`)) return;
+  showMsg("");
+  try {
+    const reply = await send({ action: "close_period", next_name: next || null });
+    if (!reply.ok) return showMsg("エラー: " + reply.error, true, true);
+    $("nextPeriodName").value = "";
+    $("periodSel").value = "current";
+    showMsg(`「${reply.closed.name}」を〆ました(${reply.closed.games}戦)。今後の成績は「${reply.opened.name}」に記録されます。`, false, true);
+    loadStats();
+  } catch (e) { showMsg(e.message, true); }
+});
 
 // -- maintenance ---------------------------------------------------------------
 const fmtBytes = (n) => (n >= 1 << 30 ? (n / (1 << 30)).toFixed(1) + " GB"
@@ -400,9 +470,12 @@ async function loadStorage() {
       card("評価モード", s.evaluation_summaries) + card("DBサイズ", fmtBytes(s.db_bytes)) +
       card("行動ログ", s.action_log_files + " 件") + card("ログ容量", fmtBytes(s.action_log_bytes));
     $("storagePaths").innerHTML =
+      (s.current_period ? `開催中の集計期間: <strong>${esc(s.current_period.name)}</strong>` +
+        ` (${esc((s.current_period.started_at || "").slice(0, 16).replace("T", " "))}〜 / ${s.current_period_games}戦` +
+        ` / 全${s.periods}期)<br>` : "") +
       `DB: <code>${esc(s.db_path)}</code> / 行動ログ: <code>${esc(s.action_log_dir || "(なし)")}</code>` +
       (s.oldest_game ? `<br>最古の記録: ${esc(s.oldest_game.slice(0, 16).replace("T", " "))} / 最新: ${esc((s.newest_game || "").slice(0, 16).replace("T", " "))}` : "");
-    showMsg("");
+    if (!stickyMsg) showMsg(""); // ditto for the reload a purge does on completion
   } catch (e) { showMsg(e.message, true); }
 }
 $("storageLoad").addEventListener("click", loadStorage);

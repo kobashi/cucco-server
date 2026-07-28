@@ -17,6 +17,8 @@ JSON, one reply per request:
     {"token": "...", "action": "table_status", "room_id": "AB12CD"}
     {"token": "...", "action": "abort_table",  "room_id": "AB12CD"}
     {"token": "...", "action": "remove_table", "room_id": "AB12CD"}
+    {"token": "...", "action": "list_periods"}
+    {"token": "...", "action": "close_period", "next_name": "第2期"}
 
 Replies: {"ok": true, ...} or {"ok": false, "error": "..."}.
 
@@ -65,7 +67,7 @@ async def handle_admin_request(
     action = request.get("action")
     if action == "list_tables":
         return {"ok": True, "tables": [_table_summary(t) for t in _tables(registry)]}
-    if action in _STATS_ACTIONS or action in _MAINTENANCE_ACTIONS:
+    if action in _STATS_ACTIONS or action in _MAINTENANCE_ACTIONS or action in _PERIOD_ACTIONS:
         return _handle_data_request(action, request, results_store, action_log_dir)
 
     room_id = request.get("room_id")
@@ -107,6 +109,9 @@ def _tables(registry: TableRegistry) -> list[Table]:
 
 _STATS_ACTIONS = ("stats_overview", "stats_recent", "stats_evaluations")
 _MAINTENANCE_ACTIONS = ("storage_info", "purge_results", "purge_action_logs")
+# 集計期間: reading the list is harmless, but `close_period` ends the current
+# aggregation and starts a new one -- the console confirms before sending it.
+_PERIOD_ACTIONS = ("list_periods", "close_period", "rename_period")
 
 
 def _career_row(row) -> dict:
@@ -141,6 +146,37 @@ def _action_log_files(action_log_dir: Path | None) -> list[Path]:
     return [p for p in action_log_dir.glob("*.jsonl") if p.is_file()]
 
 
+def _handle_period_request(action: str, request: dict, results_store) -> dict:
+    """集計期間 actions. These go through the store's own (writing) connection
+    -- the same single writer the game loop uses -- so a 〆 can never race a
+    `game_ended` into a locked database."""
+    if action == "list_periods":
+        return {
+            "ok": True,
+            "periods": results_store.list_periods(),
+            "current": results_store.current_period(),
+        }
+    if action == "rename_period":
+        period_id = request.get("period_id")
+        if not isinstance(period_id, int):
+            return {"ok": False, "error": "'period_id' must be an integer"}
+        return {"ok": True, "period": results_store.rename_period(period_id=period_id, name=request.get("name", ""))}
+
+    # close_period: 〆る. Not destructive -- the closed period keeps its games
+    # and stays readable; only the *live* standings restart.
+    next_name = request.get("next_name")
+    if next_name is not None and not isinstance(next_name, str):
+        return {"ok": False, "error": "'next_name' must be a string"}
+    if isinstance(next_name, str) and len(next_name.strip()) > 60:
+        return {"ok": False, "error": "期間名は60文字以内にしてください"}
+    result = results_store.close_period(next_name=next_name)
+    logger.warning(
+        "admin closed period %r (%d games); now recording into %r",
+        result["closed"]["name"], result["closed"]["games"], result["opened"]["name"],
+    )
+    return {"ok": True, **result}
+
+
 def _handle_data_request(action: str, request: dict, results_store, action_log_dir: Path | None) -> dict:
     if results_store is None:
         return {"ok": False, "error": "この構成では成績データが無効です(results_store 未設定)"}
@@ -149,27 +185,41 @@ def _handle_data_request(action: str, request: dict, results_store, action_log_d
         return {"ok": False, "error": "'limit' must be an integer between 1 and 200"}
 
     try:
+        if action in _PERIOD_ACTIONS:
+            return _handle_period_request(action, request, results_store)
+
         if action in _STATS_ACTIONS:
             conn = stats.open_readonly(results_store.path)  # read-only: safe while games run
             try:
+                # Default to the open period, so the standings the console
+                # shows are the ones the next 〆 will reset. "all" asks for
+                # every period combined; an id picks a closed one.
+                period_id = stats.resolve_period(conn, request.get("period", "current"))
+                period = {"period_id": period_id, "periods": stats.list_periods(conn)}
                 if action == "stats_overview":
                     return {
                         "ok": True,
-                        "by_name": [_career_row(r) for r in stats.career_by_name(conn)],
-                        "by_policy": [_career_row(r) for r in stats.career_by_policy(conn)],
+                        **period,
+                        "by_name": [_career_row(r) for r in stats.career_by_name(conn, period_id=period_id)],
+                        "by_policy": [_career_row(r) for r in stats.career_by_policy(conn, period_id=period_id)],
                     }
                 if action == "stats_recent":
                     return {
                         "ok": True,
+                        **period,
                         "games": [
                             {
                                 "game": dict(entry["game"]),
                                 "standings": [dict(s) for s in entry["standings"]],
                             }
-                            for entry in stats.recent_games(conn, limit=limit)
+                            for entry in stats.recent_games(conn, limit=limit, period_id=period_id)
                         ],
                     }
-                return {"ok": True, "runs": stats.evaluation_runs(conn, limit=limit)}
+                return {
+                    "ok": True,
+                    **period,
+                    "runs": stats.evaluation_runs(conn, limit=limit, period_id=period_id),
+                }
             finally:
                 conn.close()
 

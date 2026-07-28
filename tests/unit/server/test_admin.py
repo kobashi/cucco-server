@@ -370,3 +370,66 @@ async def test_data_actions_need_a_store_and_validate_limit(store_and_logs):
     assert not bad["ok"] and "limit" in bad["error"]
     negative = await _data_call(store, logs, action="purge_results", before_days=-1)
     assert not negative["ok"]
+
+
+# -- 集計期間 --------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_periods_reports_the_open_period(store_and_logs):
+    store, logs = store_and_logs
+    reply = await _data_call(store, logs, action="list_periods")
+    assert reply["ok"]
+    assert reply["current"]["name"] == "第1期" and reply["current"]["closed_at"] is None
+    assert [p["games"] for p in reply["periods"]] == [1]
+
+
+@pytest.mark.asyncio
+async def test_close_period_resets_the_live_standings_without_losing_them(store_and_logs):
+    from cucco.persistence.results_store import PlayerInfo
+
+    store, logs = store_and_logs
+    before = await _data_call(store, logs, action="stats_overview")
+    assert [r["name"] for r in before["by_name"]] == ["Alice", "AI-matrix-1"]
+
+    closed = await _data_call(store, logs, action="close_period", next_name="第2ラウンド")
+    assert closed["ok"]
+    assert closed["closed"]["name"] == "第1期" and closed["closed"]["games"] == 1
+    assert closed["opened"]["name"] == "第2ラウンド"
+
+    # The default view follows the new period, so the standings read empty...
+    after = await _data_call(store, logs, action="stats_overview")
+    assert after["ok"] and after["by_name"] == []
+    assert after["period_id"] == closed["opened"]["id"]
+
+    # ...but the closed period still has its game, and so does the combined view.
+    archived = await _data_call(store, logs, action="stats_overview", period=closed["closed"]["id"])
+    assert [r["name"] for r in archived["by_name"]] == ["Alice", "AI-matrix-1"]
+    combined = await _data_call(store, logs, action="stats_overview", period="all")
+    assert combined["period_id"] is None
+    assert [r["name"] for r in combined["by_name"]] == ["Alice", "AI-matrix-1"]
+
+    # New games land in the new period.
+    store.record_game_ended(
+        table_id="T2", mode="normal",
+        players=[PlayerInfo("c", "Carol", "human")], ranking=(("c", 40),), action_log_path=None,
+    )
+    reopened = await _data_call(store, logs, action="stats_overview")
+    assert [r["name"] for r in reopened["by_name"]] == ["Carol"]
+
+
+@pytest.mark.asyncio
+async def test_period_actions_validate_their_arguments(store_and_logs):
+    store, logs = store_and_logs
+    bad_period = await _data_call(store, logs, action="stats_overview", period=4242)
+    assert not bad_period["ok"] and "集計期間" in bad_period["error"]
+
+    long_name = await _data_call(store, logs, action="close_period", next_name="あ" * 61)
+    assert not long_name["ok"] and "60文字" in long_name["error"]
+
+    bad_id = await _data_call(store, logs, action="rename_period", period_id="first")
+    assert not bad_id["ok"] and "period_id" in bad_id["error"]
+
+    current = (await _data_call(store, logs, action="list_periods"))["current"]
+    renamed = await _data_call(store, logs, action="rename_period", period_id=current["id"], name=" ゼミ第1回 ")
+    assert renamed["ok"] and renamed["period"]["name"] == "ゼミ第1回"

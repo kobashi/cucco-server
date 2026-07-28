@@ -8,6 +8,12 @@ be tunneled (docs/security-notes.md).
     python -m cucco.tools.admin --token XXXX status AB12CD
     python -m cucco.tools.admin --token XXXX abort AB12CD
     python -m cucco.tools.admin --token XXXX remove AB12CD
+    python -m cucco.tools.admin --token XXXX periods
+    python -m cucco.tools.admin --token XXXX close-period --name 第2期
+
+`close-period` 〆s the open 集計期間 and opens the next one: the standings
+restart from zero, and the closed period stays readable
+(`python -m cucco.tools.stats --period <ID>`). Nothing is deleted.
 
 The token is printed in the server log at startup (or set via
 --admin-token when launching the server).
@@ -53,6 +59,11 @@ async def run(args) -> int:
     request: dict = {"token": args.token}
     if args.command == "list":
         request["action"] = "list_tables"
+    elif args.command == "periods":
+        request["action"] = "list_periods"
+    elif args.command == "close-period":
+        request["action"] = "close_period"
+        request["next_name"] = args.name
     else:
         request["action"] = {"status": "table_status", "abort": "abort_table", "remove": "remove_table"}[args.command]
         request["room_id"] = args.room_id
@@ -83,6 +94,19 @@ async def run(args) -> int:
                 print(f"  {i}位: {pid} ({chips}チップ)")
     elif args.command == "remove":
         print(f"卓 {reply['removed']} を削除しました")
+    elif args.command == "periods":
+        _print_table(
+            ["ID", "期間", "開始", "終了", "対局", "状態"],
+            [
+                [p["id"], p["name"], p["started_at"][:16], p["closed_at"][:16] if p["closed_at"] else "-",
+                 p["games"], "〆済み" if p["closed_at"] else "開催中"]
+                for p in reply["periods"]
+            ],
+        )
+    elif args.command == "close-period":
+        closed, opened = reply["closed"], reply["opened"]
+        print(f"「{closed['name']}」を〆ました({closed['games']}戦・{closed['started_at'][:16]}〜{closed['closed_at'][:16]})")
+        print(f"今後の成績は「{opened['name']}」に記録されます")
     return 0
 
 
@@ -92,6 +116,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--token", required=True, help="サーバー起動ログに出力された管理トークン")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="全卓の一覧と進行状況")
+    sub.add_parser("periods", help="集計期間の一覧")
+    close = sub.add_parser("close-period", help="開催中の集計を〆て次の期間を開始(記録は消えません)")
+    close.add_argument("--name", help="次の期間名(省略すると「第N期」)")
     for name, help_ in (("status", "卓の詳細状態"), ("abort", "進行中のゲームを強制終了して卓を閉じる"), ("remove", "ゲームの走っていない卓を削除")):
         p = sub.add_parser(name, help=help_)
         p.add_argument("room_id")
