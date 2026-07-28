@@ -45,6 +45,13 @@ export function createQueue() {
     clearTimeout(hurryTimer);
   }
 
+  // Drop the catch-up state so whatever is enqueued next plays in full.
+  function resume() {
+    instant = false;
+    rate = 1;
+    clearTimeout(hurryTimer);
+  }
+
   // Finish the current animation(s) immediately and run all queued steps with
   // zero duration. Synchronous from the caller's perspective except for
   // microtasks -- by the next frame the scene shows the end state.
@@ -96,7 +103,15 @@ export function createQueue() {
       steps.length = 0;
       clearTimeout(hurryTimer);
       for (const a of activeAnimations) a.finish();
+      resume();
     },
+    // Start a new chapter at full speed. `instant` is a flush of the CURRENT
+    // backlog, but it only lifts when pump() drains -- and a fast-forward
+    // during a deal's tail (the result-pane safety net, hurry()'s ceiling)
+    // usually lands while the queue is still running, so the flag was still
+    // set when the next deal's steps arrived and that deal got dealt with no
+    // animation at all. Deal boundaries call this so a new deal always plays.
+    resume,
     get busy() {
       return busy();
     },

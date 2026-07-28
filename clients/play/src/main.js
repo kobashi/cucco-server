@@ -199,6 +199,9 @@ function handleOp(op) {
       // queue and dismisses the active card without setting the instant flag,
       // so this deal's own dealing animation (enqueued just below) still plays.
       if (confirmMode !== "off") queue.clear();
+      // A new deal is a fresh chapter: play it at full speed even if the tail
+      // of the last one was fast-forwarded (see queue.resume).
+      queue.resume();
       const seatsInOrder = (state.table?.seats ?? []).filter((s) => s.in_current_pot !== false).map((s) => s.player_id);
       queue.enqueue(async (instant) => {
         const sc = scene();
@@ -207,9 +210,21 @@ function handleOp(op) {
         for (const pid of seatsInOrder) {
           sound.play("deal");
           await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(pid), html: cardHTML(null), duration: 160 });
+          // The dealt card settles face-down in the seat the moment its own
+          // flight lands, so seats fill one by one like a real deal instead of
+          // every card popping in at the final sync.
+          const slot = sc.slotEl(pid);
+          if (slot) slot.innerHTML = cardHTML(null);
         }
+        // Only now, with the whole deal on the table, do I look at my own
+        // card: it turns face-up in place rather than having been readable
+        // from the moment the event arrived.
+        state.shownHand = state.yourHand;
+        sc.sync(state);
+        renderHandInfo(sceneRefs.handInfoEl, state);
+        await flipReveal(queue, sc.slotEl(state.playerId)?.querySelector(".card-face"));
       });
-      revealHandStep(); // reveal my freshly dealt card after the dealing flight
+      revealHandStep(); // safety net: also reveals when the step above was skipped
       return;
     }
 
@@ -243,12 +258,35 @@ function handleOp(op) {
         const sc = scene();
         if (!sc || instant) return;
         sound.play("exchange");
-        await Promise.all([
-          fly(queue, { fromEl: sc.slotEl(requester), toEl: sc.slotEl(target), html: cardHTML(null), duration: FLIGHT_MS }),
-          fly(queue, { fromEl: sc.slotEl(target), toEl: sc.slotEl(requester), html: cardHTML(null), duration: FLIGHT_MS }),
-        ]);
+        const rSlot = sc.slotEl(requester);
+        const tSlot = sc.slotEl(target);
+        // A cambio swaps two physical cards, so both must visibly LEAVE their
+        // seats and cross. Each ghost carries the card that was actually
+        // sitting there (face-up if an effect had already revealed it), and
+        // the slot is emptied right after fly() has measured it -- otherwise
+        // the old cards stay put and the two ghosts read as copies flying
+        // over a table where nothing moved.
+        // `||`, not `??`: an empty slot yields "" (not nullish), and a ghost
+        // with no content measures zero and flies invisibly.
+        const rHTML = rSlot?.innerHTML || cardHTML(null);
+        const tHTML = tSlot?.innerHTML || cardHTML(null);
+        const flights = [
+          fly(queue, { fromEl: rSlot, toEl: tSlot, html: rHTML, duration: FLIGHT_MS }),
+          fly(queue, { fromEl: tSlot, toEl: rSlot, html: tHTML, duration: FLIGHT_MS }),
+        ];
+        if (rSlot) rSlot.innerHTML = "";
+        if (tSlot) tSlot.innerHTML = "";
+        await Promise.all(flights);
+        // Refill in THIS step rather than leaning on the one queued below:
+        // this step is the only thing that emptied the slots, so it has to be
+        // what fills them again. A clear() in between (reconnect/rebuild)
+        // drops queued steps, and the two seats would sit visibly empty until
+        // the next idle render.
+        state.shownHand = state.yourHand;
+        sc.sync(state);
+        renderHandInfo(sceneRefs.handInfoEl, state);
       });
-      revealHandStep(); // reveal my new card here, after any effect animation
+      revealHandStep(); // safety net: also reveals when the step above was skipped
       // Confirm mode: pause on a card naming what I received, but ONLY when I
       // was the exchange TARGET -- someone else's cambio landed on me, which I
       // didn't initiate and might miss. When I'm the turn player (requester) I
@@ -269,8 +307,14 @@ function handleOp(op) {
         if (!sc || instant) return;
         // Drawing from the deck is public at a physical table: fly the drawn
         // card face-up to the actor so everyone sees what came off the deck.
+        // The card being replaced leaves the seat as the new one sets off, so
+        // the seat is empty while the draw is in the air rather than showing
+        // the old card until the new one lands on top of it.
         sound.play("deal");
-        await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(actor), html: cardHTML(newCard), duration: FLIGHT_MS });
+        const actorSlot = sc.slotEl(actor);
+        const flight = fly(queue, { fromEl: sc.deckEl(), toEl: actorSlot, html: cardHTML(newCard), duration: FLIGHT_MS });
+        if (actorSlot) actorSlot.innerHTML = "";
+        await flight;
         // A deck draw is public and lands face-up, so this IS the reveal point
         // for the actor's (possibly my) new card -- advance shownHand here.
         if (actor === state.playerId) state.shownHand = state.yourHand;
