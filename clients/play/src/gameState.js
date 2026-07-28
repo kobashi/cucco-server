@@ -217,7 +217,10 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         );
         state.currentTurnSeat = turnOrder()[0] ?? null;
         log("配布されました");
-        emit({ kind: "deal_started" });
+        // 手札を op に載せる: 表示ステップが「今の yourHand」を読むと、
+        // キューが遅れているあいだに届いた後続イベントの手札を先に映して
+        // しまう(main.js の revealHandStep 参照)。
+        emit({ kind: "deal_started", yourHand: state.yourHand });
         break;
       }
 

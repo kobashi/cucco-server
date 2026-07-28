@@ -102,10 +102,19 @@ const syncStep = () => queue.enqueue(async () => sceneRefs?.scene?.sync(state));
 // animation earlier in the queue finishes first. Enqueue this in place of a
 // plain syncStep for any op that can change my hand (exchange / deck draw /
 // deal). For others' exchanges yourHand is unchanged, so it's a harmless sync.
-const revealHandStep = () =>
+// `card` is the hand THIS op reveals, captured when the op was emitted --
+// never `state.yourHand` read at step time. The queue lags behind the network:
+// while it drains, later events have already advanced yourHand, so a step that
+// read it live would show a hand from a future op. That is exactly how the
+// outgoing card of a cambio came to display the card being RECEIVED -- the
+// previous op's reveal step had already put the new hand in my seat, and the
+// exchange step then flew whatever was sitting there.
+// Pass `undefined` for ops that don't change my hand: the sync still runs, but
+// the shown hand is left alone.
+const revealHandStep = (card) =>
   queue.enqueue(async () => {
     if (!sceneRefs) return;
-    state.shownHand = state.yourHand;
+    if (card !== undefined) state.shownHand = card;
     sceneRefs.scene.sync(state);
     renderHandInfo(sceneRefs.handInfoEl, state);
   });
@@ -212,6 +221,7 @@ function handleOp(op) {
     }
 
     case "deal_started": {
+      const dealtHand = op.yourHand ?? null;
       // Confirm-mode backlog bound: a new deal (incl. a new pot's first deal)
       // is a hard chapter boundary. If the human fell behind on confirm cards
       // -- e.g. they were out of the pot and the AIs raced through the last
@@ -240,12 +250,12 @@ function handleOp(op) {
         // Only now, with the whole deal on the table, do I look at my own
         // card: it turns face-up in place rather than having been readable
         // from the moment the event arrived.
-        state.shownHand = state.yourHand;
+        state.shownHand = dealtHand;
         sc.sync(state);
         renderHandInfo(sceneRefs.handInfoEl, state);
         await flipReveal(queue, sc.slotEl(state.playerId)?.querySelector(".card-face"));
       });
-      revealHandStep(); // safety net: also reveals when the step above was skipped
+      revealHandStep(dealtHand); // safety net: also reveals when the step above was skipped
       return;
     }
 
@@ -275,6 +285,7 @@ function handleOp(op) {
 
     case "exchange": {
       const { requester, target, yourNewCard } = op;
+      const involvesMe = requester === state.playerId || target === state.playerId;
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
@@ -303,11 +314,12 @@ function handleOp(op) {
         // what fills them again. A clear() in between (reconnect/rebuild)
         // drops queued steps, and the two seats would sit visibly empty until
         // the next idle render.
-        state.shownHand = state.yourHand;
+        if (involvesMe) state.shownHand = yourNewCard;
         sc.sync(state);
         renderHandInfo(sceneRefs.handInfoEl, state);
       });
-      revealHandStep(); // safety net: also reveals when the step above was skipped
+      // Only my own exchanges move my hand; someone else's is a plain re-sync.
+      revealHandStep(involvesMe ? yourNewCard : undefined);
       // Confirm mode: pause on a card naming what I received, but ONLY when I
       // was the exchange TARGET -- someone else's cambio landed on me, which I
       // didn't initiate and might miss. When I'm the turn player (requester) I
@@ -338,7 +350,7 @@ function handleOp(op) {
         await flight;
         // A deck draw is public and lands face-up, so this IS the reveal point
         // for the actor's (possibly my) new card -- advance shownHand here.
-        if (actor === state.playerId) state.shownHand = state.yourHand;
+        if (actor === state.playerId) state.shownHand = newCard;
         sc.sync(state); // the actor's slot now holds the revealed drawn card
         renderHandInfo(sceneRefs.handInfoEl, state);
         await banner(queue, `${game.seatName(actor)} が山札から ${newCard} を引く`, "info");
@@ -471,7 +483,10 @@ function handleOp(op) {
       return;
     }
 
-    case "deal_opened":
+    case "deal_opened": {
+      // Captured now, for the same reason as the hand above: by the time this
+      // step runs, a later deal_started may already have reset lastDealOpened.
+      const openedSnapshot = state.lastDealOpened;
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc) return;
@@ -483,7 +498,7 @@ function handleOp(op) {
         // THE reveal point for everyone's hand: advance the presentation
         // mirror here and nowhere else, so the table stays face-down until
         // the last turn's animation has finished playing.
-        state.shownOpened = state.lastDealOpened;
+        state.shownOpened = openedSnapshot;
         sc.sync(state); // faces are now in the slots
         if (instant) return;
         sound.play("open");
@@ -501,6 +516,7 @@ function handleOp(op) {
         await pause(queue, 260 + faces.length * 60);
       });
       return;
+    }
 
     case "chips_paid": {
       const { player } = op;
