@@ -63,6 +63,14 @@ const RESULT_PANE_GRACE_MS = 2000;
 // then resolves -- one card at a time, like a physical table.
 const FLIGHT_MS = 550; // a single card's flight (deck<->seat<->discard)
 const REVEAL_HOLD_MS = 750; // how long a turned-up card sits so the table reads it
+// Hard ceiling on how long the dock may hold the turn buttons for the
+// presentation to catch up. Gating purely on queue.busy is not safe: if a
+// step ever fails to settle (a background tab can stall Web Animations, so
+// `finished` never resolves) the queue stays busy forever and the player
+// simply cannot act. Comfortably covers a normal deal-out -- and hurry()
+// compresses that to well under half of it -- so in practice the gate lifts
+// when the animation ends, and this only ever fires as a backstop.
+const TURN_GATE_MAX_MS = 2000;
 
 // Refusal reason -> the on-card motion its effect plays (anim/effects.js).
 const REASON_MOTIONS = {
@@ -83,6 +91,9 @@ state.invitedRoomId = invitedRoomFromUrl;
 
 // UI-only state (which screen family is showing)
 let uiPhase = "name"; // name | lobby | create | join | waiting | table
+// Until when the dock may keep the turn buttons disabled waiting on the
+// presentation (see TURN_GATE_MAX_MS).
+let turnGateUntil = 0;
 let connectionStatus = "connecting";
 
 // -- op -> animation mapping -----------------------------------------------------
@@ -95,6 +106,9 @@ let connectionStatus = "connecting";
 // clock doesn't wait for theatrics).
 
 const scene = () => sceneRefs?.scene ?? null;
+// The dock holds the turn buttons only while the presentation is genuinely
+// behind AND the backstop deadline has not passed.
+const turnButtonsPending = () => queue.busy && Date.now() < turnGateUntil;
 const syncStep = () => queue.enqueue(async () => sceneRefs?.scene?.sync(state));
 // The reveal point for MY own card: advance the presentation mirror
 // (shownHand) to the authoritative hand, then sync the scene + hand-info so
@@ -178,8 +192,8 @@ function handleOp(op) {
         return;
       }
       // Don't hard-snap the scene -- speed the pending effect chain up so I
-      // still see what just happened before deciding. My action buttons are
-      // already live off state, so this never blocks me.
+      // still see what just happened before deciding.
+      if (state.turnPrompt) turnGateUntil = Date.now() + TURN_GATE_MAX_MS;
       queue.hurry();
       sound.play("my_turn");
       return;
@@ -592,7 +606,10 @@ queue.setConfirmMode(confirmActive);
 // Re-render when the presentation catches up, so the turn buttons the dock
 // greyed out (see renderDock's `pending`) come back the instant they may be
 // used, rather than on the next unrelated state change.
-queue.setOnDrain(() => { if (uiPhase === "table") render(); });
+// `sceneRefs` (not uiPhase) is the "we are showing the table" signal: uiPhase
+// only tracks the pre-room screens and stays "lobby" for the whole game, so
+// gating on it here meant this never fired and the buttons stayed dead.
+queue.setOnDrain(() => { if (sceneRefs) render(); });
 
 const CONFIRM_LABELS = {
   off: ['💨', ' 確認 OFF', "メッセージ確認: OFF — すべて自動で流れる(クリックで切替)"],
@@ -741,7 +758,7 @@ function render() {
   }
   renderStatus(sceneRefs.statusEl, state, game.seatName);
   renderHandInfo(sceneRefs.handInfoEl, state);
-  renderDock(sceneRefs.dockEl, state, actions, { pending: queue.busy });
+  renderDock(sceneRefs.dockEl, state, actions, { pending: turnButtonsPending() });
   renderModals(sceneRefs.modalEl, state, actions, game.seatName);
   renderLogDrawer(sceneRefs.logEl, state);
   prependConnBanner();
@@ -785,6 +802,20 @@ setInterval(() => {
     const remaining = Math.max(0, Math.ceil((Number(el.dataset.deadline) - now) / 1000));
     const text = String(remaining);
     if (el.textContent !== text) el.textContent = text;
+  }
+  // Safety net for the dock's pending gate. queue.setOnDrain re-renders the
+  // moment the presentation catches up, but if that ever fails to fire the
+  // turn buttons would stay disabled with no way back -- the player simply
+  // could not act. Re-assert the enabled state here every tick so the worst
+  // case is a quarter-second of lag, never a dead dock.
+  const dock = sceneRefs?.dockEl;
+  if (dock) {
+    const pending = turnButtonsPending();
+    for (const b of dock.querySelectorAll("#cambio-btn, #no-change-btn")) {
+      if (b.disabled !== pending) b.disabled = pending;
+    }
+    const wait = dock.querySelector(".dock-wait");
+    if (wait && !pending) wait.remove();
   }
 }, 250);
 
