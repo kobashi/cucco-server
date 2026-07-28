@@ -145,7 +145,15 @@ def translate(event: DealEvent | PotEvent | GameEvent) -> WireEvent | None:
         )
 
     if isinstance(event, DeckReshuffled):
-        return WireEvent("deck_reshuffled", public={"remaining_count": event.remaining_count})
+        return WireEvent(
+            "deck_reshuffled",
+            public={
+                "remaining_count": event.remaining_count,
+                # Seats whose face-up disqualified card went into the rebuild;
+                # clients animate those cards to the discard first.
+                "swept_seats": list(event.swept_seats),
+            },
+        )
 
     if isinstance(event, ChipsPaid):
         return WireEvent(

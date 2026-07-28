@@ -274,6 +274,7 @@ function renderCreate(el, state, actions) {
           </select>
         </label>
         <label><input type="checkbox" id="horse-house-reveal"> 馬/家どちらの拒否か公開する</label>
+        <label><input type="checkbox" id="reshuffle-includes-revealed"> 山札の再構成に、場に出ている失格札も混ぜる</label>
         <label>特殊札の効果(道化を除く)
           <select id="effect-declaration">
             <option value="auto" selected>自動で発動(標準ルール)</option>
@@ -315,6 +316,7 @@ function renderCreate(el, state, actions) {
       starting_chips: Math.round(Number(el.querySelector("#starting-chips").value)),
       disqualified_card_disclosure: el.querySelector("#disclosure").value,
       horse_house_reveal: el.querySelector("#horse-house-reveal").checked,
+      reshuffle_includes_revealed: el.querySelector("#reshuffle-includes-revealed").checked,
       effect_declaration: el.querySelector("#effect-declaration").value,
       discard_display: el.querySelector("#discard-display").value,
       result_pause_sec: Math.max(0, Math.min(60, Number(el.querySelector("#result-pause").value) || 0)),

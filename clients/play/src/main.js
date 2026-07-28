@@ -402,7 +402,10 @@ function handleOp(op) {
         const slot = sc.slotEl(player);
         if (card && slot) {
           // Disclosure is on: turn the offending card face-up in the seat so
-          // everyone sees exactly why this player is out, hold, then discard.
+          // everyone sees exactly why this player is out. It STAYS there for
+          // the rest of the deal (marked 失格) and is collected with everyone
+          // else's at the open -- the server holds it out of the discard pile
+          // until then too, so nothing flies to the discard here.
           slot.innerHTML = cardHTML(card);
           const cardEl = slot.querySelector(".card-face");
           await flipReveal(queue, cardEl);
@@ -410,8 +413,6 @@ function handleOp(op) {
           // important=true: a player leaving the deal is worth a modal in 最小.
           await banner(queue, `${game.seatName(player)} 失格 — ${label}`, "danger", 1100, true);
           await pause(queue, REVEAL_HOLD_MS);
-          sound.play("deal");
-          await fly(queue, { fromEl: slot, toEl: sc.discardEl(), html: cardHTML(card), duration: FLIGHT_MS });
         } else {
           // Disclosure deferred (card hidden): still announce who and why.
           await banner(queue, `${game.seatName(player)} 失格 — ${label}`, "danger", 1100, true);
@@ -423,9 +424,25 @@ function handleOp(op) {
     }
 
     case "reshuffle": {
+      const { sweptCards = [] } = op;
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
+        // 山札の再構成に表向きの失格札まで含める設定: those cards are gathered
+        // off the table into the discard first, then the whole pile becomes
+        // the new deck -- two beats, so it reads as "collect, then rebuild"
+        // rather than cards vanishing from seats for no visible reason.
+        if (sweptCards.length) {
+          sound.play("flip");
+          await Promise.all(
+            sweptCards.map(({ player, card }) => {
+              const slot = sc.slotEl(player);
+              const flight = fly(queue, { fromEl: slot, toEl: sc.discardEl(), html: cardHTML(card), duration: FLIGHT_MS });
+              if (slot) slot.innerHTML = ""; // measured by fly() already
+              return flight;
+            })
+          );
+        }
         sound.play("reshuffle");
         await fly(queue, { fromEl: sc.discardEl(), toEl: sc.deckEl(), html: cardHTML(null), duration: 500 });
       });

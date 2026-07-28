@@ -35,6 +35,12 @@ class Deck:
         self._rng.shuffle(self._draw)
         self.discard_pile: list[DiscardEntry] = []
         self.on_reshuffle: Callable[[], None] | None = None
+        # Called just BEFORE the pile is rebuilt into the draw pile, so the
+        # deal can first sweep in cards that are out of play but not yet in
+        # the pile (docs/rules/final_rules.md 「山札の再構成」). Without this
+        # the deal has no way to contribute: draw() reshuffles on its own the
+        # moment the draw pile runs dry.
+        self.on_before_reshuffle: Callable[[], None] | None = None
         # Bumped every time discard_pile is cleared and rebuilt into the
         # draw pile -- lets callers detect "the discard_pile I was tracking
         # got reset out from under me" without comparing lengths, which is
@@ -51,6 +57,7 @@ class Deck:
         deck._draw = list(reversed(cards))
         deck.discard_pile = []
         deck.on_reshuffle = None
+        deck.on_before_reshuffle = None
         deck.reshuffle_count = 0
         return deck
 
@@ -70,6 +77,12 @@ class Deck:
         )
 
     def _reshuffle_from_discard(self) -> None:
+        # Give the deal its chance to add face-up out-of-play cards first --
+        # under the sweep rule they are part of what gets rebuilt, so this
+        # runs before the empty check (it can be what makes the pile
+        # non-empty).
+        if self.on_before_reshuffle is not None:
+            self.on_before_reshuffle()
         if not self.discard_pile:
             raise RuntimeError("cannot draw: both draw pile and discard pile are empty")
         self._draw = [entry.card for entry in self.discard_pile]

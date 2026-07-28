@@ -49,6 +49,7 @@ class CreateTable:
     human_disclosure: str = "deferred"
     cat_disclosure: str = "deferred"
     horse_house_reveal: bool = False
+    reshuffle_includes_revealed: bool = False
     turn_timeout_human_sec: float = 30.0
     turn_timeout_ai_sec: float = 10.0
     cucco_window_timeout_human_sec: float = 10.0
@@ -252,6 +253,11 @@ def _parse_create_table(payload: dict) -> CreateTable:
     horse_house_reveal = payload.get("horse_house_reveal", False)
     if not isinstance(horse_house_reveal, bool):
         raise ProtocolError("'horse_house_reveal' must be a boolean")
+    # 山札の再構成に、途中失格者の表向きの札まで含めるか
+    # (docs/rules/final_rules.md 「設定可能なルール」). Off = the pile only.
+    reshuffle_includes_revealed = payload.get("reshuffle_includes_revealed", False)
+    if not isinstance(reshuffle_includes_revealed, bool):
+        raise ProtocolError("'reshuffle_includes_revealed' must be a boolean")
     ai_players = _parse_ai_players(payload)
     return CreateTable(
         mode=mode,
@@ -263,6 +269,7 @@ def _parse_create_table(payload: dict) -> CreateTable:
         human_disclosure=human_disclosure,
         cat_disclosure=cat_disclosure,
         horse_house_reveal=horse_house_reveal,
+        reshuffle_includes_revealed=reshuffle_includes_revealed,
         turn_timeout_human_sec=_optional_number(payload, "turn_timeout_human_sec", 30.0),
         turn_timeout_ai_sec=_optional_number(payload, "turn_timeout_ai_sec", 10.0),
         cucco_window_timeout_human_sec=_optional_number(payload, "cucco_window_timeout_human_sec", 10.0),
@@ -344,6 +351,7 @@ def create_table_to_config(action: CreateTable) -> GameConfig:
         human_disclosure=action.human_disclosure,
         cat_disclosure=action.cat_disclosure,
         horse_house_reveal=action.horse_house_reveal,
+        reshuffle_includes_revealed=action.reshuffle_includes_revealed,
         turn_timeout_human_sec=action.turn_timeout_human_sec,
         turn_timeout_ai_sec=action.turn_timeout_ai_sec,
         cucco_window_timeout_human_sec=action.cucco_window_timeout_human_sec,

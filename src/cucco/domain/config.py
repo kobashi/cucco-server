@@ -37,6 +37,12 @@ class GameConfig:
     human_disclosure: DisqualifiedCardDisclosure = "deferred"
     cat_disclosure: DisqualifiedCardDisclosure = "deferred"
     horse_house_reveal: bool = False
+    # 山札の再構成に何を含めるか (docs/rules/final_rules.md 「設定可能なルール」).
+    # False (既定): 捨て札だけを再構成する。途中失格者の表向きの札は、そのディールが
+    # オープンするまで場に残るので、この再構成には含まれない。
+    # True: 山札が尽きて引く必要が生じた時点で、その表向きの札も捨て札に混ぜてから
+    # 再構成する -- 物理的な卓で場のカードをかき集めるのに近い。
+    reshuffle_includes_revealed: bool = False
     turn_timeout_human_sec: float = 30.0
     turn_timeout_ai_sec: float = 10.0
     cucco_window_timeout_human_sec: float = 10.0

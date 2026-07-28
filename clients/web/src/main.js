@@ -549,8 +549,15 @@ function handleEvent(type, p) {
         state.table.deck_remaining_count = p.remaining_count;
         state.table.discard_pile = [];
         state.table.provenance_map = {};
+        // 山札の再構成に表向きの失格札まで含める設定
+        // (reshuffle_includes_revealed): those cards went into the rebuilt
+        // deck, so they stop being shown in front of their ex-holder.
+        const swept = (p.swept_seats ?? []).filter((pid) => state.disqualifiedInfo[pid]?.card);
+        for (const pid of swept) state.disqualifiedInfo[pid].card = null;
         showToast("山札が捨て札から再構築されました");
-        pushLog(state, "山札を再構築しました");
+        pushLog(state, swept.length
+          ? `山札を再構築しました(場の失格札${swept.length}枚を含む)`
+          : "山札を再構築しました");
       });
       return;
 
@@ -568,16 +575,10 @@ function handleEvent(type, p) {
         state.disqualifiedIdsThisDeal.add(p.player_id);
         delete state.table.provenance_map?.[p.player_id]; // their card left play
         state.disqualifiedInfo[p.player_id] = { cause: p.cause, card: p.card ?? null };
-        if (p.card && state.table) {
-          // Immediate-disclosure setting: this card is already public --
-          // reflect it in the live discard pile now rather than waiting for
-          // deal_result (which only arrives once the whole deal concludes).
-          const originalHolder = state.table.provenance_map?.[p.player_id] ?? null;
-          state.table.discard_pile = [
-            ...(state.table.discard_pile || []),
-            { card: p.card, original_holder: originalHolder, discarded_via: "disqualification" },
-          ];
-        }
+        // A disclosed card is NOT put in the discard pile here: under both
+        // disclosure settings the server holds it back until the deal opens,
+        // leaving it face-up in front of its ex-holder (disqualifiedInfo
+        // above). `deal_result` brings in the authoritative pile.
         if (p.player_id === state.playerId) {
           state.disqualifiedThisDeal = true;
           state.yourHand = null;

@@ -94,6 +94,7 @@
   "human_disclosure": "immediate | deferred (人間による失格者のカード開示タイミング。省略時はdisqualified_card_disclosureの値)",
   "cat_disclosure": "immediate | deferred (猫による失格者のカード開示タイミング。省略時はdisqualified_card_disclosureの値)",
   "horse_house_reveal": "boolean (拒否時に馬か家かを開示するか)",
+  "reshuffle_includes_revealed": "boolean (デフォルトfalse。山札の再構成時に、場に表向きで出ている途中失格者の札も捨て札に混ぜてから再構成するか。falseなら捨て札のみで再構成し、場の失格札はディール終了まで場に残る)",
   "turn_timeout_human_sec": "number (デフォルト30)",
   "turn_timeout_ai_sec": "number (デフォルト10)",
   "cucco_window_timeout_human_sec": "number (デフォルト10)",
@@ -134,7 +135,7 @@ join_table → ready → 各宣言)を通る通常の参加者であり、`state
 | `dealer_ready` | 配布直後、親にのみ送られる「どうぞ」確認プロンプト(`timeout_sec`を含む)。親は`dealer_ready`アクション(またはクク保持なら`cucco_declare`)で応答する |
 | `result_pause` | 結果確認ウィンドウの開始(「オープン」直後とポット決着後)。`timeout_sec`を含む。全員に配信され、着席中の人間全員の`result_ack`または時間切れで進行が再開する |
 | `effect_window` | (宣言式ルールのみ)交換を要求された**全ての対象者**に送る個別通知(宣言可能札の保持者に限らない)。宣言可能札(人間/馬/猫/家)の保持者は効果を宣言するか選び、それ以外の札の保持者は「交換に応じる」を返すだけ。**対象を保持者に限定すると、応答までのラグの有無だけで特殊札の所持が卓全体に漏れる**ため、全員に同じ確認を挟んでタイミングを均一化する。`requester`と`timeout_sec`(`cucco_window_timeout_*`の値。名称は歴史的経緯)を含む。無応答は`effect_pass`扱い。宣言不能札の保持者からの`effect_declare`は交換受諾として扱う |
-| `deck_reshuffled` | ポット途中で山札が尽き、捨て札から再構築されたことを通知。再構築後の残り枚数を含む |
+| `deck_reshuffled` | ポット途中で山札が尽き、捨て札から再構築されたことを通知。再構築後の残り枚数と、`swept_seats`(この再構築で場の表向きの失格札を回収した席のID配列。`reshuffle_includes_revealed`が有効な場合のみ非空)を含む |
 | `turn_prompt` | 特定プレイヤーに手番が回ってきたことを通知(タイムアウト秒数を含む)。クク札所持者は、カンビオ/ノンカンビオの代わりに`cucco_declare`を送ってもよい(UI上は第3のボタン。非同期宣言なので厳密には「応答」ではなく、いつ送っても即時有効) |
 | `no_change_declared` | あるプレイヤーがノンカンビオを宣言したことを全員に通知(カウンティング用の公開情報) |
 | `turn_timeout_consumed` | タイムアウトによりノーチェンジとして処理されたことを通知 |
@@ -194,7 +195,8 @@ join_table → ready → 各宣言)を通る通常の参加者であり、`state
   - クク宣言を**見送ったこと**は記録されない(そもそも「見送る」という操作が存在しない — 宣言は保持者が任意のタイミングで`cucco_declare`を送るファイア・アンド・フォーゲット方式で、送らなければ何も起きない)。「誰がククを持っているか」が公開履歴から漏れることはない
 - **自分の現在の手札**(`your_hand`)は、宛先が本人の場合にのみ`state_snapshot`に含める(他プレイヤー・観戦者向けには含めない)。切断中に交換要求のターゲットにされて手札が変わっていても、再接続時の`state_snapshot`でこのフィールドから現在の手札を復元できる。ディールに参加していない(まだ配られていない/そのディールから既に脱落した)場合は`null`
 - 観戦者にも同じ公開ゲーム状態が送られる(`your_hand`を除く)
-- **山札の再構築**: 山札が尽きて捨て札から再構築される際(ポット途中、`docs/rules/final_rules.md`8.)、`deck_reshuffled`イベントを配信する。このタイミングで`deck_remaining_count`は再構築後の枚数に、`discard_pile`は空になる(そのディールの最弱判定・途中失格による捨て札はこの再構築で山札に戻るため、以降のカウンティングはリセットされる)
+- **山札の再構築**: 山札が尽きて捨て札から再構築される際(ポット途中、`docs/rules/final_rules.md`8.)、`deck_reshuffled`イベントを配信する。このタイミングで`deck_remaining_count`は再構築後の枚数に、`discard_pile`は空になる(捨て札はこの再構築で山札に戻るため、以降のカウンティングはリセットされる)
+- **途中失格者の札の扱い**: 特殊札による途中失格者の札は、開示設定によらず**そのディールがオープンした時点で**捨て札に加わる。即時公開の設定では、それまで失格者の席に表向きで置かれる(公開情報だが、捨て札の山にはまだ入っていない)。したがって上記の再構築には含まれない — `reshuffle_includes_revealed`が有効な場合のみ、再構築の直前に捨て札へ回収され、`deck_reshuffled`の`swept_seats`でどの席の札が回収されたかが通知される。カウンティングを行うクライアントは、`swept_seats`に含まれない失格札は再構築後も「場に出たまま(既知)」として扱うこと
 - **ポット開始時のリセット**: `pot_started`で`deck_remaining_count`は44(フルデッキ)に、`discard_pile`・`declarations_this_deal`・`provenance_map`は空にリセットされる。`pot_started`には最初の親(`dealer_seat`、ランダムに決定)を含める
 
 全滅による持ち越し後、所持チップ0枚のプレイヤーを除いた残りが1人になった場合は、ディールを行わず`pot_result`でその1人を勝者として即座に配信する。残りが0人になった場合は、全員のチップを含めて`pot_started`を再送し、「大人の時間」から次のポットを開始する(参加費は免除する。`docs/rules/final_rules.md`「チップ0枚の判定タイミング」参照)。

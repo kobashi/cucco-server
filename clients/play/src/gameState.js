@@ -271,15 +271,23 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         handleExchange(p);
         break;
 
-      case "deck_reshuffled":
+      case "deck_reshuffled": {
         if (!state.table) return;
         state.table.deck_remaining_count = p.remaining_count;
         state.table.discard_pile = [];
         state.table.provenance_map = {};
+        // 山札の再構成に表向きの失格札まで含める設定
+        // (reshuffle_includes_revealed): those cards have left the table for
+        // the rebuilt deck, so the seats they were sitting in go empty. The
+        // op carries them so the scene can fly them to the discard first.
+        const swept = (p.swept_seats ?? []).filter((pid) => state.disqualifiedInfo[pid]?.card);
+        const sweptCards = swept.map((pid) => ({ player: pid, card: state.disqualifiedInfo[pid].card }));
+        for (const pid of swept) state.disqualifiedInfo[pid].card = null;
         onToast?.("山札が捨て札から再構築されました");
-        log("山札を再構築しました");
-        emit({ kind: "reshuffle" });
+        log(swept.length ? `山札を再構築しました(場の失格札${swept.length}枚を含む)` : "山札を再構築しました");
+        emit({ kind: "reshuffle", sweptCards });
         break;
+      }
 
       case "cucco_declared":
         state.firstActionSeen = true;
@@ -296,12 +304,11 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         state.disqualifiedInfo[p.player_id] = { cause: p.cause, card: p.card ?? null };
         delete state.table?.provenance_map?.[p.player_id];
         delete state.revealedCards[p.player_id];
-        if (p.card && state.table) {
-          state.table.discard_pile = [
-            ...(state.table.discard_pile || []),
-            { card: p.card, original_holder: null, discarded_via: "disqualification" },
-          ];
-        }
+        // A disclosed card is NOT added to the discard pile here: it stays
+        // face-up in front of its ex-holder until the deal opens (the server
+        // holds it back the same way), and disqualifiedInfo above is what the
+        // seat renders it from. `deal_result` brings in the authoritative
+        // pile once the deal is over.
         if (p.player_id === state.playerId) {
           state.disqualifiedThisDeal = true;
           state.yourHand = null;

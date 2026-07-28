@@ -74,6 +74,23 @@ class Deal:
         # reported the same as any other reshuffle.
         self._reshuffle_events: list[DeckReshuffled] = []
         self.deck.on_reshuffle = self._on_deck_reshuffled
+        # Same reason: everything the reshuffle hooks touch has to exist
+        # before the first draw below can fire them.
+        #
+        # Cards taken out of play by a disqualification, waiting for open().
+        # Split by whether the table has already seen them: the face-up ones
+        # sit in front of their ex-holder, the deferred ones stay hidden.
+        self.deferred_discards: list[DiscardEntry] = []
+        self.revealed_discards: list[tuple[str, DiscardEntry]] = []
+        # Seats whose face-up card the last reshuffle swept in, so the event
+        # can tell clients which cards to animate away.
+        self._reshuffle_swept: tuple[str, ...] = ()
+        # Rebound unconditionally (like on_reshuffle above): the deck outlives
+        # a single deal, so leaving a previous deal's hook attached would aim
+        # the sweep at a dead deal's cards.
+        self.deck.on_before_reshuffle = (
+            self._sweep_revealed_into_discard if config.reshuffle_includes_revealed else None
+        )
 
         self.hands: dict[str, Rank] = {}
         self.provenance: dict[str, str | None] = {}
@@ -87,7 +104,6 @@ class Deal:
         self.turn_acted: set[str] = set()
         self.cucco_declared_by: str | None = None
         self.declarations: list[Declaration] = []
-        self.deferred_discards: list[DiscardEntry] = []
 
         # Step-wise cambio in progress (effect_declaration="declared" only):
         # (requester, current target awaiting an effect decision). The
@@ -100,7 +116,13 @@ class Deal:
     # -- reshuffle plumbing -------------------------------------------------
 
     def _on_deck_reshuffled(self) -> None:
-        self._reshuffle_events.append(DeckReshuffled(self.deck.remaining_count))
+        # _sweep_revealed_into_discard (if it ran) has just recorded which
+        # seats gave up their face-up card; hand that to the event so clients
+        # can animate those cards away, then reset it for the next reshuffle.
+        self._reshuffle_events.append(
+            DeckReshuffled(self.deck.remaining_count, swept_seats=self._reshuffle_swept)
+        )
+        self._reshuffle_swept = ()
 
     def _draw(self, events: list[DealEvent]) -> Rank:
         card = self.deck.draw()
@@ -422,17 +444,36 @@ class Deal:
         return [DeckExchangeAccepted(actor=actor, new_card=drawn, given_up_card=old_card)]
 
     def _disqualify(self, player_id: str, *, cause: str) -> list[DealEvent]:
+        """Take the card out of play and report the disqualification.
+
+        The disclosure setting decides only WHETHER the card is named now --
+        under both settings it joins the discard pile when the deal opens, not
+        at this moment. An immediately-disclosed card stays face-up in front
+        of its ex-holder for the rest of the deal (marked 失格), which is what
+        a physical table looks like; a deferred one waits face-down.
+        """
         self.disqualified.add(player_id)
         card = self.hands.pop(player_id)
         original_holder = self.provenance.pop(player_id, None)
-        disclosure_field = _DISCLOSURE_FIELD_BY_CAUSE[cause]
-        if getattr(self.config, disclosure_field) == "immediate":
-            self.deck.discard(card, original_holder=original_holder, via="disqualification")
+        entry = DiscardEntry(card=card, original_holder=original_holder, discarded_via="disqualification")
+        if getattr(self.config, _DISCLOSURE_FIELD_BY_CAUSE[cause]) == "immediate":
+            # Kept separately from the hidden ones: only cards that are
+            # already face-up on the table can be swept into a mid-deal
+            # reshuffle (config.reshuffle_includes_revealed).
+            self.revealed_discards.append((player_id, entry))
             return [PlayerDisqualified(player_id=player_id, cause=cause, card=card)]
-        self.deferred_discards.append(
-            DiscardEntry(card=card, original_holder=original_holder, discarded_via="disqualification")
-        )
+        self.deferred_discards.append(entry)
         return [PlayerDisqualified(player_id=player_id, cause=cause, card=None)]
+
+    def _sweep_revealed_into_discard(self) -> None:
+        """Deck.on_before_reshuffle hook (sweep rule only): the face-up cards
+        of players disqualified this deal are gathered into the discard pile
+        so the rebuilt draw pile includes them."""
+        if not self.revealed_discards:
+            return
+        self._reshuffle_swept = tuple(pid for pid, _ in self.revealed_discards)
+        self.deck.discard_pile.extend(entry for _, entry in self.revealed_discards)
+        self.revealed_discards.clear()
 
     # -- open -------------------------------------------------------------------
 
@@ -445,9 +486,17 @@ class Deal:
             raise IllegalAction("cannot open: turns remain")
         self._opened = True
 
+        # Every card a disqualification took out of play joins the pile now --
+        # the face-up ones that have been sitting in front of their ex-holder
+        # as well as the hidden ones (docs/rules/final_rules.md 「途中失格者の
+        # カード」). Under the sweep rule revealed_discards may already have
+        # been emptied by a mid-deal reshuffle.
         for entry in self.deferred_discards:
             self.deck.discard_pile.append(entry)
         self.deferred_discards.clear()
+        for _pid, entry in self.revealed_discards:
+            self.deck.discard_pile.append(entry)
+        self.revealed_discards.clear()
 
         remaining = {pid: card for pid, card in self.hands.items() if pid not in self.disqualified}
 

@@ -118,9 +118,12 @@ export function createTableScene(root) {
       if (openedCard !== undefined) {
         slot.innerHTML = cardFaceHTML(openedCard, opened.elevated_joker_holders?.includes(s.player_id));
       } else if (state.disqualifiedIdsThisDeal.has(s.player_id)) {
-        // Disqualified: their card has gone to the discard pile (the fly
-        // animation delivered it), so the seat is empty.
-        slot.innerHTML = "";
+        // Disqualified: the offending card stays face-up in front of them for
+        // the rest of the deal (即時公開) and is collected at the open, the
+        // same as a physical table. Empty when the card was never disclosed
+        // (遅延公開), or once a reshuffle has swept it into the deck.
+        const shown = state.disqualifiedInfo?.[s.player_id]?.card;
+        slot.innerHTML = shown ? cardFaceHTML(shown) : "";
       } else if (s.player_id === state.playerId) {
         // shownHand (not yourHand): my slot reveals a new card only at the
         // animation step that earns it, never mid-effect-animation.

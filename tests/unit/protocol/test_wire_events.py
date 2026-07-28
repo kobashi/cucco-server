@@ -119,7 +119,12 @@ def test_deal_opened_serializes_hands_and_losers():
 def test_deck_reshuffled():
     wire = translate(DeckReshuffled(remaining_count=44))
     assert wire.type == "deck_reshuffled"
-    assert wire.for_recipient(None) == {"remaining_count": 44}
+    assert wire.for_recipient(None) == {"remaining_count": 44, "swept_seats": []}
+
+
+def test_deck_reshuffled_reports_the_seats_whose_face_up_card_was_swept_in():
+    wire = translate(DeckReshuffled(remaining_count=44, swept_seats=("A", "C")))
+    assert wire.for_recipient(None) == {"remaining_count": 44, "swept_seats": ["A", "C"]}
 
 
 def test_pot_level_events():

@@ -87,6 +87,10 @@ class DealOpened:
 @dataclass(frozen=True)
 class DeckReshuffled:
     remaining_count: int
+    # Seats whose face-up disqualified card was gathered into the pile before
+    # the rebuild (config.reshuffle_includes_revealed). Empty under the
+    # default rule, where those cards stay put until the deal opens.
+    swept_seats: tuple[str, ...] = ()
 
 
 DealEvent = Union[

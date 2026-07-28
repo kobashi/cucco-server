@@ -10,16 +10,27 @@ from tests.unit.domain.helpers import build_deal
 # field reads the same). The two tests below close that gap.
 
 
-def test_immediate_disclosure_reveals_card_and_discards_it_right_away():
+def test_immediate_disclosure_names_the_card_but_leaves_it_on_the_table_until_open():
+    # The disclosure setting decides WHEN the card is named, not when it joins
+    # the discard pile: an immediately-disclosed card stays face-up in front
+    # of its ex-holder for the rest of the deal and is collected at open(),
+    # the same moment a deferred one is.
     config = GameConfig(joker_disclosure="immediate")
     deal = build_deal({"A": Rank.N5, "B": Rank.JOKER, "C": Rank.N7}, dealer_id="C", config=config)
 
     events = deal.submit_cambio("A")
 
     dq = next(e for e in events if isinstance(e, PlayerDisqualified))
-    assert dq.card is Rank.JOKER  # revealed immediately
+    assert dq.card is Rank.JOKER  # named immediately
+    assert deal.deck.discard_pile == []  # but not in the pile yet
+    assert [pid for pid, _ in deal.revealed_discards] == ["A"]
+    assert deal.deferred_discards == []  # revealed, so not the hidden list
+
+    deal.submit_no_change("B")
+    deal.submit_no_change("C")
+    deal.open()
     assert any(entry.card is Rank.JOKER for entry in deal.deck.discard_pile)
-    assert deal.deferred_discards == []
+    assert deal.revealed_discards == []
 
 
 def test_deferred_disclosure_hides_card_until_open():
@@ -41,15 +52,12 @@ def test_deferred_disclosure_hides_card_until_open():
     assert any(entry.card is Rank.JOKER for entry in deal.deck.discard_pile)
 
 
-def test_disclosure_setting_does_not_change_the_deal_outcome_in_this_no_reshuffle_scenario():
-    # Disclosure timing is display-only *in this scenario*, not universally:
-    # an "immediate" disqualification enters deck.discard_pile mid-deal and
-    # so could take part in a mid-pot reshuffle (deck.py's draw() rebuilds
-    # the draw pile from discard_pile when empty), while a "deferred" one
-    # sits in deferred_discards and is excluded from any such reshuffle
-    # until the deal ends. With a full draw pile (no reshuffle possible)
-    # that difference can't surface, which is what this test actually
-    # covers -- not that disclosure timing is outcome-neutral in general.
+def test_disclosure_setting_does_not_change_the_deal_outcome():
+    # Both settings now hold the card out of the pile until open(), so
+    # disclosure timing is purely about what the table is told and when --
+    # it cannot change which cards are available to a mid-deal reshuffle.
+    # (The one rule that *does* move cards early is
+    # config.reshuffle_includes_revealed; see test_deal_reshuffle.py.)
     for disclosure in ("immediate", "deferred"):
         config = GameConfig(joker_disclosure=disclosure)
         deal = build_deal({"A": Rank.N5, "B": Rank.JOKER, "C": Rank.N2}, dealer_id="C", config=config)

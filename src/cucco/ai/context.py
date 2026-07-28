@@ -12,7 +12,9 @@ Accounting model (avoids double counting):
   mirror doesn't know yet (deck-draw refusals, immediate-disclosure
   disqualifications, the dealer's given-up card, opened hands). Cleared at
   `deal_result` (superseded by the authoritative increment) and at
-  `deal_started`.
+  `deal_started`. A `deck_reshuffled` rebuilds it from
+  `revealed_disqualified`: the pile went back into the deck, but cards
+  face-up in front of a disqualified player did not.
 - `known_held` maps alive players to publicly-known current cards (a
   refusal's `revealed_rank`, the dealer's publicly drawn card). Swapped on
   accepted exchanges; dropped when the holder is disqualified (the card is
@@ -71,6 +73,10 @@ def strength_of(rank: str) -> int:
 class CountingTracker:
     discard_counts: Counter = field(default_factory=Counter)
     revealed_this_deal: Counter = field(default_factory=Counter)
+    # Face-up cards of players disqualified this deal, by seat. These sit on
+    # the table rather than in the pile, so a reshuffle has to know which of
+    # `revealed_this_deal` survives it (see the deck_reshuffled branch).
+    revealed_disqualified: dict[str, str] = field(default_factory=dict)
     known_held: dict[str, str] = field(default_factory=dict)
     deal_number: int = 0
     pot_chips: int = 0
@@ -90,9 +96,17 @@ class CountingTracker:
             self.deal_number += 1
             self._reset_deal()
         elif t == "deck_reshuffled":
-            # The discard pile went back into the deck: counting resets.
+            # The discard pile went back into the deck, so everything it held
+            # is unseen again. What does NOT go back is a disqualified
+            # player's face-up card: it sits on the table until the deal opens
+            # (both disclosure settings), so it stays counted as seen --
+            # unless this reshuffle swept it in (`swept_seats`, the
+            # reshuffle_includes_revealed rule), in which case it is unseen
+            # again like the rest.
+            for pid in p.get("swept_seats", ()):
+                self.revealed_disqualified.pop(pid, None)
             self.discard_counts.clear()
-            self.revealed_this_deal.clear()
+            self.revealed_this_deal = Counter(self.revealed_disqualified.values())
         elif t == "dealer_changed":
             self.dealer_id = p.get("player_id")
         elif t == "exchange_result":
@@ -102,6 +116,9 @@ class CountingTracker:
         elif t == "player_disqualified":
             if p.get("card"):  # immediate disclosure only; deferred sends null
                 self.revealed_this_deal[p["card"]] += 1
+                # Remembered per seat so a reshuffle can tell which revealed
+                # cards are still on the table and which it just swept away.
+                self.revealed_disqualified[p["player_id"]] = p["card"]
             self.known_held.pop(p.get("player_id"), None)
         elif t == "deal_opened":
             for rank in (p.get("hands") or {}).values():
@@ -112,12 +129,14 @@ class CountingTracker:
             for entry in p.get("discarded_cards", ()):
                 self.discard_counts[entry["card"]] += 1
             self.revealed_this_deal.clear()
+            self.revealed_disqualified.clear()
             self.pot_chips = p.get("pot_chips", self.pot_chips)
             if p.get("next_dealer"):
                 self.dealer_id = p["next_dealer"]
 
     def _reset_deal(self) -> None:
         self.revealed_this_deal.clear()
+        self.revealed_disqualified.clear()
         self.known_held.clear()
         self.turn_actions_this_deal = 0
 

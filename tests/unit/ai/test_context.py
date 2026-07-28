@@ -120,3 +120,54 @@ def test_policy_context_derived_properties():
     assert ctx.is_child_time
     assert ctx.unseen_total == 6
     assert ctx.unseen_weaker_than_own() == 3  # 道化x2 + 3
+
+
+# -- 途中失格者の表向きの札とリシャッフル ------------------------------------------
+#
+# The card sits on the TABLE (not in the pile) until the deal opens, so a
+# reshuffle -- which empties the pile back into the deck -- must not forget it.
+
+
+def test_a_face_up_disqualified_card_survives_a_reshuffle_as_seen():
+    t = fresh_tracker()
+    t.observe(ev("player_disqualified", {"player_id": "b", "cause": "received_joker", "card": "道化"}))
+    assert t.unseen_counts("7")["道化"] == 1  # one of the two is accounted for
+
+    # The pile goes back into the deck, but b's card is still face-up on the
+    # table, so it stays counted as seen.
+    t.observe(ev("deck_reshuffled", {"remaining_count": 30, "swept_seats": []}))
+    assert t.unseen_counts("7")["道化"] == 1
+
+
+def test_a_swept_disqualified_card_becomes_unseen_again():
+    t = fresh_tracker()
+    t.observe(ev("player_disqualified", {"player_id": "b", "cause": "received_joker", "card": "道化"}))
+    assert t.unseen_counts("7")["道化"] == 1
+
+    # reshuffle_includes_revealed: b's card was gathered into the rebuild, so
+    # it is back in the deck and could be drawn again.
+    t.observe(ev("deck_reshuffled", {"remaining_count": 31, "swept_seats": ["b"]}))
+    assert t.unseen_counts("7")["道化"] == 2
+
+
+def test_a_reshuffle_still_clears_what_the_pile_held():
+    t = fresh_tracker()
+    # A deck-draw refusal puts its card straight on the pile.
+    t.observe(ev("exchange_result", {"result": "deck_draw_refused", "actor": "b", "drawn_rank": "猫"}))
+    t.observe(ev("player_disqualified", {"player_id": "b", "cause": "cat_deck_draw", "card": "5"}))
+    assert t.unseen_counts("7")["猫"] == 1
+    assert t.unseen_counts("7")["5"] == 1
+
+    t.observe(ev("deck_reshuffled", {"remaining_count": 30, "swept_seats": []}))
+    assert t.unseen_counts("7")["猫"] == 2  # went back into the deck
+    assert t.unseen_counts("7")["5"] == 1  # still face-up in front of b
+
+
+def test_a_new_deal_forgets_the_previous_deals_face_up_cards():
+    t = fresh_tracker()
+    t.observe(ev("player_disqualified", {"player_id": "b", "cause": "received_joker", "card": "道化"}))
+    t.observe(ev("deal_started", {"deck_remaining_count": 20}))
+    t.observe(ev("deck_reshuffled", {"remaining_count": 30, "swept_seats": []}))
+    # The card was collected at the previous open and is now tracked (if at
+    # all) by discard_counts from deal_result -- never resurrected here.
+    assert t.unseen_counts("7")["道化"] == 2
