@@ -1,3 +1,5 @@
+import pytest
+
 from cucco.domain.cards import Rank
 from cucco.domain.config import GameConfig
 from cucco.domain.events import ExchangeRefused, PlayerDisqualified
@@ -163,3 +165,111 @@ def test_horse_house_reveal_setting_controls_revealed_rank_on_refusal():
     events_on = deal_on.submit_cambio("A")
     refusal_on = next(e for e in events_on if isinstance(e, ExchangeRefused))
     assert refusal_on.revealed_rank is Rank.HORSE
+
+
+# -- 失格札はディール終了まで場に残る(全5原因) ------------------------------------
+#
+# The "card stays in front of its ex-holder until the open" rule is a property
+# of _disqualify(), which every cause funnels through -- but 道化/人間/猫 have
+# three independent disclosure settings and three different ways of picking WHO
+# is disqualified, so each is exercised here rather than trusting the shared
+# path. In every case the card must be out of `hands` (out of play) and out of
+# `deck.discard_pile` (not collected yet) until open() runs.
+
+
+def _assert_held_until_open(deal, player_id, card, *, revealed):
+    """The card left the player's hand but has NOT reached the discard pile --
+    it is still sitting in front of them, face-up or face-down."""
+    assert player_id in deal.disqualified
+    assert player_id not in deal.hands
+    assert not any(e.card is card for e in deal.deck.discard_pile), "捨て札に先に入ってしまっている"
+    face_up = [(pid, entry.card) for pid, entry in deal.revealed_discards]
+    face_down = [entry.card for entry in deal.deferred_discards]
+    if revealed:
+        assert (player_id, card) in face_up, "表向きで場に残っていない"
+        assert card not in face_down, "伏せ札の側に入っている"
+    else:
+        assert card in face_down, "伏せたまま場に残っていない"
+        assert card not in [c for _, c in face_up], "表向きの側に入っている"
+
+
+@pytest.mark.parametrize("disclosure,revealed", [("immediate", True), ("deferred", False)])
+def test_joker_disqualified_card_is_held_until_open(disclosure, revealed):
+    config = GameConfig(joker_disclosure=disclosure)
+    deal = build_deal({"A": Rank.N5, "B": Rank.JOKER, "C": Rank.N7}, dealer_id="C", config=config)
+
+    deal.submit_cambio("A")  # A receives the Joker and is disqualified
+
+    _assert_held_until_open(deal, "A", Rank.JOKER, revealed=revealed)
+
+
+@pytest.mark.parametrize("disclosure,revealed", [("immediate", True), ("deferred", False)])
+def test_human_refusal_disqualified_card_is_held_until_open(disclosure, revealed):
+    config = GameConfig(human_disclosure=disclosure)
+    deal = build_deal({"A": Rank.N5, "B": Rank.HUMAN, "C": Rank.N7}, dealer_id="C", config=config)
+
+    deal.submit_cambio("A")  # 人間 refuses: the REQUESTER (A) is disqualified
+
+    # A's own card (N5) is what leaves play -- the 人間 stays with B.
+    _assert_held_until_open(deal, "A", Rank.N5, revealed=revealed)
+    assert deal.hands["B"] is Rank.HUMAN
+
+
+@pytest.mark.parametrize("disclosure,revealed", [("immediate", True), ("deferred", False)])
+def test_human_deck_draw_disqualified_card_is_held_until_open(disclosure, revealed):
+    config = GameConfig(human_disclosure=disclosure)
+    deal = build_deal({"A": Rank.N5, "B": Rank.N6, "C": Rank.N7}, dealer_id="C",
+                      deck_tail=[Rank.HUMAN], config=config)
+
+    deal.submit_no_change("A")
+    deal.submit_no_change("B")
+    deal.submit_cambio("C")  # dealer draws 人間 from the deck
+
+    _assert_held_until_open(deal, "C", Rank.N7, revealed=revealed)
+
+
+@pytest.mark.parametrize("disclosure,revealed", [("immediate", True), ("deferred", False)])
+def test_cat_refusal_disqualified_card_is_held_until_open(disclosure, revealed):
+    # 猫 disqualifies the ORIGINAL holder of the requester's card -- a third
+    # player who is not even part of the exchange.
+    config = GameConfig(cat_disclosure=disclosure)
+    deal = build_deal({"A": Rank.N5, "B": Rank.N6, "C": Rank.CAT, "D": Rank.N9},
+                      dealer_id="D", config=config)
+
+    deal.submit_cambio("A")  # A <-> B: B now holds A's N5
+    deal.submit_cambio("B")  # B asks C (the cat) -> A is disqualified
+
+    # A is holding N6 by then; that is the card that leaves play.
+    _assert_held_until_open(deal, "A", Rank.N6, revealed=revealed)
+    assert deal.hands["C"] is Rank.CAT
+
+
+@pytest.mark.parametrize("disclosure,revealed", [("immediate", True), ("deferred", False)])
+def test_cat_deck_draw_disqualified_card_is_held_until_open(disclosure, revealed):
+    config = GameConfig(cat_disclosure=disclosure)
+    deal = build_deal({"A": Rank.N5, "B": Rank.N6, "C": Rank.N7}, dealer_id="C",
+                      deck_tail=[Rank.CAT], config=config)
+
+    deal.submit_cambio("A")  # A <-> B: B holds A's N5
+    deal.submit_cambio("B")  # B <-> C: C holds A's N5
+    deal.submit_cambio("C")  # dealer draws 猫 -> A (original holder) is out
+
+    _assert_held_until_open(deal, "A", Rank.N6, revealed=revealed)
+
+
+@pytest.mark.parametrize("disclosure", ["immediate", "deferred"])
+def test_every_cause_reaches_the_discard_pile_at_the_open(disclosure):
+    # The other half of the rule: held back, but not lost -- the open collects
+    # it. (人間 refusal path; the shared open() flush covers the rest.)
+    config = GameConfig(human_disclosure=disclosure)
+    deal = build_deal({"A": Rank.N5, "B": Rank.HUMAN, "C": Rank.N7}, dealer_id="C", config=config)
+
+    deal.submit_cambio("A")
+    assert deal.deck.discard_pile == []
+
+    deal.submit_no_change("B")
+    deal.submit_no_change("C")
+    deal.open()
+
+    assert any(e.card is Rank.N5 for e in deal.deck.discard_pile)
+    assert deal.revealed_discards == [] and deal.deferred_discards == []

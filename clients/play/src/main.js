@@ -132,6 +132,27 @@ async function sweepToDiscard(sc) {
   await Promise.all(flights);
 }
 
+// The open collects every disqualified player's card into the discard pile.
+// Their seats hold a real card until this runs (face-up under 即時公開,
+// face-down under 遅延公開), so fly what is actually sitting there.
+async function collectDisqualifiedCards(sc) {
+  const seats = Object.entries(state.disqualifiedInfo ?? {})
+    .filter(([, dq]) => dq?.onTable)
+    .map(([pid]) => pid);
+  if (!seats.length) return;
+  const flights = [];
+  for (const pid of seats) {
+    const slot = sc.slotEl(pid);
+    if (!slot || !slot.firstElementChild) continue;
+    // Measured before the slot is emptied, same hand-off as sweepToDiscard.
+    flights.push(fly(queue, { fromEl: slot, toEl: sc.discardEl(), html: slot.innerHTML, duration: 320 }));
+    slot.innerHTML = "";
+  }
+  if (!flights.length) return;
+  sound.play("flip");
+  await Promise.all(flights);
+}
+
 function handleOp(op) {
   switch (op.kind) {
     case "rejected":
@@ -454,6 +475,15 @@ function handleOp(op) {
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc) return;
+        // The open is when a disqualified player's card finally joins the
+        // discard pile (docs/rules/final_rules.md 7.). Fly it there first, so
+        // it is seen being collected rather than just vanishing out of the
+        // seat when the sync below empties it.
+        if (!instant) await collectDisqualifiedCards(sc);
+        // THE reveal point for everyone's hand: advance the presentation
+        // mirror here and nowhere else, so the table stays face-down until
+        // the last turn's animation has finished playing.
+        state.shownOpened = state.lastDealOpened;
         sc.sync(state); // faces are now in the slots
         if (instant) return;
         sound.play("open");
@@ -680,10 +710,13 @@ function render() {
     : "";
   // While animations are in flight, the scene is owned by the queue (each
   // sequence ends with its own sync); the overlays always track live state.
-  // When idle, everything has been animated, so the presentation mirror
-  // catches up to the authoritative hand (safety net for any reveal path).
+  // When idle, everything has been animated, so the presentation mirrors
+  // catch up to the authoritative state (safety net for any reveal path --
+  // notably a reconnect, where the snapshot arrives already opened and no
+  // queued step will ever run to advance them).
   if (justCreated || !queue.busy) {
     state.shownHand = state.yourHand;
+    state.shownOpened = state.lastDealOpened;
     sceneRefs.scene.sync(state);
   }
   renderStatus(sceneRefs.statusEl, state, game.seatName);
@@ -942,6 +975,7 @@ const actions = {
     state.lastPotResult = null;
     state.lastDealResult = null;
     state.lastDealOpened = null;
+    state.shownOpened = null;
     state.prevDealSummary = null;
     actions.resync();
     render();

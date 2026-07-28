@@ -91,7 +91,11 @@ export function createTableScene(root) {
       sync._roster = roster;
     }
 
-    const opened = state.lastDealOpened;
+    // shownOpened, not lastDealOpened: the authoritative one is set the moment
+    // the open event arrives, while the last turn is usually still animating.
+    // Reading it here would flip every hand face-up mid-animation -- see the
+    // note on shownOpened in gameState.js.
+    const opened = state.shownOpened;
     const dealInProgress = t.deal_number > 0 && !opened && !state.lastDealResult;
 
     for (const s of t.seats ?? []) {
@@ -118,12 +122,18 @@ export function createTableScene(root) {
       if (openedCard !== undefined) {
         slot.innerHTML = cardFaceHTML(openedCard, opened.elevated_joker_holders?.includes(s.player_id));
       } else if (state.disqualifiedIdsThisDeal.has(s.player_id)) {
-        // Disqualified: the offending card stays face-up in front of them for
-        // the rest of the deal (即時公開) and is collected at the open, the
-        // same as a physical table. Empty when the card was never disclosed
-        // (遅延公開), or once a reshuffle has swept it into the deck.
-        const shown = state.disqualifiedInfo?.[s.player_id]?.card;
-        slot.innerHTML = shown ? cardFaceHTML(shown) : "";
+        // Disqualified: the card is taken out of play but STAYS in front of
+        // its ex-holder until the deal opens, exactly as at a physical table.
+        // Whether it is face-up depends on the disclosure setting -- 遅延公開
+        // leaves it there face-DOWN, which is not the same as it being gone.
+        const dq = state.disqualifiedInfo?.[s.player_id];
+        if (opened || !dq?.onTable) {
+          // Collected into the discard at the open, or swept into the deck by
+          // a reshuffle (reshuffle_includes_revealed): the seat really is empty.
+          slot.innerHTML = "";
+        } else {
+          slot.innerHTML = dq.card ? cardFaceHTML(dq.card) : '<div class="card card-back"></div>';
+        }
       } else if (s.player_id === state.playerId) {
         // shownHand (not yourHand): my slot reveals a new card only at the
         // animation step that earns it, never mid-effect-animation.

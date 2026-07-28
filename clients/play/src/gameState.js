@@ -33,6 +33,13 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
     // animation finishes. Managed entirely in main.js (the presentation
     // layer); declared here so it rides the shared state object.
     shownHand: null,
+    // Same idea for the OPEN, and for the same reason: lastDealOpened is set
+    // the instant the event arrives, but it reveals EVERY hand at once. The
+    // last turn (usually the dealer's, whose deck exchange is the longest
+    // sequence) is still animating at that point, and any sync() in flight
+    // would flip the whole table face-up mid-animation. The scene reads this
+    // mirror, which only the queued open step advances.
+    shownOpened: null,
     disqualifiedThisDeal: false,
     disqualifiedIdsThisDeal: new Set(),
     disqualifiedInfo: {},
@@ -170,6 +177,7 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         state.lastDealResult = null;
         state.lastPotResult = null;
         state.lastDealOpened = null;
+        state.shownOpened = null;
         state.resultPause = null;
         if (Array.isArray(p.participants) && p.participants.length) {
           const rank = new Map(p.participants.map((pid, i) => [pid, i]));
@@ -202,6 +210,7 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         state.effectWindow = null;
         state._discardLenAtDealStart = state.table.discard_pile.length;
         state.lastDealOpened = null;
+        state.shownOpened = null;
         state.lastDealResult = null;
         state.table.provenance_map = Object.fromEntries(
           state.table.seats.filter((s) => s.in_current_pot !== false).map((s) => [s.player_id, s.player_id])
@@ -280,9 +289,11 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         // (reshuffle_includes_revealed): those cards have left the table for
         // the rebuilt deck, so the seats they were sitting in go empty. The
         // op carries them so the scene can fly them to the discard first.
-        const swept = (p.swept_seats ?? []).filter((pid) => state.disqualifiedInfo[pid]?.card);
+        const swept = (p.swept_seats ?? []).filter((pid) => state.disqualifiedInfo[pid]?.onTable);
         const sweptCards = swept.map((pid) => ({ player: pid, card: state.disqualifiedInfo[pid].card }));
-        for (const pid of swept) state.disqualifiedInfo[pid].card = null;
+        // onTable だけを倒す。`card` は結果サマリが「何で失格したか」を出すのに
+        // 使うので、山札に戻ったからといって忘れてはいけない。
+        for (const pid of swept) state.disqualifiedInfo[pid].onTable = false;
         onToast?.("山札が捨て札から再構築されました");
         log(swept.length ? `山札を再構築しました(場の失格札${swept.length}枚を含む)` : "山札を再構築しました");
         emit({ kind: "reshuffle", sweptCards });
@@ -301,7 +312,10 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
       case "player_disqualified": {
         log(`${seatName(p.player_id)} が失格(${CAUSE_LABELS[p.cause] ?? p.cause})`);
         state.disqualifiedIdsThisDeal.add(p.player_id);
-        state.disqualifiedInfo[p.player_id] = { cause: p.cause, card: p.card ?? null };
+        // `card` = 何の札か判明しているか(即時公開のみ非null)。
+        // `onTable` = その札がまだ失格者の手元にあるか。この2つは別物で、
+        // 遅延公開の札は「不明だが場にある」(伏せたまま置かれている)。
+        state.disqualifiedInfo[p.player_id] = { cause: p.cause, card: p.card ?? null, onTable: true };
         delete state.table?.provenance_map?.[p.player_id];
         delete state.revealedCards[p.player_id];
         // A disclosed card is NOT added to the discard pile here: it stays
