@@ -14,6 +14,10 @@ on:
       - "clients/play/**"
       - "clients/web-common/**"
       - "clients/index.html"
+      # The assembly and cache-busting steps change what gets published, so a
+      # change to either has to redeploy on its own.
+      - ".github/workflows/deploy-pages.yml"
+      - "tools/stamp_assets.py"
   workflow_dispatch:
 
 permissions:
@@ -41,6 +45,12 @@ jobs:
           cp -r clients/web _site/web
           cp -r clients/play _site/play
           cp -r clients/web-common _site/web-common
+      # Pages serves these with max-age=600, so without a per-release cache key
+      # a browser keeps running the previous build for ten minutes -- a plain
+      # reload revalidates the HTML but not its subresources.  Stamping the
+      # commit onto every asset URL makes each release a fresh URL.
+      - name: Stamp the release onto asset URLs (cache busting)
+        run: python3 tools/stamp_assets.py _site "${GITHUB_SHA::8}"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

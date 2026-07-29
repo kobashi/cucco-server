@@ -187,6 +187,14 @@ https://kobashi.github.io/cucco-server/play/?ws=xxxx.trycloudflare.com&room=AB12
   web関連の変更時に`main`へのpushで自動実行)が、Pythonパッケージを除く
   web部分だけを`_site/`に組み立ててPagesへデプロイする。リポジトリ設定は
   Settings → Pages → Source を「GitHub Actions」にしておく(一度だけ)
+- **キャッシュ対策**: Pagesは`cache-control: max-age=600`で配信するため、
+  対策なしだとデプロイ後10分間ブラウザが古いモジュール/CSSを使い続ける
+  (リロードしてもHTMLしか再確認されず、JS・CSSはキャッシュのまま)。
+  組み立て後に`tools/stamp_assets.py`が全アセットURLへコミットSHAを
+  `?v=`として付与し、リリースごとに別URLにしている。これにより
+  **通常のリロードで新版が反映される**(スーパーリロードは不要)。
+  クライアントに新しいimportの書き方を導入した場合は、取りこぼしを
+  `tests/unit/clients/test_stamp_assets.py`が検出する
 - **サーバー(`cucco.server.app`、8765番)**: ゼミのマシン上で起動したうえで、
   `cloudflared`の一時トンネル(trycloudflare.com、アカウント不要)で公開する:
   ```bash
