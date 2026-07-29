@@ -43,7 +43,7 @@ function setInviteStatus(el, id, text) {
 // resulting link in a read-only field -- visible and selectable even where the
 // clipboard API is unavailable -- and a copy button that reports what happened.
 // `buildUrl(host)` is what makes the block server-invite or table-invite.
-function inviteBlockHTML(id, label, hint, buildUrl) {
+export function inviteBlockHTML(id, label, hint, buildUrl) {
   const host = invitePublishHost();
   return `
     <div class="invite-block">
@@ -66,7 +66,7 @@ function inviteBlockHTML(id, label, hint, buildUrl) {
     </div>`;
 }
 
-function wireInviteBlock(el, id, buildUrl) {
+export function wireInviteBlock(el, id, buildUrl) {
   const hostField = el.querySelector(`#${id}-host`);
   const urlField = el.querySelector(`#${id}-url`);
 
@@ -391,9 +391,12 @@ export function renderWaiting(el, state, actions) {
   const readyIds = t?.ready_ids ?? [];
   const seats = t?.seats ?? [];
   const creatorId = t?.creator_id;
-  const isCreator = !isSpectator && state.playerId === creatorId;
+  // 観戦者でも作成者なら開始を握る。観戦作成の卓は参加資格者がAIだけなので、
+  // ここでボタンを出さないと「参加者を確認してから始める」ができない。
+  const isCreator = state.playerId === creatorId;
   const readyCount = seats.filter((s) => readyIds.includes(s.player_id)).length;
-  const effectiveReady = readyCount + (isCreator && !readyIds.includes(state.playerId) ? 1 : 0);
+  // 観戦の作成者は自分が卓に着かないので、頭数には数えない。
+  const effectiveReady = readyCount + (isCreator && !isSpectator && !readyIds.includes(state.playerId) ? 1 : 0);
   const startNeeded = Math.max(0, 2 - effectiveReady);
 
   el.innerHTML = `
@@ -421,13 +424,17 @@ export function renderWaiting(el, state, actions) {
       </ul>
       ${t?.spectators?.length ? `<p class="muted">観戦者: ${t.spectators.length}人</p>` : ""}
       ${
-        isSpectator
+        isSpectator && !isCreator
           ? `<p class="muted">観戦者として参加しています。ゲーム開始をお待ちください。</p>`
           : isCreator
             ? startNeeded > 0
               ? `<p class="muted">参加者の準備完了を待っています(あと${startNeeded}人必要)。IDを共有してください。</p>
                  <button id="start-pot-btn" disabled>ゲームを開始する</button>`
-              : `<p class="muted">準備完了した参加者と一緒に開始できます(あなたも自動的に参加します)。</p>
+              : `<p class="muted">${
+                   isSpectator
+                     ? "準備完了した参加者で開始できます(あなたは観戦のみで、席には着きません)。"
+                     : "準備完了した参加者と一緒に開始できます(あなたも自動的に参加します)。"
+                 }</p>
                  <button id="start-pot-btn">ゲームを開始する</button>`
             : state.readySent
               ? `<button id="ready-btn" disabled>準備完了ずみ・開始をお待ちください</button>`

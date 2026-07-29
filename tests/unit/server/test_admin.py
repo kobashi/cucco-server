@@ -84,8 +84,9 @@ async def test_list_and_status():
 @pytest.mark.asyncio
 async def test_abort_ends_a_running_bot_game_and_unregisters():
     registry = TableRegistry()
-    # A spectator host + 2 bots: the bots auto-start and would rematch
-    # forever -- exactly the stuck table the admin abort exists for.
+    # A spectator host + 2 bots. The first start is the host's; from there the
+    # bots rematch forever on their own -- exactly the stuck table the admin
+    # abort exists for.
     conn = FakeConnection()
     handler = ConnectionHandler(conn, registry)
     await handler.handle_message(build_envelope("identify", {"name": "Watcher", "player_type": "spectator"}))
@@ -95,6 +96,8 @@ async def test_abort_ends_a_running_bot_game_and_unregisters():
     room_id = conn.last("table_created")["payload"]["room_id"]
     await handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
     table = registry.get(room_id)
+    await asyncio.sleep(0.05)  # let the bots join and ready
+    await handler.handle_message(build_envelope("start_pot", {}))
 
     async def wait_running():
         while table.game is None:

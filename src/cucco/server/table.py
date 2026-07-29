@@ -58,6 +58,10 @@ class Table:
     # auto-start only counts joined players).
     pending_ai_players: tuple = ()
     bots_spawned: bool = False
+    # Whether this room has ever started a game. Only the FIRST start waits for
+    # the creator's start_pot -- rematches (連戦) auto-start as before, so a
+    # bot-only table still keeps running on its own once it is under way.
+    first_game_started: bool = False
     bot_tasks: list = field(default_factory=list)
     # Presentation-only preference from create_table (not a domain rule, so
     # it lives here rather than in GameConfig): "grouped" | "pile". Clients

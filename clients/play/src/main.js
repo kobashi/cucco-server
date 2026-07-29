@@ -4,14 +4,15 @@
 
 import { CuccoConnection, wsUrlFor } from "../../web-common/connection.js";
 import { loadSession, saveSession, clearSession } from "../../web-common/persistence.js";
-import { sanitizeWsHost } from "../../web-common/utils.js";
+import { sanitizeWsHost, esc } from "../../web-common/utils.js";
+import { tableInviteUrl } from "../../web-common/invite.js";
 import { createGameState } from "./gameState.js";
 import { createTableScene, cardHTML } from "./scene/table.js";
 import { createQueue, fly, pause } from "./anim/queue.js";
 import { banner, shake, flipReveal, effectMotion, confirmPulse, setConfirmModeGetter } from "./anim/effects.js";
 import { createSound } from "./anim/sound.js";
 import { REFUSAL_LABELS, CAUSE_LABELS } from "../../web-common/cards.js";
-import { renderLobby, renderWaiting } from "./ui/panels.js";
+import { renderLobby, renderWaiting, inviteBlockHTML, wireInviteBlock } from "./ui/panels.js";
 import { renderStatus, renderHandInfo, renderDock, renderModals, renderLogDrawer } from "./ui/overlays.js";
 import { mountCardReference } from "./ui/cardReference.js";
 
@@ -658,6 +659,60 @@ function mountToolCluster() {
   return cluster;
 }
 
+// The invite link is otherwise only reachable from the waiting room, which a
+// table with AI players leaves almost immediately -- once play starts there
+// was no way to hand the link to another person short of ending the game.
+// A newcomer who joins mid-game sits out the running game and is seated for
+// the next one, so the invite is worth having available throughout.
+let inviteOpen = false;
+
+function mountInviteButton(cluster) {
+  const btn = document.createElement("button");
+  btn.id = "invite-toggle";
+  btn.type = "button";
+  btn.innerHTML = '🔗<span class="tool-label"> 招待</span>';
+  btn.title = "この卓の招待リンクを表示(他の人を呼ぶ)";
+  btn.addEventListener("click", () => {
+    inviteOpen = !inviteOpen;
+    renderInviteOverlay();
+  });
+  cluster.appendChild(btn);
+  return btn;
+}
+
+function renderInviteOverlay() {
+  let holder = document.getElementById("invite-holder");
+  if (!holder) {
+    holder = document.createElement("div");
+    holder.id = "invite-holder";
+    document.body.appendChild(holder);
+  }
+  const btn = document.getElementById("invite-toggle");
+  // Only meaningful once we are actually at a table.
+  if (btn) btn.hidden = !state.roomId;
+  if (!inviteOpen || !state.roomId) {
+    holder.innerHTML = "";
+    return;
+  }
+  holder.innerHTML = `
+    <div class="modal-overlay"><div class="modal">
+      <h2>この卓に招待する</h2>
+      <p>プレイルームID: <strong class="room-id">${esc(state.roomId)}</strong></p>
+      ${inviteBlockHTML(
+        "live-invite",
+        "この卓の招待リンク",
+        "受け取った人は名前を入れるだけで参加できます。対局中に入った人は、今のゲームが終わってから次のゲームで着席します。",
+        (host) => tableInviteUrl(host, state.roomId)
+      )}
+      <button type="button" id="invite-close" class="secondary">閉じる</button>
+    </div></div>`;
+  wireInviteBlock(holder, "live-invite", (host) => tableInviteUrl(host, state.roomId));
+  holder.querySelector("#invite-close").addEventListener("click", () => {
+    inviteOpen = false;
+    renderInviteOverlay();
+  });
+}
+
 // メッセージ確認モード (3-state): "off" | "min" | "full".
 //  - full: 進行メッセージが1枚ずつモーダルになり、確認を押すまで進まない
 //  - min : 失格・クク宣言などディールを左右する重要イベントだけモーダル。
@@ -776,6 +831,10 @@ function render() {
     if (target === "waiting") renderWaiting(screenEl, state, actions);
     else renderLobby(screenEl, state, actions, target);
     prependConnBanner();
+    // Also on the way out: this branch returns early, so without it the invite
+    // button keeps whatever visibility it had and stays hidden in the waiting
+    // room -- the one screen where handing out the link matters most.
+    renderInviteOverlay();
     return;
   }
 
@@ -844,6 +903,7 @@ function render() {
   renderModals(sceneRefs.modalEl, state, actions, game.seatName);
   renderLogDrawer(sceneRefs.logEl, state);
   prependConnBanner();
+  renderInviteOverlay();
 }
 
 function prependConnBanner() {
@@ -1178,6 +1238,8 @@ mountConfirmToggle(toolCluster);
 mountAutoContinueToggle(toolCluster);
 mountCardReference(toolCluster);
 mountSoundToggle(toolCluster);
+mountInviteButton(toolCluster);
+renderInviteOverlay(); // hides the button until a table is joined
 
 const saved = loadSession();
 if (saved && saved.sessionToken && saved.roomId) {

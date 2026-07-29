@@ -90,6 +90,11 @@ async def _start_game(table: Table) -> None:
         table.ready_deadline_task = None
         return
 
+    # Past the point of no return -- set only here, never on the aborted path
+    # above, or a failed start would count as "this room has played" and the
+    # first real start would lose its wait-for-the-creator gate.
+    table.first_game_started = True
+
     if table.config.mode == "evaluation":
         # EvaluationRunner assigns table.game itself, once per game_count
         # iteration -- this flag is the re-entry guard in the meantime
@@ -394,7 +399,31 @@ class ConnectionHandler:
         table.ready_ids.add(self.session.player_id)
         if table.ready_deadline_task is None:
             table.ready_deadline_task = asyncio.create_task(_ready_timeout_watchdog(table))
-        if len(table.ready_ids) >= max(table.min_players, len(_eligible_participant_ids(table))):
+        # A normal-mode table waits for the creator's start_pot. That gate used
+        # to be implicit: the creator was one of the eligible participants, so
+        # "everyone eligible is ready" could not become true until they readied
+        # up themselves. A SPECTATING creator is not eligible and cannot ready
+        # at all, so the bots alone satisfied the threshold and the table
+        # started the instant it was made -- leaving no window to look at the
+        # roster or invite anyone.
+        #
+        # Only the FIRST start waits. Rematches keep auto-starting, so a
+        # bot-only table still runs 連戦 on its own once under way (and stays
+        # the "never stops by itself" case the admin abort exists for). The
+        # auto-start also stands for evaluation runs, a creator who readied
+        # like a guest, and a creator who has dropped (so nothing wedges).
+        creator_id = table.effective_creator_id()
+        creator = table.get(creator_id) if creator_id else None
+        creator_will_start = (
+            table.config.mode == "normal"
+            and not table.first_game_started
+            and creator is not None
+            and creator.connected
+            and creator_id not in table.ready_ids
+        )
+        if not creator_will_start and len(table.ready_ids) >= max(
+            table.min_players, len(_eligible_participant_ids(table))
+        ):
             table.ready_deadline_task.cancel()
             await _start_game(table)
 

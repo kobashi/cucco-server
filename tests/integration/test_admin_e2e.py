@@ -43,6 +43,10 @@ async def test_admin_abort_over_a_real_socket():
             await send("join_table", {"room_id": room_id})
 
             table = registry.get(room_id)
+            # The first start is the creator's; the bots rematch on their own
+            # after that (which is what makes this the stuck-table case).
+            await asyncio.sleep(0.1)  # let the bots join and ready
+            await send("start_pot", {})
 
             async def wait_running():
                 while table.game is None:

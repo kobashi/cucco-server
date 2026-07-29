@@ -67,8 +67,9 @@ async def test_host_ready_starts_the_game_with_bots_and_it_finishes():
     conn = FakeConnection()
     handler = ConnectionHandler(conn, TableRegistry())
     await handler.handle_message(build_envelope("identify", {"name": "Watcher", "player_type": "spectator"}))
-    # A spectator host: only the bots are eligible participants, so their
-    # own all-ready auto-starts the game -- the AI-vs-AI watching flow.
+    # A spectator host watching an AI-vs-AI game. The FIRST start waits for
+    # the host's start_pot (so there is a window to look at the roster and
+    # invite people); only rematches auto-start.
     room_id = await _create_table_with_bots(
         handler,
         [{"policy": "always_change", "count": 1}, {"policy": "always_no_change", "count": 1}],
@@ -77,6 +78,7 @@ async def test_host_ready_starts_the_game_with_bots_and_it_finishes():
     table = handler.registry.get(room_id)
     await handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
     await _settle()
+    await handler.handle_message(build_envelope("start_pot", {}))
 
     async def game_ran_to_completion():
         started = False
@@ -105,6 +107,8 @@ async def test_bots_re_ready_for_a_rematch():
     )
     table = handler.registry.get(room_id)
     await handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    await _settle()
+    await handler.handle_message(build_envelope("start_pot", {}))  # first start is manual
 
     async def wait_for_second_game():
         games_seen = 0
@@ -118,7 +122,8 @@ async def test_bots_re_ready_for_a_rematch():
             await asyncio.sleep(0.01)
 
     # Bot-only normal table: after game_ended the bots re-ready, and their
-    # all-ready auto-starts the next game -- the 連戦 flow with no human.
+    # all-ready auto-starts the NEXT game -- only the first start is gated on
+    # the host, so the 連戦 flow with no human still runs by itself.
     await asyncio.wait_for(wait_for_second_game(), timeout=60)
 
 
