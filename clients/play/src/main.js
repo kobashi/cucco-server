@@ -56,8 +56,19 @@ const REASON_SOUNDS = {
 // itself regardless. Comfortably covers a deal's trailing effect + open
 // animations, and leaves the bulk of the server's pause for actually reading
 // the result.
-// Must comfortably exceed the open sequence below (one flip per seat + the
-// closing hold), or the safety net would snap the very reveal it is protecting.
+// How much of the server's pause window to keep back for actually READING the
+// result. The pane waits for the presentation queue; this is the point at
+// which it stops waiting and snaps whatever is left, so that a slow animation
+// chain can never eat the whole window.
+//
+// It used to be a flat 3.8s from the pause arriving, which was shorter than a
+// real tail: a 人間 refusal (flip + effect motion + banner + hold) plus the
+// disqualification it causes plus the card-by-card open runs well past 7s, so
+// the net fired mid-reveal and the result appeared over cards still turning.
+// Measuring back from the deadline instead gives the animation everything the
+// server is willing to wait, and adapts if the operator shortens the pause.
+const RESULT_PANE_RESERVE_MS = 4000;
+// Fallback when the pause carries no usable deadline.
 const RESULT_PANE_GRACE_MS = 3800;
 
 // Pacing for the card-by-card effect beats. Deliberate enough that every
@@ -228,6 +239,11 @@ function handleOp(op) {
 
     case "rebuild":
       queue.clear();
+      // A hard scene reset (reconnect / snapshot): there is no animation left
+      // to stay behind, so the mirrors take the live values outright.
+      state.shownTurnSeat = state.currentTurnSeat;
+      state.shownHand = state.yourHand;
+      state.shownOpened = state.lastDealOpened;
       return; // onChange render syncs immediately once the queue is empty
 
     // The result pane explains what the animations just showed (the クク
@@ -253,11 +269,15 @@ function handleOp(op) {
       // rather than jumping the line (drainToLatest at the next deal boundary
       // keeps the backlog bounded if they fall behind).
       if (confirmMode === "off") {
+        const deadline = state.resultPause?.deadline;
+        const grace = deadline
+          ? Math.max(0, deadline - Date.now() - RESULT_PANE_RESERVE_MS)
+          : RESULT_PANE_GRACE_MS;
         setTimeout(() => {
           if (revealed) return;
           queue.fastForward();
           requestAnimationFrame(reveal); // let the flushed ghosts clear first
-        }, RESULT_PANE_GRACE_MS);
+        }, grace);
       }
       return;
     }
@@ -805,9 +825,17 @@ function render() {
   // notably a reconnect, where the snapshot arrives already opened and no
   // queued step will ever run to advance them).
   if (justCreated || !queue.busy) {
+    // NOT the turn: advancing it here defeated the whole mirror. A deal's
+    // events arrive as several messages (an exchange refusal and the
+    // disqualification it causes are two), and the queue empties in the gap
+    // between them -- this branch then ran with currentTurnSeat already moved
+    // on, jumping the ring to the next seat while the 人間 animation was still
+    // playing. Every op that moves the turn carries it to a queued step, and a
+    // hard resync (the `rebuild` op) sets it outright, so nothing is left
+    // stale by leaving it alone here.
     state.shownHand = state.yourHand;
     state.shownOpened = state.lastDealOpened;
-    state.shownTurnSeat = state.currentTurnSeat;
+    if (justCreated) state.shownTurnSeat = state.currentTurnSeat;
     sceneRefs.scene.sync(state);
   }
   renderStatus(sceneRefs.statusEl, state, game.seatName);

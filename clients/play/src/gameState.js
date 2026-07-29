@@ -463,6 +463,23 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
       p.result === "deck_exchange_accepted" ||
       p.result === "deck_draw_refused" ||
       (p.result === "refused" && (p.reason === "human_refusal" || p.reason === "cat_meow"));
+    // 手番の前進は emit より前に行う。no_change 経路(advanceTurn → emit)と
+    // 揃えることで、どの op も「その処理が終わったあとに表示すべき手番」を
+    // 持って main.js に渡る。emit のあとに進めていたときは、演出が終わって
+    // キューが空いた瞬間の追いつき処理が先に次の席へリングを飛ばしていた。
+    const turnOwnerOf = {
+      accepted: p.requester,
+      deck_exchange_accepted: p.actor,
+      refused: p.requester,
+      deck_draw_refused: p.actor,
+    };
+    if (terminal) {
+      const owner = turnOwnerOf[p.result];
+      if (owner) {
+        state.table.declarations_this_deal.push({ player_id: owner, action: "cambio", via_timeout: false });
+        advanceTurn(owner);
+      }
+    }
     let turnOwner = null;
     switch (p.result) {
       case "accepted":
@@ -513,10 +530,6 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         turnOwner = p.actor;
         emit({ kind: "deck_refused", actor: p.actor, drawn: p.drawn_rank, reason: p.reason });
         break;
-    }
-    if (terminal && turnOwner) {
-      state.table.declarations_this_deal.push({ player_id: turnOwner, action: "cambio", via_timeout: false });
-      advanceTurn(turnOwner);
     }
     if (turnOwner === me) state.turnPrompt = null;
     if (p.target === me || p.requester === me || p.actor === me) state.effectWindow = null;
