@@ -5,6 +5,7 @@
 // itself is never rebuilt by these.
 
 import { esc, secondsLeft } from "../../../web-common/utils.js";
+import { CAUSE_LABELS } from "../../../web-common/cards.js";
 import { cardEffectFor } from "../cardInfo.js";
 import { cardHTML } from "../scene/table.js";
 
@@ -185,7 +186,9 @@ function resultSummaryHTML(state, seatName) {
       const card = opened?.hands?.[pid] ?? dq?.card ?? null;
       const elevated = opened?.elevated_joker_holders?.includes(pid);
       let outcome = "生存";
-      if (dq) outcome = "途中失格";
+      // 何で失格したかは結果を読むうえで一番知りたい情報なので、
+      // 「途中失格」だけでなく原因まで出す(道化を受け取った / 人間に拒否された…)。
+      if (dq) outcome = `途中失格(${CAUSE_LABELS[dq.cause] ?? dq.cause})`;
       else if (losers.has(pid)) outcome = "敗者";
       else if (card == null && s.in_current_pot === false) outcome = "ポット外";
       let next = "";

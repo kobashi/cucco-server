@@ -56,12 +56,25 @@ const REASON_SOUNDS = {
 // itself regardless. Comfortably covers a deal's trailing effect + open
 // animations, and leaves the bulk of the server's pause for actually reading
 // the result.
-const RESULT_PANE_GRACE_MS = 2000;
+// Must comfortably exceed the open sequence below (one flip per seat + the
+// closing hold), or the safety net would snap the very reveal it is protecting.
+const RESULT_PANE_GRACE_MS = 3800;
 
 // Pacing for the card-by-card effect beats. Deliberate enough that every
 // player can follow who did what: a card flies, is turned face-up, is read,
 // then resolves -- one card at a time, like a physical table.
 const FLIGHT_MS = 550; // a single card's flight (deck<->seat<->discard)
+// The open is the payoff of the whole deal, so it is dealt out as a reveal
+// rather than a single flash: one card turned at a time around the table,
+// then a beat to read the row before the result pane covers it.
+const OPEN_FLIP_MS = 240; // turning one card face-up (small tables)
+const OPEN_STEP_MS = 140; // gap before the next seat is turned (small tables)
+const OPEN_HOLD_MS = 600; // everyone face-up, before the result appears
+// Total budget for turning the whole table over. A fixed per-card cost would
+// run 6s+ at a full 15-seat table -- past the result pane's grace, so the
+// safety net would snap the very reveal it exists to protect. Big tables
+// simply turn faster instead.
+const OPEN_TOTAL_BUDGET_MS = 2200;
 const REVEAL_HOLD_MS = 750; // how long a turned-up card sits so the table reads it
 // Hard ceiling on how long the dock may hold the turn buttons for the
 // presentation to catch up. Gating purely on queue.busy is not safe: if a
@@ -512,22 +525,40 @@ function handleOp(op) {
         // THE reveal point for everyone's hand: advance the presentation
         // mirror here and nowhere else, so the table stays face-down until
         // the last turn's animation has finished playing.
-        state.shownOpened = openedSnapshot;
-        sc.sync(state); // faces are now in the slots
-        if (instant) return;
+        if (instant) {
+          // Snapped: no theatre, just land on the end state.
+          state.shownOpened = openedSnapshot;
+          sc.sync(state);
+          return;
+        }
+        // Turn the hands face-up ONE AT A TIME, in seat order. shownOpened
+        // stays unset until the last one, because sync() reveals every hand
+        // at once -- the whole point here is that it doesn't.
+        const hands = openedSnapshot?.hands ?? {};
+        const elevated = openedSnapshot?.elevated_joker_holders ?? [];
+        const order = (state.table?.seats ?? [])
+          .map((s) => s.player_id)
+          .filter((pid) => hands[pid] !== undefined);
+        // Per-card pacing, squeezed to fit the budget when the table is big.
+        const per = Math.min(
+          OPEN_FLIP_MS + OPEN_STEP_MS,
+          Math.max(160, Math.round(OPEN_TOTAL_BUDGET_MS / Math.max(1, order.length)))
+        );
+        const flipMs = Math.round(per * 0.62);
+        const gapMs = per - flipMs;
         sound.play("open");
-        const faces = sc.root.querySelectorAll(".card-slot .card-face");
-        faces.forEach((el, i) => {
-          const anim = el.animate(
-            [
-              { transform: "rotateY(90deg) scale(1.06)", opacity: 0.4 },
-              { transform: "rotateY(0deg) scale(1)", opacity: 1 },
-            ],
-            { duration: 260, delay: i * 60, easing: "ease-out", fill: "backwards" }
-          );
-          queue._track(anim);
-        });
-        await pause(queue, 260 + faces.length * 60);
+        for (const pid of order) {
+          const slot = sc.slotEl(pid);
+          if (!slot) continue;
+          slot.innerHTML = cardHTML(hands[pid], elevated.includes(pid));
+          await flipReveal(queue, slot.querySelector(".card-face"), flipMs);
+          await pause(queue, gapMs);
+        }
+        state.shownOpened = openedSnapshot;
+        sc.sync(state); // reconcile anything the loop didn't touch
+        // A beat with the whole table face-up, so the row can be read before
+        // the result pane drops over it.
+        await pause(queue, OPEN_HOLD_MS);
       });
       return;
     }

@@ -378,3 +378,133 @@ async def test_stale_cucco_flag_from_a_player_whose_card_moved_is_dropped():
     assert sessions["p2"].pending_cucco is False  # invalid flag was dropped
     # Everyone played their normal turn.
     assert sum(1 for d in deal.declarations if d.action == "no_change") == 3
+
+
+# -- AIの手番ペーシング (AI_TURN_PACING_SEC) ---------------------------------------
+#
+# AIs answer instantly, which leaves a human holding クク no window: the dealer's
+# どうぞ and the first AI's カンビオ land in the same instant. _race_prompt holds
+# an AI's answer while a human is connected -- without ever blocking the klop.
+
+
+def _seat(table, pid, player_type, *, connected=True):
+    s = PlayerSession(player_id=pid, name=pid, player_type=player_type, session_token=pid, connection=FakeConnection())
+    s.connected = connected
+    table.add_session(s)
+    return s
+
+
+def test_ai_is_paced_only_when_a_human_is_connected():
+    table = make_table()
+    bot = _seat(table, "ai1", "ai")
+    runner = TableRunner(table)
+
+    # AI-only table: nobody is waiting on the pacing, so don't pay for it.
+    assert runner._ai_pacing_sec(bot) == 0.0
+
+    human = _seat(table, "h1", "human")
+    assert runner._ai_pacing_sec(bot) > 0.0
+    # The human's own prompts are never held back.
+    assert runner._ai_pacing_sec(human) == 0.0
+
+    # A human who dropped stops counting -- the remaining AIs play at speed.
+    human.connected = False
+    assert runner._ai_pacing_sec(bot) == 0.0
+
+
+def test_evaluation_mode_is_never_paced():
+    table = Table(room_id="EVAL01", config=GameConfig(mode="evaluation", game_count=1), creator_id="ai1")
+    bot = _seat(table, "ai1", "ai")
+    _seat(table, "h1", "human")  # a human may be watching; throughput still wins
+    runner = TableRunner(table)
+
+    assert runner._ai_pacing_sec(bot) == 0.0
+
+
+def _paced_table() -> Table:
+    """A table whose AI turn timeout is comfortably longer than the pacing
+    window, so the hold is what the test measures rather than a timeout."""
+    return Table(
+        room_id="PACE01",
+        config=GameConfig(turn_timeout_ai_sec=5.0, cucco_window_timeout_ai_sec=5.0),
+        creator_id="ai1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_ai_answer_is_held_for_the_pacing_window():
+    table = _paced_table()
+    bot = _seat(table, "ai1", "ai")
+    _seat(table, "h1", "human")
+    runner = TableRunner(table)
+    pot = Pot(["ai1", "h1"], "ai1", {"ai1": 24, "h1": 24}, table.config, random.Random(0))
+    deal = pot.start_next_deal()
+
+    async def bot_answers_instantly():
+        await asyncio.sleep(0.01)  # the prompt has to go out first
+        bot.inbox.put_nowait(NoChangeDeclare())
+
+    task = asyncio.create_task(bot_answers_instantly())
+    started = time.monotonic()
+    kind, action = await runner._race_prompt(deal, bot, "turn", (CambioDeclare, NoChangeDeclare))
+    elapsed = time.monotonic() - started
+    await task
+
+    assert kind == "action" and isinstance(action, NoChangeDeclare)
+    # Held for the window rather than resolving in microseconds.
+    assert elapsed >= 0.5, f"AIの手番が即決していた ({elapsed:.3f}s)"
+
+
+@pytest.mark.asyncio
+async def test_a_human_answer_is_not_held():
+    # Only AI seats are paced; a human's own answer applies at once.
+    table = _paced_table()
+    human = _seat(table, "h1", "human")
+    _seat(table, "ai1", "ai")
+    runner = TableRunner(table)
+    pot = Pot(["ai1", "h1"], "ai1", {"ai1": 24, "h1": 24}, table.config, random.Random(0))
+    deal = pot.start_next_deal()
+
+    async def answer():
+        await asyncio.sleep(0.01)
+        human.inbox.put_nowait(NoChangeDeclare())
+
+    task = asyncio.create_task(answer())
+    started = time.monotonic()
+    kind, action = await runner._race_prompt(deal, human, "turn", (CambioDeclare, NoChangeDeclare))
+    elapsed = time.monotonic() - started
+    await task
+
+    assert kind == "action" and isinstance(action, NoChangeDeclare)
+    assert elapsed < 0.3, f"人間の手番まで待たされている ({elapsed:.3f}s)"
+
+
+@pytest.mark.asyncio
+async def test_a_cucco_declared_inside_the_pacing_window_still_wins():
+    # The whole point of the hold: a human who klops during it must stop the
+    # deal, not have the AI's already-queued answer applied first.
+    table = _paced_table()
+    bot = _seat(table, "ai1", "ai")
+    human = _seat(table, "h1", "human")
+    runner = TableRunner(table)
+    pot = Pot(["ai1", "h1"], "ai1", {"ai1": 24, "h1": 24}, table.config, random.Random(0))
+    deal = pot.start_next_deal()
+    deal.hands["h1"] = Rank.CUCCO  # the human is holding クク
+
+    async def bot_answers():
+        await asyncio.sleep(0.01)
+        bot.inbox.put_nowait(NoChangeDeclare())  # AI answered immediately
+
+    answer_task = asyncio.create_task(bot_answers())
+
+    async def human_klops():
+        await asyncio.sleep(0.1)  # well inside the pacing window
+        human.pending_cucco = True  # dispatch sets this on an out-of-band cucco_declare
+        table.cucco_wakeup.set()
+
+    task = asyncio.create_task(human_klops())
+    kind, declarer = await runner._race_prompt(deal, bot, "turn", (CambioDeclare, NoChangeDeclare))
+    await task
+    await answer_task
+
+    assert kind == "cucco" and declarer == "h1", "ペーシング中のクク宣言が負けている"

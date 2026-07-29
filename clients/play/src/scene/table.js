@@ -5,7 +5,7 @@
 // innerHTML rebuilds.
 
 import { esc } from "../../../web-common/utils.js";
-import { RANK_ORDER } from "../../../web-common/cards.js";
+import { RANK_ORDER, CAUSE_LABELS } from "../../../web-common/cards.js";
 import { cardInnerHTML } from "./cardArt.js";
 
 // Card markup helpers, shared with the animation layer (flight ghosts use
@@ -109,7 +109,12 @@ export function createTableScene(root) {
       el.classList.toggle("is-disconnected", s.connected === false);
 
       const badges = [];
-      if (state.disqualifiedIdsThisDeal.has(s.player_id)) badges.push("失格");
+      if (state.disqualifiedIdsThisDeal.has(s.player_id)) {
+        // 卓の上でも理由まで見えるようにする -- 席を見ただけで「なぜ抜けたか」が
+        // 分かるほうが、結果発表を待たずに状況を追える。
+        const cause = state.disqualifiedInfo?.[s.player_id]?.cause;
+        badges.push(cause ? `失格(${CAUSE_LABELS[cause] ?? cause})` : "失格");
+      }
       else if (s.in_current_pot === false) badges.push("脱落中");
       if (s.connected === false) badges.push("切断");
       el.querySelector(".seat-badges").textContent = badges.join("・");

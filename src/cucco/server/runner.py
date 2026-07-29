@@ -45,6 +45,16 @@ logger = logging.getLogger("cucco.server.runner")
 # already-finished game).
 RECONNECT_GRACE_SEC = 60.0
 
+# Minimum think time an AI's prompt answer is held for while a human is at the
+# table (docs/rules/final_rules.md 「クク宣言(非同期)」). AIs answer in
+# microseconds, which leaves a human holding クク no window at all: the dealer
+# says どうぞ and the first AI's カンビオ lands in the same instant, taking the
+# クク off them before they could declare it. The klop race below keeps running
+# during this hold, so a declaration that arrives inside the window still wins
+# and stops the deal. Skipped in evaluation mode (AI-only, run for speed) and
+# at tables with no connected human, where nobody is waiting on the pacing.
+AI_TURN_PACING_SEC = 0.8
+
 
 def build_state_snapshot(table: Table, recipient_id: str | None) -> dict:
     game = table.game
@@ -635,18 +645,45 @@ class TableRunner:
         or ("action", answer) where answer is None on timeout.
         """
         prompt_task = asyncio.ensure_future(self._prompt(session, prompt_type, expected_types))
-        while True:
-            wake_task = asyncio.ensure_future(self.table.cucco_wakeup.wait())
-            done, _ = await asyncio.wait({prompt_task, wake_task}, return_when=asyncio.FIRST_COMPLETED)
-            wake_task.cancel()
-            if prompt_task in done:
-                return ("action", prompt_task.result())
-            # A declaration arrived somewhere at the table. Clear the event
-            # BEFORE scanning, so a set() racing the scan re-wakes us.
-            self.table.cucco_wakeup.clear()
-            declarer = self._take_pending_cucco(deal, eligible)
-            if declarer is None:
-                continue  # stale or not-yet-eligible flag: keep waiting
-            prompt_task.cancel()
-            await asyncio.gather(prompt_task, return_exceptions=True)
-            return ("cucco", declarer)
+        # An AI's answer is held for AI_TURN_PACING_SEC so a human still has a
+        # window to klop; the race below runs throughout, so a declaration
+        # inside the hold beats the held answer.
+        pacing = self._ai_pacing_sec(session)
+        floor_task = asyncio.ensure_future(asyncio.sleep(pacing)) if pacing else None
+        try:
+            while True:
+                if prompt_task.done() and (floor_task is None or floor_task.done()):
+                    return ("action", prompt_task.result())
+                wake_task = asyncio.ensure_future(self.table.cucco_wakeup.wait())
+                waits = {wake_task}
+                if not prompt_task.done():
+                    waits.add(prompt_task)
+                if floor_task is not None and not floor_task.done():
+                    waits.add(floor_task)
+                done, _ = await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+                wake_task.cancel()
+                if wake_task not in done:
+                    continue  # the answer and/or the hold advanced; re-check above
+                # A declaration arrived somewhere at the table. Clear the event
+                # BEFORE scanning, so a set() racing the scan re-wakes us.
+                self.table.cucco_wakeup.clear()
+                declarer = self._take_pending_cucco(deal, eligible)
+                if declarer is None:
+                    continue  # stale or not-yet-eligible flag: keep waiting
+                prompt_task.cancel()
+                await asyncio.gather(prompt_task, return_exceptions=True)
+                return ("cucco", declarer)
+        finally:
+            if floor_task is not None:
+                floor_task.cancel()
+
+    def _ai_pacing_sec(self, session: PlayerSession) -> float:
+        """How long to hold this session's answer so humans can keep up. Only
+        AI seats are paced, only when a human is actually connected to watch,
+        and never in evaluation mode (AI-only, run for throughput)."""
+        if not session.is_ai() or self.table.config.mode == "evaluation":
+            return 0.0
+        human_present = any(
+            s.player_type == "human" and s.connected for s in self.table.sessions.values()
+        )
+        return AI_TURN_PACING_SEC if human_present else 0.0
