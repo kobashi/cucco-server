@@ -300,6 +300,16 @@ function renderCreate(el, state, actions) {
             <option value="pile">捨て山 — 最後の1枚だけ見える</option>
           </select>
         </label>
+        <label>この卓での自分
+          <select id="creator-role">
+            <option value="human" ${state.playerType === "spectator" ? "" : "selected"}>プレイヤーとして参加する</option>
+            <option value="spectator" ${state.playerType === "spectator" ? "selected" : ""}>観戦のみ(自分は参加しない)</option>
+          </select>
+        </label>
+        <p id="spectator-note" class="ai-total muted" hidden>
+          観戦のみの場合、卓に必要な人数はAIだけで揃える必要があります(2人以上)。
+          全員そろえば自動で始まります。
+        </p>
         <fieldset class="ai-players">
           <legend>AIプレイヤーを追加(サーバー内蔵、合計${MAX_AI_TOTAL}人まで)</legend>
           ${AI_POLICIES.map(aiStepperHTML).join("")}
@@ -316,10 +326,28 @@ function renderCreate(el, state, actions) {
     el.querySelector("#round-limit-row").style.display = endCondition.value === "round_limit" ? "" : "none";
   });
   el.querySelector("#back-btn").addEventListener("click", () => actions.setPhase("lobby"));
+  const roleSel = el.querySelector("#creator-role");
+  const note = el.querySelector("#spectator-note");
+  const syncRoleNote = () => { note.hidden = roleSel.value !== "spectator"; };
+  roleSel.addEventListener("change", syncRoleNote);
+  syncRoleNote();
   wireAiSteppers(el);
   el.querySelector("#create-form").addEventListener("submit", (e) => {
     e.preventDefault();
+    const aiTotal = [...el.querySelectorAll(".ai-count")].reduce((n, i) => n + Number(i.value), 0);
+    if (roleSel.value === "spectator" && aiTotal < 2) {
+      // Caught here rather than at the server: a spectator-created table with
+      // fewer than 2 AI seats has nobody who can ever play, so it would sit in
+      // the waiting room forever with no error to explain why.
+      state.error = "観戦のみで卓を作るには、AIプレイヤーを2人以上追加してください。";
+      renderLobby(el, state, actions, "create");
+      return;
+    }
     actions.createTable({
+      // 卓での自分の立場。観戦のみなら main.js が identify をやり直してから
+      // 卓を作る(サーバーは観戦者の作成者を通常どおり扱う -- 参加資格者が
+      // 内蔵AIだけになるので、全員readyで自動開始する)。
+      _creatorRole: el.querySelector("#creator-role").value,
       mode: "normal",
       end_condition: endCondition.value,
       round_limit: endCondition.value === "round_limit" ? Math.round(Number(el.querySelector("#round-limit").value)) : null,
