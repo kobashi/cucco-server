@@ -4,7 +4,13 @@ these bounds are the last line before the numbers reach the engine."""
 
 import pytest
 
-from cucco.domain.config import MAX_TIMEOUT_SEC, GameConfig
+from cucco.domain.config import (
+    MAX_GAME_COUNT,
+    MAX_ROUND_LIMIT,
+    MAX_STARTING_CHIPS,
+    MAX_TIMEOUT_SEC,
+    GameConfig,
+)
 
 
 def test_defaults_are_valid():
@@ -47,3 +53,40 @@ def test_rejects_out_of_range_timeouts(field):
 def test_allows_small_positive_timeouts_used_by_evaluation():
     # Evaluation/e2e runs legitimately use sub-second timeouts.
     GameConfig(turn_timeout_ai_sec=0.02, cucco_window_timeout_ai_sec=0.02)
+
+
+# The counts below are attacker-controlled too: a single well-formed
+# create_table asking for 10**12 games or rounds would pin a task for the life
+# of the process, which no amount of network-level rate limiting can undo.
+
+
+def test_rejects_unbounded_game_count():
+    GameConfig(mode="evaluation", game_count=MAX_GAME_COUNT)  # the cap itself is fine
+    with pytest.raises(ValueError):
+        GameConfig(mode="evaluation", game_count=MAX_GAME_COUNT + 1)
+    with pytest.raises(ValueError):
+        GameConfig(mode="evaluation", game_count=10**12)
+    with pytest.raises(ValueError):
+        GameConfig(mode="evaluation", game_count=0)
+
+
+def test_rejects_unbounded_round_limit():
+    GameConfig(end_condition="round_limit", round_limit=MAX_ROUND_LIMIT)
+    with pytest.raises(ValueError):
+        GameConfig(end_condition="round_limit", round_limit=MAX_ROUND_LIMIT + 1)
+    with pytest.raises(ValueError):
+        GameConfig(end_condition="round_limit", round_limit=10**12)
+
+
+def test_rejects_unbounded_starting_chips():
+    GameConfig(starting_chips=MAX_STARTING_CHIPS)
+    with pytest.raises(ValueError):
+        GameConfig(starting_chips=MAX_STARTING_CHIPS + 1)
+    with pytest.raises(ValueError):
+        GameConfig(starting_chips=10**100)
+
+
+def test_ordinary_table_settings_still_pass():
+    # The caps must not get in the way of how the seminar actually plays.
+    GameConfig(end_condition="round_limit", round_limit=20, starting_chips=25)
+    GameConfig(mode="evaluation", game_count=100)

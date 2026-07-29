@@ -20,6 +20,16 @@ EffectDeclaration = Literal["auto", "declared"]
 # lets a griefer set a multi-hour deadline that wedges everyone else at the
 # table on a single prompt. One hour is far beyond any legitimate human turn.
 MAX_TIMEOUT_SEC = 3600.0
+# Upper bounds on the remaining attacker-controlled create_table numbers. The
+# lower bounds below already rejected 0 and negatives, but nothing capped the
+# top end: a single well-formed create_table could ask for 10**12 games or
+# rounds and the table would then run essentially forever, pinning a task for
+# the life of the process. That is work the network layer cannot rate-limit
+# away -- it is one legitimate request -- so it has to be bounded here.
+# Generous next to real use (the seminar runs tens of games, tens of rounds).
+MAX_GAME_COUNT = 10_000
+MAX_ROUND_LIMIT = 10_000
+MAX_STARTING_CHIPS = 10_000
 
 
 @dataclass(frozen=True)
@@ -59,15 +69,15 @@ class GameConfig:
             raise ValueError("round_limit is required when end_condition is 'round_limit'")
         if self.mode == "evaluation" and self.game_count is None:
             raise ValueError("game_count is required when mode is 'evaluation'")
-        if self.game_count is not None and self.game_count <= 0:
-            raise ValueError("game_count must be a positive integer")
+        if self.game_count is not None and not (0 < self.game_count <= MAX_GAME_COUNT):
+            raise ValueError(f"game_count must be between 1 and {MAX_GAME_COUNT}")
         # Numeric bounds on attacker-controlled create_table fields
         # (docs/security-notes.md): reject values that would produce a broken
         # or grief-inducing game rather than letting them reach the engine.
-        if self.starting_chips < 1:
-            raise ValueError("starting_chips must be a positive integer")
-        if self.round_limit is not None and self.round_limit < 1:
-            raise ValueError("round_limit must be a positive integer")
+        if not (1 <= self.starting_chips <= MAX_STARTING_CHIPS):
+            raise ValueError(f"starting_chips must be between 1 and {MAX_STARTING_CHIPS}")
+        if self.round_limit is not None and not (1 <= self.round_limit <= MAX_ROUND_LIMIT):
+            raise ValueError(f"round_limit must be between 1 and {MAX_ROUND_LIMIT}")
         for field_name in (
             "turn_timeout_human_sec",
             "turn_timeout_ai_sec",
