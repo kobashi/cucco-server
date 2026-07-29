@@ -46,17 +46,31 @@ export function createTableScene(root) {
     return (Math.PI / 2) + (index / count) * Math.PI * 2;
   }
 
+  // On a portrait screen the felt is narrow, so seats that land on the
+  // horizontal midline end up level with the centre pile and only a card's
+  // width from it -- the deck, the pot and two players all crowded into one
+  // line. `+k·sin(2θ)` slides seats away from θ=0 and θ=π (the midline) and
+  // toward the top and bottom of the ring, where there is room to spare.
+  // Zero on landscape, where the ring is wide enough already.
+  const MIDLINE_REPEL = 0.28;
+
+  function repelFromMidline(theta, portrait) {
+    return portrait ? theta + MIDLINE_REPEL * Math.sin(2 * theta) : theta;
+  }
+
   function buildSeats(state) {
     seatLayer.innerHTML = "";
     seatEls.clear();
     const seats = state.table?.seats ?? [];
     if (!seats.length) return;
     const myIdx = Math.max(0, seats.findIndex((s) => s.player_id === state.playerId));
+    const box = seatLayer.getBoundingClientRect();
+    const portrait = box.height > box.width;
     seats.forEach((s, i) => {
       const rel = (i - myIdx + seats.length) % seats.length;
-      const theta = seatAngle(rel, seats.length);
+      const theta = repelFromMidline(seatAngle(rel, seats.length), portrait);
       const x = 50 + 41 * Math.cos(theta);
-      const y = 50 + 38 * Math.sin(theta);
+      const y = 50 + (portrait ? 41 : 38) * Math.sin(theta);
       const el = document.createElement("div");
       el.className = "player-seat";
       el.classList.toggle("is-me", s.player_id === state.playerId);

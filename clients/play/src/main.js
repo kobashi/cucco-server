@@ -67,14 +67,15 @@ const FLIGHT_MS = 550; // a single card's flight (deck<->seat<->discard)
 // The open is the payoff of the whole deal, so it is dealt out as a reveal
 // rather than a single flash: one card turned at a time around the table,
 // then a beat to read the row before the result pane covers it.
-const OPEN_FLIP_MS = 240; // turning one card face-up (small tables)
-const OPEN_STEP_MS = 140; // gap before the next seat is turned (small tables)
+// The open takes the SAME wall-clock time at every table size, so the result
+// pane always lands with the same amount of its window left. A per-card cost
+// that just scaled with the seat count made the pane appear 2.2s into a 15s
+// pause at one table and 1.4s into it at another, which read as the countdown
+// being inconsistent. Small tables spend the leftover on the closing hold
+// rather than dragging each card out.
+const OPEN_SEQUENCE_MS = 2200; // turning the whole table over, always
+const OPEN_MAX_PER_CARD_MS = 420; // ...but never slower than this per card
 const OPEN_HOLD_MS = 600; // everyone face-up, before the result appears
-// Total budget for turning the whole table over. A fixed per-card cost would
-// run 6s+ at a full 15-seat table -- past the result pane's grace, so the
-// safety net would snap the very reveal it exists to protect. Big tables
-// simply turn faster instead.
-const OPEN_TOTAL_BUDGET_MS = 2200;
 const REVEAL_HOLD_MS = 750; // how long a turned-up card sits so the table reads it
 // Hard ceiling on how long the dock may hold the turn buttons for the
 // presentation to catch up. Gating purely on queue.busy is not safe: if a
@@ -536,16 +537,19 @@ function handleOp(op) {
         // at once -- the whole point here is that it doesn't.
         const hands = openedSnapshot?.hands ?? {};
         const elevated = openedSnapshot?.elevated_joker_holders ?? [];
-        const order = (state.table?.seats ?? [])
-          .map((s) => s.player_id)
-          .filter((pid) => hands[pid] !== undefined);
-        // Per-card pacing, squeezed to fit the budget when the table is big.
-        const per = Math.min(
-          OPEN_FLIP_MS + OPEN_STEP_MS,
-          Math.max(160, Math.round(OPEN_TOTAL_BUDGET_MS / Math.max(1, order.length)))
-        );
+        // Turn order, not seat order: the deal is played from the dealer's
+        // left round to the dealer, so the reveal follows the same path and
+        // the dealer's card lands last (docs/rules/final_rules.md 「親」).
+        const seatIds = (state.table?.seats ?? []).map((s) => s.player_id);
+        const dealerIdx = seatIds.indexOf(state.table?.dealer_seat);
+        const inTurnOrder =
+          dealerIdx === -1
+            ? seatIds
+            : [...seatIds.slice(dealerIdx + 1), ...seatIds.slice(0, dealerIdx + 1)];
+        const order = inTurnOrder.filter((pid) => hands[pid] !== undefined);
+        const per = Math.min(OPEN_MAX_PER_CARD_MS, OPEN_SEQUENCE_MS / Math.max(1, order.length));
         const flipMs = Math.round(per * 0.62);
-        const gapMs = per - flipMs;
+        const gapMs = Math.round(per) - flipMs;
         sound.play("open");
         for (const pid of order) {
           const slot = sc.slotEl(pid);
@@ -556,9 +560,10 @@ function handleOp(op) {
         }
         state.shownOpened = openedSnapshot;
         sc.sync(state); // reconcile anything the loop didn't touch
-        // A beat with the whole table face-up, so the row can be read before
-        // the result pane drops over it.
-        await pause(queue, OPEN_HOLD_MS);
+        // Pad whatever the reveal did not spend, so the total from the open to
+        // the result pane is the same at a 2-seat table and a 15-seat one.
+        const spent = Math.round(per) * order.length;
+        await pause(queue, Math.max(0, OPEN_SEQUENCE_MS - spent) + OPEN_HOLD_MS);
       });
       return;
     }

@@ -3,11 +3,13 @@
 import asyncio
 import json
 import os
+import random
 import time
 
 import pytest
 
 from cucco.domain.config import GameConfig
+from cucco.domain.game import Game
 from cucco.protocol.envelope import build_envelope
 from cucco.server.admin import (
     GC_EMPTY_GRACE_SEC,
@@ -433,3 +435,38 @@ async def test_period_actions_validate_their_arguments(store_and_logs):
     current = (await _data_call(store, logs, action="list_periods"))["current"]
     renamed = await _data_call(store, logs, action="rename_period", period_id=current["id"], name=" ゼミ第1回 ")
     assert renamed["ok"] and renamed["period"]["name"] == "ゼミ第1回"
+
+
+@pytest.mark.asyncio
+async def test_abort_survives_the_game_ending_during_the_runner_cancel():
+    # abort_table checks is_finished, then AWAITS the runner cancel. A game one
+    # step from its own ending can reach it inside that window; force_end()
+    # would then raise "already ended", the exception would escape before the
+    # table was swept, and the room the operator asked to close would stay on
+    # the list. Reproduced here by finishing the game from the cancel itself.
+    from cucco.server.admin import abort_table
+
+    registry = TableRegistry()
+    table = Table(room_id="RACE01", config=GameConfig(), creator_id="p1")
+    # register() mints the key, so the table has to carry the same id back --
+    # that is what _shutdown_table removes it by.
+    room_id = registry.register(table)
+    table.room_id = room_id
+    session = PlayerSession(player_id="p1", name="P1", player_type="human", session_token="t", connection=FakeConnection())
+    table.add_session(session)
+    table.game = Game(seats=["p1", "p2"], config=table.config, rng=random.Random(0))
+
+    async def finish_while_being_cancelled():
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            table.game.force_end()  # the game reaches its end during the cancel
+            raise
+
+    table.runner_task = asyncio.create_task(finish_while_being_cancelled())
+    await asyncio.sleep(0)  # let it reach the sleep
+
+    reply = await abort_table(registry, table)
+
+    assert reply["ok"] and reply["aborted"] == room_id
+    assert registry.get(room_id) is None, "卓が掃除されずに残っている"

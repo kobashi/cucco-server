@@ -146,13 +146,14 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 }
 .seat-layer { position: absolute; inset: 0; }
 
-/* Deck + pot stack vertically; the discard sits BESIDE them (山の横) rather
-   than below, so a card flying to the discard reads as going to the side --
-   not down toward the human's own hand at the bottom of the felt, which is
-   what the old bottom-of-column discard looked like on wide screens. */
+/* Deck (with the pot under it) dead centre, discard in its own area BELOW.
+   Laying the discard out beside the deck pushed the deck off to one side --
+   on a narrow portrait screen it ended up nearer the left-hand seats than the
+   middle of the felt, which is the thing the centre pile is supposed to
+   anchor. Stacking keeps the deck on the felt's axis at every width. */
 .center {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  display: flex; align-items: center; gap: 1.6rem;
+  display: flex; flex-direction: column; align-items: center; gap: 0.7rem;
 }
 .pile-area { display: flex; flex-direction: column; align-items: center; gap: 0.8rem; }
 .pile-area > * { display: flex; align-items: center; gap: 0.5rem; }

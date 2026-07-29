@@ -179,6 +179,9 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         state.lastDealOpened = null;
         state.shownOpened = null;
         state.resultPause = null;
+        state.turnPrompt = null;
+        state.dealerReadyPrompt = null;
+        state.continuePrompt = null;
         if (Array.isArray(p.participants) && p.participants.length) {
           const rank = new Map(p.participants.map((pid, i) => [pid, i]));
           state.table.seats.sort(
@@ -212,6 +215,14 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         state.lastDealOpened = null;
         state.shownOpened = null;
         state.lastDealResult = null;
+        // 前のディールで未応答のまま終わったプロンプト(クク宣言による中断、
+        // 途中失格などで手番が消滅した場合)は、期限が切れるまで残り続ける。
+        // 残っているとdockがカンビオ/ノンカンビオを出してしまい、自分の手番が
+        // 回ってくる前にボタンが押せる状態になる。新しいディールの分は
+        // このイベントの後に届くので、ここで捨ててよい。
+        state.turnPrompt = null;
+        state.dealerReadyPrompt = null;
+        state.continuePrompt = null;
         state.table.provenance_map = Object.fromEntries(
           state.table.seats.filter((s) => s.in_current_pot !== false).map((s) => [s.player_id, s.player_id])
         );

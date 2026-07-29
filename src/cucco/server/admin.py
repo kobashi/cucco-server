@@ -359,17 +359,26 @@ async def abort_table(registry: TableRegistry, table: Table) -> dict:
     game = table.game
     ranking = None
     if game is not None and not game.is_finished:
-        # Domain force_end computes the proper standings (current chips) and
-        # produces the same GameEnded event a natural ending would.
         await _cancel(table.runner_task)
-        events = game.force_end()
-        for event in events:
-            wire = translate(event)
-            if wire is None:
-                continue
-            for session in list(table.sessions.values()):
-                with contextlib.suppress(Exception):
-                    await session.send(build_envelope(wire.type, wire.for_recipient(session.player_id), table_id=table.room_id))
+        # Re-check after the await. Cancelling the runner yields to the event
+        # loop, and a game that was one step from its own ending can reach it
+        # in that window -- force_end() would then raise "already ended", the
+        # exception would escape before _shutdown_table below, and the table
+        # the operator asked to close would silently stay on the list. Either
+        # way the goal is met once the game is over, so just skip forcing it.
+        if not game.is_finished:
+            # Domain force_end computes the proper standings (current chips)
+            # and produces the same GameEnded event a natural ending would.
+            events = game.force_end()
+            for event in events:
+                wire = translate(event)
+                if wire is None:
+                    continue
+                for session in list(table.sessions.values()):
+                    with contextlib.suppress(Exception):
+                        await session.send(
+                            build_envelope(wire.type, wire.for_recipient(session.player_id), table_id=table.room_id)
+                        )
         ranking = [list(pair) for pair in (game.final_ranking or ())]
     await _shutdown_table(registry, table, notify_reason=None if ranking is not None else "この卓は管理者によって閉じられました")
     logger.info("admin aborted table %s", table.room_id)
