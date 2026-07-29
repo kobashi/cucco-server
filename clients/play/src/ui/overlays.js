@@ -37,7 +37,7 @@ export function renderStatus(el, state, seatName) {
       const dealer = state.table?.dealer_seat;
       const iAmDealer = dealer === state.playerId;
       if (!state.firstActionSeen && !(iAmDealer && state.dozoSent) && dealer) text = `親(${seatName(dealer)})の「どうぞ」を待っています…`;
-      else if (state.currentTurnSeat) text = `${seatName(state.currentTurnSeat)} さんの手番です…`;
+      else if (state.shownTurnSeat) text = `${seatName(state.shownTurnSeat)} さんの手番です…`;
     }
   }
   el.innerHTML = `<div class="status-line ${mine ? "mine" : ""}">${esc(text)}</div>`;

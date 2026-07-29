@@ -40,6 +40,11 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
     // would flip the whole table face-up mid-animation. The scene reads this
     // mirror, which only the queued open step advances.
     shownOpened: null,
+    // 手番リング(黄色い枠)と進行表示が指す席。currentTurnSeat はイベント受信の
+    // 瞬間に次の席へ進むが、その時点では猫などの効果アニメーションがまだ流れて
+    // いる。権威状態を直接描くと「処理中の席」ではなく「次の席」が先に光って
+    // しまうので、演出が終わったステップだけがこちらを進める。
+    shownTurnSeat: null,
     disqualifiedThisDeal: false,
     disqualifiedIdsThisDeal: new Set(),
     disqualifiedInfo: {},
@@ -182,6 +187,7 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         state.turnPrompt = null;
         state.dealerReadyPrompt = null;
         state.continuePrompt = null;
+        state.shownTurnSeat = null;
         if (Array.isArray(p.participants) && p.participants.length) {
           const rank = new Map(p.participants.map((pid, i) => [pid, i]));
           state.table.seats.sort(
@@ -223,6 +229,7 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
         state.turnPrompt = null;
         state.dealerReadyPrompt = null;
         state.continuePrompt = null;
+        state.shownTurnSeat = null;
         state.table.provenance_map = Object.fromEntries(
           state.table.seats.filter((s) => s.in_current_pot !== false).map((s) => [s.player_id, s.player_id])
         );

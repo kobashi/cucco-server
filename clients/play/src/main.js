@@ -123,7 +123,16 @@ const scene = () => sceneRefs?.scene ?? null;
 // The dock holds the turn buttons only while the presentation is genuinely
 // behind AND the backstop deadline has not passed.
 const turnButtonsPending = () => queue.busy && Date.now() < turnGateUntil;
-const syncStep = () => queue.enqueue(async () => sceneRefs?.scene?.sync(state));
+// `turnSeat` is the turn as of the op being animated, captured when the op
+// arrived -- never read live inside the step. The queue lags the network, so
+// by the time a step runs the authoritative currentTurnSeat has usually moved
+// on to the NEXT player; painting that would light the next seat's ring while
+// this seat's 猫 effect is still playing.
+const syncStep = (turnSeat) =>
+  queue.enqueue(async () => {
+    if (turnSeat !== undefined) state.shownTurnSeat = turnSeat;
+    sceneRefs?.scene?.sync(state);
+  });
 // The reveal point for MY own card: advance the presentation mirror
 // (shownHand) to the authoritative hand, then sync the scene + hand-info so
 // my seat and effect line update together -- and only here, so an effect
@@ -139,10 +148,11 @@ const syncStep = () => queue.enqueue(async () => sceneRefs?.scene?.sync(state));
 // exchange step then flew whatever was sitting there.
 // Pass `undefined` for ops that don't change my hand: the sync still runs, but
 // the shown hand is left alone.
-const revealHandStep = (card) =>
+const revealHandStep = (card, turnSeat) =>
   queue.enqueue(async () => {
     if (!sceneRefs) return;
     if (card !== undefined) state.shownHand = card;
+    if (turnSeat !== undefined) state.shownTurnSeat = turnSeat;
     sceneRefs.scene.sync(state);
     renderHandInfo(sceneRefs.handInfoEl, state);
   });
@@ -191,6 +201,10 @@ async function collectDisqualifiedCards(sc) {
 }
 
 function handleOp(op) {
+  // Snapshot of whose turn it is AS OF THIS OP. handleOp runs synchronously
+  // right after the event mutated the state, so this is that op's value; the
+  // queued steps below use it instead of reading the live one later.
+  const turnSeat = state.currentTurnSeat;
   switch (op.kind) {
     case "rejected":
       actions.resync();
@@ -279,11 +293,12 @@ function handleOp(op) {
         // card: it turns face-up in place rather than having been readable
         // from the moment the event arrived.
         state.shownHand = dealtHand;
+        state.shownTurnSeat = turnSeat;
         sc.sync(state);
         renderHandInfo(sceneRefs.handInfoEl, state);
         await flipReveal(queue, sc.slotEl(state.playerId)?.querySelector(".card-face"));
       });
-      revealHandStep(dealtHand); // safety net: also reveals when the step above was skipped
+      revealHandStep(dealtHand, turnSeat); // safety net: also reveals when the step above was skipped
       return;
     }
 
@@ -295,7 +310,7 @@ function handleOp(op) {
         sound.play("pass");
         await confirmPulse(queue, sc.slotEl(player));
       });
-      syncStep();
+      syncStep(turnSeat);
       return;
     }
 
@@ -307,7 +322,7 @@ function handleOp(op) {
         sound.play("leave");
         await banner(queue, `${game.seatName(player)} が離脱`, "warn");
       });
-      syncStep();
+      syncStep(turnSeat);
       return;
     }
 
@@ -343,11 +358,12 @@ function handleOp(op) {
         // drops queued steps, and the two seats would sit visibly empty until
         // the next idle render.
         if (involvesMe) state.shownHand = yourNewCard;
+        state.shownTurnSeat = turnSeat;
         sc.sync(state);
         renderHandInfo(sceneRefs.handInfoEl, state);
       });
       // Only my own exchanges move my hand; someone else's is a plain re-sync.
-      revealHandStep(involvesMe ? yourNewCard : undefined);
+      revealHandStep(involvesMe ? yourNewCard : undefined, turnSeat);
       // Confirm mode: pause on a card naming what I received, but ONLY when I
       // was the exchange TARGET -- someone else's cambio landed on me, which I
       // didn't initiate and might miss. When I'm the turn player (requester) I
@@ -382,12 +398,13 @@ function handleOp(op) {
         // It lands face-up, so this IS the reveal point for the actor's
         // (possibly my) new card -- advance shownHand here.
         if (actor === state.playerId) state.shownHand = newCard;
+        state.shownTurnSeat = turnSeat;
         sc.sync(state); // the actor's slot now holds the revealed drawn card
         renderHandInfo(sceneRefs.handInfoEl, state);
         await banner(queue, `${game.seatName(actor)} が山札から ${newCard} を引く`, "info");
         await pause(queue, REVEAL_HOLD_MS);
       });
-      syncStep();
+      syncStep(turnSeat);
       return;
     }
 
@@ -404,7 +421,7 @@ function handleOp(op) {
         await banner(queue, `${game.seatName(actor)} が山札から ${drawn} を引く`, "warn");
         await pause(queue, REVEAL_HOLD_MS);
       });
-      syncStep();
+      syncStep(turnSeat);
       return;
     }
 
@@ -431,7 +448,7 @@ function handleOp(op) {
         }
         await pause(queue, REVEAL_HOLD_MS);
       });
-      syncStep();
+      syncStep(turnSeat);
       return;
     }
 
@@ -449,7 +466,7 @@ function handleOp(op) {
         await banner(queue, `クク宣言!! — ${game.seatName(player)}`, "cucco", 1500, true);
         await pause(queue, REVEAL_HOLD_MS);
       });
-      syncStep();
+      syncStep(turnSeat);
       return;
     }
 
@@ -480,7 +497,7 @@ function handleOp(op) {
           await pause(queue, REVEAL_HOLD_MS);
         }
       });
-      syncStep();
+      syncStep(turnSeat);
       return;
     }
 
@@ -507,7 +524,7 @@ function handleOp(op) {
         sound.play("reshuffle");
         await fly(queue, { fromEl: sc.discardEl(), toEl: sc.deckEl(), html: cardHTML(null), duration: 500 });
       });
-      syncStep();
+      syncStep(turnSeat);
       return;
     }
 
@@ -576,7 +593,7 @@ function handleOp(op) {
         sound.play("chip");
         await fly(queue, { fromEl: sc.seatEl(player), toEl: sc.potEl(), html: '<div class="chip-ghost">🪙</div>', duration: 500 });
       });
-      syncStep();
+      syncStep(turnSeat);
       return;
     }
 
@@ -590,7 +607,7 @@ function handleOp(op) {
           await fly(queue, { fromEl: sc.potEl(), toEl: sc.seatEl(winner), html: '<div class="chip-ghost">💰</div>', duration: 600 });
         });
       }
-      syncStep();
+      syncStep(turnSeat);
       return;
     }
 
@@ -599,11 +616,11 @@ function handleOp(op) {
       // behind the final ranking modal.
       if (confirmMode !== "off") queue.clear();
       sound.play("pot_win");
-      syncStep();
+      syncStep(turnSeat);
       return;
 
     default:
-      syncStep();
+      syncStep(turnSeat);
       return;
   }
 }
@@ -790,6 +807,7 @@ function render() {
   if (justCreated || !queue.busy) {
     state.shownHand = state.yourHand;
     state.shownOpened = state.lastDealOpened;
+    state.shownTurnSeat = state.currentTurnSeat;
     sceneRefs.scene.sync(state);
   }
   renderStatus(sceneRefs.statusEl, state, game.seatName);

@@ -117,7 +117,9 @@ export function createTableScene(root) {
       if (!el) continue;
       el.querySelector(".chip-count").textContent = `${s.chips} 枚`;
       el.querySelector(".dealer-mark").hidden = s.player_id !== t.dealer_seat;
-      el.classList.toggle("is-turn", s.player_id === state.currentTurnSeat && dealInProgress);
+      // shownTurnSeat: 権威状態ではなく「演出が追いついた手番」。詳細は
+      // gameState.js の shownTurnSeat のコメントを参照。
+      el.classList.toggle("is-turn", s.player_id === state.shownTurnSeat && dealInProgress);
       el.classList.toggle("is-out", s.in_current_pot === false);
       el.classList.toggle("is-disqualified", state.disqualifiedIdsThisDeal.has(s.player_id));
       el.classList.toggle("is-disconnected", s.connected === false);
