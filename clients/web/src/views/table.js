@@ -37,7 +37,7 @@ export function render(el, state, actions) {
     </div>
     ${!isSpectator && state.effectWindow ? renderEffectModal(state) : ""}
     ${!isSpectator && state.continuePrompt ? renderContinueModal(state) : ""}
-    ${state.resultPause ? renderResultPauseModal(state, isSpectator) : ""}
+    ${state.resultPause ? renderResultPauseModal(state) : ""}
   `;
 
   el.querySelector("#dealer-ready-btn")?.addEventListener("click", actions.sendDealerReady);
@@ -373,7 +373,7 @@ function renderContinueModal(state) {
 // Result-review window (broadcast `result_pause`): the outcome as a modal
 // over everyone's screen, with a countdown. Players can ack to skip -- the
 // server proceeds early once every seated human has confirmed.
-function renderResultPauseModal(state, isSpectator) {
+function renderResultPauseModal(state) {
   const pot = state.lastPotResult;
   const body = pot
     ? `<p>${
@@ -388,11 +388,7 @@ function renderResultPauseModal(state, isSpectator) {
         <h2>${pot ? "ポット結果" : "判定結果"}</h2>
         ${body}
         <p class="countdown">残り ${countdown(state.resultPause.deadline)} 秒</p>
-        ${
-          isSpectator
-            ? `<p class="muted">まもなく進行します。</p>`
-            : `<button id="result-ack-btn">確認した(全員そろえば先へ進む)</button>`
-        }
+        <button id="result-ack-btn">確認した(全員そろえば先へ進む)</button>
       </div>
     </div>
   `;

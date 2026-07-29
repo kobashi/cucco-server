@@ -140,11 +140,7 @@ export function renderModals(el, state, actions, seatName) {
       `<h2>${state.lastPotResult ? "ポット結果" : "判定結果"}</h2>
        ${resultSummaryHTML(state, seatName)}
        <p class="countdown">残り ${countdown(state.resultPause.deadline)} 秒</p>
-       ${
-         isSpectator
-           ? '<p class="muted">まもなく進行します。</p>'
-           : '<button id="result-ack-btn">確認した(全員そろえば先へ進む)</button>'
-       }`
+       <button id="result-ack-btn">確認した(全員そろえば先へ進む)</button>`
     );
   } else if (state.gameEnded) {
     html = modal(

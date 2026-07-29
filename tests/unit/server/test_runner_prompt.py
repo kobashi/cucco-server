@@ -412,6 +412,61 @@ def test_ai_is_paced_only_when_a_human_is_connected():
     assert runner._ai_pacing_sec(bot) == 0.0
 
 
+def test_a_spectator_alone_still_paces_the_ais():
+    # An all-AI table watched by a spectator is the whole point of the
+    # spectator-creator route; unpaced, the game races to the result and there
+    # is nothing to watch.
+    table = make_table()
+    bot = _seat(table, "ai1", "ai")
+    spectator = _seat(table, "s1", "spectator")
+
+    runner = TableRunner(table)
+    assert runner._ai_pacing_sec(bot) > 0.0
+
+    # A spectator who closed the tab stops counting, like a dropped human.
+    spectator.connected = False
+    assert runner._ai_pacing_sec(bot) == 0.0
+
+
+def _pausing_table() -> Table:
+    return Table(room_id="PAUSE1", config=GameConfig(result_pause_sec=0.6), creator_id="ai1")
+
+
+@pytest.mark.asyncio
+async def test_result_pause_waits_for_a_spectator_who_holds_no_seat():
+    # No game is running, so nobody is seated -- exactly the all-AI shape.
+    table = _pausing_table()
+    _seat(table, "ai1", "ai")
+    runner = TableRunner(table)
+
+    # AIs never ack, so with no audience the pause is skipped outright.
+    started = asyncio.get_event_loop().time()
+    await runner._result_pause()
+    assert asyncio.get_event_loop().time() - started < 0.3
+
+    # A watching spectator is someone to wait for, seat or no seat.
+    _seat(table, "s1", "spectator")
+    started = asyncio.get_event_loop().time()
+    await runner._result_pause()
+    assert asyncio.get_event_loop().time() - started >= 0.5
+
+
+@pytest.mark.asyncio
+async def test_a_spectators_ack_ends_the_result_pause_early():
+    table = _pausing_table()
+    _seat(table, "ai1", "ai")
+    _seat(table, "s1", "spectator")
+    runner = TableRunner(table)
+
+    async def ack_soon():
+        await asyncio.sleep(0.05)
+        table.result_acks.add("s1")
+
+    started = asyncio.get_event_loop().time()
+    await asyncio.gather(runner._result_pause(), ack_soon())
+    assert asyncio.get_event_loop().time() - started < 0.5
+
+
 def test_evaluation_mode_is_never_paced():
     table = Table(room_id="EVAL01", config=GameConfig(mode="evaluation", game_count=1), creator_id="ai1")
     bot = _seat(table, "ai1", "ai")

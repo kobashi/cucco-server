@@ -39,6 +39,19 @@ async def _settle() -> None:
         await asyncio.sleep(0)
 
 
+@pytest.fixture
+def unpaced(monkeypatch):
+    """Run the bots at full speed.
+
+    A connected spectator paces every AI turn so the game stays watchable
+    (see test_runner_prompt.py), but these tests are about the start/finish
+    mechanics rather than the pacing, and a spectator host is the shape they
+    happen to use -- paying 0.8s per turn would push them past their timeout
+    for nothing.
+    """
+    monkeypatch.setattr("cucco.server.runner.AI_TURN_PACING_SEC", 0.0)
+
+
 @pytest.mark.asyncio
 async def test_bots_are_not_seated_until_someone_joins():
     conn = FakeConnection()
@@ -63,7 +76,7 @@ async def test_bots_are_not_seated_until_someone_joins():
 
 
 @pytest.mark.asyncio
-async def test_host_ready_starts_the_game_with_bots_and_it_finishes():
+async def test_host_ready_starts_the_game_with_bots_and_it_finishes(unpaced):
     conn = FakeConnection()
     handler = ConnectionHandler(conn, TableRegistry())
     await handler.handle_message(build_envelope("identify", {"name": "Watcher", "player_type": "spectator"}))
@@ -96,7 +109,7 @@ async def test_host_ready_starts_the_game_with_bots_and_it_finishes():
 
 
 @pytest.mark.asyncio
-async def test_bots_re_ready_for_a_rematch():
+async def test_bots_re_ready_for_a_rematch(unpaced):
     conn = FakeConnection()
     handler = ConnectionHandler(conn, TableRegistry())
     await handler.handle_message(build_envelope("identify", {"name": "Watcher", "player_type": "spectator"}))

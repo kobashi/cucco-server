@@ -478,14 +478,21 @@ class TableRunner:
         await self._broadcast("result_pause", lambda pid: {"timeout_sec": timeout})
         deadline = asyncio.get_event_loop().time() + timeout
         while asyncio.get_event_loop().time() < deadline:
-            # Skippable: once every seated, connected HUMAN has acked the
-            # result screen there is nobody left to wait for (AIs never ack
-            # -- the pause is a human-pacing feature; an all-AI normal table
-            # skips it outright).
+            # Skippable: once every connected person watching has acked the
+            # result screen there is nobody left to wait for (AIs never ack --
+            # the pause is a human-pacing feature, so a table with nobody but
+            # AIs skips it outright).  Spectators are waited on even though
+            # they hold no seat: on an all-AI table they are the only audience,
+            # and skipping the pause would flash the result past them.
             unacked = [
                 s
-                for s in self.table.players()
-                if s.player_type == "human" and s.connected and s.player_id in seated and s.player_id not in self.table.result_acks
+                for s in self.table.sessions.values()
+                if s.connected
+                and s.player_id not in self.table.result_acks
+                and (
+                    (s.player_type == "human" and s.player_id in seated)
+                    or s.player_type == "spectator"
+                )
             ]
             if not unacked:
                 return
@@ -679,11 +686,16 @@ class TableRunner:
 
     def _ai_pacing_sec(self, session: PlayerSession) -> float:
         """How long to hold this session's answer so humans can keep up. Only
-        AI seats are paced, only when a human is actually connected to watch,
-        and never in evaluation mode (AI-only, run for throughput)."""
+        AI seats are paced, only when a person is actually connected to watch,
+        and never in evaluation mode (AI-only, run for throughput).
+
+        Spectators count as watchers: an all-AI table is exactly the case where
+        nobody is seated, and without them a spectated game would race to the
+        result before any of it could be followed."""
         if not session.is_ai() or self.table.config.mode == "evaluation":
             return 0.0
-        human_present = any(
-            s.player_type == "human" and s.connected for s in self.table.sessions.values()
+        watcher_present = any(
+            s.player_type in ("human", "spectator") and s.connected
+            for s in self.table.sessions.values()
         )
-        return AI_TURN_PACING_SEC if human_present else 0.0
+        return AI_TURN_PACING_SEC if watcher_present else 0.0
