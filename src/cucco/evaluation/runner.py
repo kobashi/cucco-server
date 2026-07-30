@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import random
+from collections.abc import Callable
 
 from cucco.domain.events import PlayerDisqualified, PotStarted
 from cucco.domain.game import Game
@@ -66,9 +67,21 @@ class _StatsCollectingLog:
 
 
 class EvaluationRunner:
-    def __init__(self, table: Table, participants: list[str]) -> None:
+    def __init__(
+        self,
+        table: Table,
+        participants: list[str],
+        *,
+        seed_source: Callable[[], int] | None = None,
+    ) -> None:
         self.table = table
         self.participants = list(participants)
+        # Each game's seed comes from SystemRandom so that nothing observable
+        # from a client lets the deck be predicted -- deliberately NOT settable
+        # over the wire (docs/roadmap-ideas.md 「Cheat対策」).  `seed_source` is
+        # an in-process seam for tests that need a run to be reproducible; it
+        # replaces only where the seed comes from, never how it is used.
+        self._next_seed = seed_source or (lambda: random.SystemRandom().randrange(2**63))
 
     async def run(self) -> None:
         config = self.table.config
@@ -99,7 +112,7 @@ class EvaluationRunner:
                 # poison the aggregate stats with fabricated wins/ranks.
                 break
 
-            seed = random.SystemRandom().randrange(2**63)
+            seed = self._next_seed()
             game = Game(seats, config, random.Random(seed))
             self.table.game = game
 

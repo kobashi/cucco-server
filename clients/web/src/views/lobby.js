@@ -92,6 +92,10 @@ function renderChoice(el, state, actions) {
 }
 
 function renderCreate(el, state, actions) {
+  // Kept in `state`, not just the DOM: the too-few-AI guard re-renders this
+  // form, which would otherwise silently drop a 観戦のみ choice back to
+  // プレイヤー and create the table with the creator seated.
+  const creatorRole = state.creatorRole ?? (state.playerType === "spectator" ? "spectator" : "human");
   el.innerHTML = `
     <div class="panel">
       <h1>卓を作る</h1>
@@ -139,6 +143,15 @@ function renderCreate(el, state, actions) {
             <option value="pile">捨て山 — 最後の1枚だけ見える</option>
           </select>
         </label>
+        <label>この卓での自分
+          <select id="creator-role">
+            <option value="human" ${creatorRole === "spectator" ? "" : "selected"}>プレイヤーとして参加する</option>
+            <option value="spectator" ${creatorRole === "spectator" ? "selected" : ""}>観戦のみ(自分は参加しない)</option>
+          </select>
+        </label>
+        <p id="spectator-note" class="muted" hidden>
+          観戦のみの場合、卓に必要な人数はAIだけで揃える必要があります(2人以上)。
+        </p>
         <fieldset class="ai-players">
           <legend>AIプレイヤーを追加(サーバー内蔵、合計14人まで)</legend>
           <label>matrix(人数×手札で判断) <input class="ai-count" data-policy="matrix" type="number" min="0" max="14" step="1" value="0"></label>
@@ -162,10 +175,31 @@ function renderCreate(el, state, actions) {
     state.screen = "lobby";
     render(el, state, actions);
   });
+  const roleSel = el.querySelector("#creator-role");
+  const roleNote = el.querySelector("#spectator-note");
+  const syncRoleNote = () => {
+    state.creatorRole = roleSel.value;
+    roleNote.hidden = roleSel.value !== "spectator";
+  };
+  roleSel.addEventListener("change", syncRoleNote);
+  syncRoleNote();
   el.querySelector("#create-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const endCondition = endConditionEl.value;
+    const aiTotal = [...el.querySelectorAll(".ai-count")].reduce((n, i) => n + Number(i.value), 0);
+    if (roleSel.value === "spectator" && aiTotal < 2) {
+      // Caught here rather than at the server: a spectator-created table with
+      // fewer than 2 AI seats has nobody who can ever play, so it would sit in
+      // the waiting room forever with no error to explain why.
+      state.error = "観戦のみで作る場合は、AIプレイヤーを2人以上追加してください。";
+      render(el, state, actions);
+      return;
+    }
     actions.createTable({
+      // 卓での自分の立場。観戦のみなら main.js が identify をやり直してから
+      // 卓を作る。初回の開始は作成者の操作を待つ(サーバー側のゲート)ので、
+      // 観戦者が作った卓でも人を待つ間がある。
+      _creatorRole: roleSel.value,
       mode: "normal",
       end_condition: endCondition,
       round_limit: endCondition === "round_limit" ? Math.round(Number(el.querySelector("#round-limit").value)) : null,

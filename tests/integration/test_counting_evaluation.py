@@ -10,15 +10,42 @@ watching for the summary) -- no sockets, so ~300 games take seconds.
 """
 
 import asyncio
+import functools
+import itertools
 import json
 
 import pytest
 
+from cucco.evaluation.runner import EvaluationRunner
 from cucco.protocol.envelope import build_envelope
 from cucco.server.dispatch import ConnectionHandler
 from cucco.server.registry import TableRegistry
 
 GAME_COUNT = 400
+
+# Fixed so the run is reproducible. Any seed works -- this one is just the date
+# the test was pinned; see `deterministic_seeds` for why it is pinned at all.
+BASE_SEED = 20260729
+
+
+@pytest.fixture
+def deterministic_seeds(monkeypatch):
+    """Make the evaluation run reproducible.
+
+    Production draws each game's seed from SystemRandom, which is what made
+    this test flaky: the rank edge is real but modest (measured over 10 runs of
+    400 games: mean 0.09, sd 0.08), so roughly 1 run in 5 landed below zero and
+    even three attempts failed outright about once in a hundred runs.
+
+    Only the *source* of the seeds is replaced -- the deck, the dealer draw and
+    the policies all run exactly as shipped, so the number this test asserts on
+    is a real measurement of the policy, just always the same one.
+    """
+    seeds = itertools.count(BASE_SEED)
+    monkeypatch.setattr(
+        "cucco.server.dispatch.EvaluationRunner",
+        functools.partial(EvaluationRunner, seed_source=lambda: next(seeds)),
+    )
 
 
 class SummarySink:
@@ -67,24 +94,42 @@ def _rank_edge(summary: dict, names: dict[str, str], probe: str) -> float:
     return matrix_avg_rank - probe_stats[0]["avg_rank"]
 
 
-@pytest.mark.parametrize("probe", ["counting_aggressive", "counting_conservative"])
+# How many consecutive seeds (from BASE_SEED) each probe is averaged over.
+#
+# Measured 2026-07-29 over 10 seeds of 400 games:
+#
+# | policy                | mean edge | min     | max     | negative runs |
+# |-----------------------|-----------|---------|---------|---------------|
+# | counting_aggressive   |   +0.026  | -0.067  | +0.153  |     4 / 10    |
+# | counting_conservative |   +0.327  | +0.233  | +0.437  |     0 / 10    |
+#
+# So the module docstring's 案A claim holds comfortably for the conservative
+# variant -- one run is plenty -- and only barely for the aggressive one, whose
+# single runs are negative about 40% of the time. Averaging several runs is what
+# makes the aggressive assertion mean anything; pinning one lucky seed would
+# have gone green while hiding exactly that.
+#
+# Disqualified-card disclosure timing was ruled out as the cause of the thin
+# aggressive edge: re-measuring the same 10 seeds with `immediate` instead of
+# the default `deferred` moved its mean from +0.026 to +0.029.
+RUNS_BY_PROBE = {"counting_aggressive": 5, "counting_conservative": 1}
+
+
+@pytest.mark.parametrize("probe", sorted(RUNS_BY_PROBE))
 @pytest.mark.asyncio
-async def test_counting_policy_outranks_the_matrix_baseline(probe):
-    # Statistical test over unseeded games: the policy's rank edge over the
-    # matrix field is real but modest, so a single unlucky run can dip below
-    # zero. Retries keep the false-failure rate negligible while still
-    # requiring the edge to actually show up.
-    #
-    # Two attempts used to be enough. Ending deals as soon as mid-deal
-    # disqualifications leave one survivor (Deal.is_decided_by_disqualification)
-    # made games shorter and noisier: measured over 10 runs of 400 games, the
-    # counting_aggressive edge went from mean 0.11 / sd 0.04 / 0 negative runs
-    # to mean 0.09 / sd 0.08 / 2 negative runs. The edge itself is intact --
-    # the spread around it roughly doubled -- so a third attempt restores the
-    # old false-failure rate without weakening the assertion.
-    for attempt in range(3):
+async def test_counting_policy_outranks_the_matrix_baseline(probe, deterministic_seeds):
+    # Deterministic: fixed seeds, so this either passes or fails the same way
+    # every time. It used to retry unseeded runs up to 3 times, which still
+    # failed outright roughly once in 16 runs.
+    runs = RUNS_BY_PROBE[probe]
+    edges = []
+    for _ in range(runs):
         summary, names = await _evaluate(probe)
         assert summary["games_played"] == GAME_COUNT
-        if _rank_edge(summary, names, probe) > 0:
-            return
-    pytest.fail(f"{probe} did not outrank the matrix field in {attempt + 1} runs of {GAME_COUNT} games")
+        edges.append(_rank_edge(summary, names, probe))
+
+    mean_edge = sum(edges) / len(edges)
+    assert mean_edge > 0, (
+        f"{probe} did not outrank the matrix field over {runs} run(s) of "
+        f"{GAME_COUNT} games: mean edge {mean_edge:+.4f}, per-run {[f'{e:+.4f}' for e in edges]}"
+    )

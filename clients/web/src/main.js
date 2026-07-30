@@ -142,8 +142,23 @@ const actions = {
   },
 
   async createTable(config) {
+    // `_creatorRole` is UI-only -- strip it before it reaches the wire.
+    const { _creatorRole, ...tableConfig } = config;
     try {
-      const payload = await conn.createTable(config);
+      // Role is fixed at identify time, but the choice that matters is made
+      // here, on the create form ("am I playing at the table I'm making?").
+      // Re-identify when they differ: nothing is joined yet, so this just
+      // mints a fresh session -- and it is the only way to become a spectator
+      // without sending the creator back to the name screen.
+      if (_creatorRole && _creatorRole !== state.playerType) {
+        await conn.identify(state.name, _creatorRole);
+        update(() => {
+          state.playerId = conn.playerId;
+          state.sessionToken = conn.sessionToken;
+          state.playerType = _creatorRole;
+        });
+      }
+      const payload = await conn.createTable(tableConfig);
       update(() => (state.error = null));
       await actions.joinTable(payload.room_id);
     } catch (err) {

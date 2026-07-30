@@ -253,6 +253,10 @@ function wireAiSteppers(el) {
 }
 
 function renderCreate(el, state, actions) {
+  // Kept in `state`, not just the DOM: the AI steppers and the too-few-AI guard
+  // both re-render this form, which would otherwise silently drop a 観戦のみ
+  // choice back to プレイヤー and create the table with the creator seated.
+  const creatorRole = state.creatorRole ?? (state.playerType === "spectator" ? "spectator" : "human");
   el.innerHTML = `
     <div class="panel">
       <h1>卓を作る</h1>
@@ -302,13 +306,12 @@ function renderCreate(el, state, actions) {
         </label>
         <label>この卓での自分
           <select id="creator-role">
-            <option value="human" ${state.playerType === "spectator" ? "" : "selected"}>プレイヤーとして参加する</option>
-            <option value="spectator" ${state.playerType === "spectator" ? "selected" : ""}>観戦のみ(自分は参加しない)</option>
+            <option value="human" ${creatorRole === "spectator" ? "" : "selected"}>プレイヤーとして参加する</option>
+            <option value="spectator" ${creatorRole === "spectator" ? "selected" : ""}>観戦のみ(自分は参加しない)</option>
           </select>
         </label>
         <p id="spectator-note" class="ai-total muted" hidden>
           観戦のみの場合、卓に必要な人数はAIだけで揃える必要があります(2人以上)。
-          全員そろえば自動で始まります。
         </p>
         <fieldset class="ai-players">
           <legend>AIプレイヤーを追加(サーバー内蔵、合計${MAX_AI_TOTAL}人まで)</legend>
@@ -328,7 +331,10 @@ function renderCreate(el, state, actions) {
   el.querySelector("#back-btn").addEventListener("click", () => actions.setPhase("lobby"));
   const roleSel = el.querySelector("#creator-role");
   const note = el.querySelector("#spectator-note");
-  const syncRoleNote = () => { note.hidden = roleSel.value !== "spectator"; };
+  const syncRoleNote = () => {
+    state.creatorRole = roleSel.value;
+    note.hidden = roleSel.value !== "spectator";
+  };
   roleSel.addEventListener("change", syncRoleNote);
   syncRoleNote();
   wireAiSteppers(el);
@@ -345,8 +351,8 @@ function renderCreate(el, state, actions) {
     }
     actions.createTable({
       // 卓での自分の立場。観戦のみなら main.js が identify をやり直してから
-      // 卓を作る(サーバーは観戦者の作成者を通常どおり扱う -- 参加資格者が
-      // 内蔵AIだけになるので、全員readyで自動開始する)。
+      // 卓を作る。初回の開始は作成者の操作を待つ(サーバー側のゲート)ので、
+      // 観戦者が作った卓でも人を待つ間がある。
       _creatorRole: el.querySelector("#creator-role").value,
       mode: "normal",
       end_condition: endCondition.value,
