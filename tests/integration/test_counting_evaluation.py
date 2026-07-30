@@ -1,12 +1,22 @@
 """案A検証 (docs/ai-advanced-policies.md「共通: 検証の作法」): the counting
-policies must measurably outperform the matrix baseline over an evaluation
-run. Average rank is the assertion target -- it is far more stable at a few
-hundred games than win rate (the aggressive variant also wins outright more
-often than 1/n in practice; the conservative variant converts its chip
-protection into rank, not wins, by design).
+policies must outrank the matrix baseline over an evaluation run.
+
+Average rank is the assertion target, NOT win rate: measured over 10 seeds of
+400 games, both counting policies sit at or below the 0.250 chance win rate of
+a 4-player table (aggressive 0.249, conservative 0.226) while still ranking
+better. Cucco rewards not losing chips, and that shows up in rank -- the
+conservative variant's much lower disqualification rate (0.42 vs matrix 0.54)
+is where its rank edge comes from.
+
+**This file measures the single hardest configuration**: 4 players against an
+all-matrix field. The same policies look far stronger elsewhere -- at 8 players
+the aggressive edge is +0.27 rather than +0.06, and against an always_change
+field it is +1.23. So a failure here means "lost ground in the strictest case",
+not "the policy is weak"; the table of configurations lives in the 検証の作法
+section of the doc above. Deliberately kept strict so it catches regressions.
 
 Runs fully in-process (embedded bots on an evaluation table, spectator
-watching for the summary) -- no sockets, so ~300 games take seconds.
+watching for the summary) -- no sockets, so a 400-game run takes seconds.
 """
 
 import asyncio
@@ -103,15 +113,21 @@ def _rank_edge(summary: dict, names: dict[str, str], probe: str) -> float:
 # | counting_aggressive   |   +0.026  | -0.067  | +0.153  |     4 / 10    |
 # | counting_conservative |   +0.327  | +0.233  | +0.437  |     0 / 10    |
 #
-# So the module docstring's 案A claim holds comfortably for the conservative
-# variant -- one run is plenty -- and only barely for the aggressive one, whose
-# single runs are negative about 40% of the time. Averaging several runs is what
-# makes the aggressive assertion mean anything; pinning one lucky seed would
-# have gone green while hiding exactly that.
+# So one run is plenty for the conservative variant, while the aggressive one is
+# negative about 40% of the time in THIS configuration -- averaging several runs
+# is what makes its assertion mean anything. Pinning one lucky seed would have
+# gone green while hiding exactly that.
 #
-# Disqualified-card disclosure timing was ruled out as the cause of the thin
-# aggressive edge: re-measuring the same 10 seeds with `immediate` instead of
-# the default `deferred` moved its mean from +0.026 to +0.029.
+# Two candidate explanations for the thin aggressive edge were measured and
+# ruled out as the cause:
+#   - Disqualified-card disclosure timing: re-measuring the same 10 seeds with
+#     `immediate` instead of the default `deferred` moved the mean from +0.026
+#     to +0.029.
+#   - The counting layer itself being weak: restoring counting_conservative's
+#     parameters one at a time gives continue-decision-only +0.32, danger-weight
+#     -only +0.04, cutoff-only +0.06. In this configuration the 案D continue
+#     decision carries nearly the whole conservative edge.
+# What the edge IS sensitive to is the configuration -- see the module docstring.
 RUNS_BY_PROBE = {"counting_aggressive": 5, "counting_conservative": 1}
 
 
