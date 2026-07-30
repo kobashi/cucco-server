@@ -8,6 +8,45 @@
 // happened via `emit(op)` -- the play client's scene layer consumes those
 // ops (in M2+ they become queued animation steps; in M1 the scene just
 // re-syncs on every change).
+//
+// ---------------------------------------------------------------------------
+// THE PRESENTATION-MIRROR RULE -- read this before touching the scene layer.
+//
+// This one mistake produced four separate user-visible bugs ("cards appear
+// before the deal-out animation finishes", "the turn ring overtakes the 猫
+// effect", "the result shows before everyone's card is open"). It is the most
+// repeated defect in this client, so it is written down as a rule:
+//
+//   **Presentation code must never read authoritative state.**
+//
+// The authoritative fields (`yourHand`, `lastDealOpened`, `currentTurnSeat`…)
+// update the INSTANT an event arrives off the socket. The animation queue is
+// deliberately behind the network -- it is still playing an earlier step. Any
+// render that reads an authoritative field therefore draws the future.
+//
+// So each such field has a lagging presentation mirror (`shownHand`,
+// `shownOpened`, `shownTurnSeat`), advanced ONLY by a queued step that has
+// actually run. The scene reads the mirror; the mirror is the "what the player
+// can currently see" truth. Add a new mirror when you add a field the scene
+// draws and an animation explains.
+//
+// Three corollaries, each learned from one of those bugs:
+//
+//   1. A queued step must use values CAPTURED when the op arrived, never read
+//      live state at run time -- by then the queue has fallen further behind.
+//      See `handleOp`/`syncStep` in main.js: `turnSeat` is captured at the top.
+//   2. Call `queue.resume()` at deal boundaries, or the `instant` fast-forward
+//      flag leaks into the next deal and skips its animations.
+//   3. The idle catch-up must NOT advance the turn mirror. If the queue happens
+//      to drain between two events (e.g. between a refusal and the
+//      disqualification it causes), advancing it there puts the ring ahead
+//      again -- the exact bug, reintroduced. main.js excludes it on purpose.
+//
+// Note for whoever verifies a change here: animation TIMING cannot be checked
+// in a hidden/background browser tab (requestAnimationFrame never fires and
+// Web Animations are throttled). Only DOM ordering and screenshots are
+// reliable there; the visible result needs a real browser window.
+// ---------------------------------------------------------------------------
 
 import { CAUSE_LABELS, REFUSAL_LABELS } from "../../web-common/cards.js";
 
