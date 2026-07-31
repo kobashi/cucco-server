@@ -42,40 +42,97 @@ export function createTableScene(root) {
 
   function seatAngle(index, count) {
     // Own seat sits at the bottom (90° in screen coords where +y is down);
-    // everyone else is spread clockwise around the remaining arc.
+    // everyone else is spread clockwise around the remaining arc. Evenly --
+    // seats used to be pushed away from the horizontal midline so that nobody
+    // sat level with the deck, which bunched them at the top and bottom of a
+    // portrait screen (the crowded end) to protect a centre pile that is now
+    // measured and fitted instead (fitCenter).
     return (Math.PI / 2) + (index / count) * Math.PI * 2;
   }
 
-  // On a portrait screen the felt is narrow, so seats that land on the
-  // horizontal midline end up level with the centre pile and only a card's
-  // width from it -- the deck, the pot and two players all crowded into one
-  // line. `+k·sin(2θ)` slides seats away from θ=0 and θ=π (the midline) and
-  // toward the top and bottom of the ring, where there is room to spare.
-  // Zero on landscape, where the ring is wide enough already.
-  const MIDLINE_REPEL = 0.28;
+  // The seat ring, as a fraction of the scene box. Seats hang slightly over the
+  // felt's rim on purpose: the name plate reads fine against the rim, and every
+  // percent of radius is a percent the middle of the table gets back. Over the
+  // SCREEN edge is another matter, so the ring is also clamped to keep whole
+  // seats inside the scene -- with nothing pushing seats off the horizontal
+  // midline any more, the left and right ones sit at the widest point of the
+  // ring, which is exactly where a phone runs out of width.
+  const RING_X = 41;
+  const RING_Y_PORTRAIT = 41;
+  const RING_Y_LANDSCAPE = 38;
+  const RING_MIN = 60; // px: below this the ring is not a ring any more
+  const EDGE_PAD = 4;
+  // A seat's natural footprint (style.css .player-seat width, and its height
+  // with card slot + plate + chips + badges). Only used to decide how many fit
+  // before they need shrinking -- the real boxes are measured afterwards.
+  const SEAT_W = 108;
+  const SEAT_H = 132;
+  const SEAT_GAP = 8;
+  // How small a crowded table may shrink its seats. Below this the names and
+  // chip counts stop being readable, so seats are allowed to touch instead.
+  const MIN_SEAT_SCALE = 0.62;
 
-  function repelFromMidline(theta, portrait) {
-    return portrait ? theta + MIDLINE_REPEL * Math.sin(2 * theta) : theta;
+  // Ramanujan's approximation -- exact enough to count seats around a ring.
+  function ellipsePerimeter(a, b) {
+    return Math.PI * (3 * (a + b) - Math.sqrt((3 * a + b) * (a + 3 * b)));
+  }
+
+  // The roster this layout was built for, so a resize can redo the geometry
+  // without rebuilding the DOM (which would throw away whatever the animation
+  // queue has put in the slots).
+  let placed = null; // { order: [player_id...] }
+
+  function placeSeats() {
+    if (!placed || !placed.order.length) return;
+    const order = placed.order;
+    const box = seatLayer.getBoundingClientRect();
+    // A scene that cannot be measured (built while its container is collapsed
+    // or hidden) still gets a valid ring: the percentages alone do not need a
+    // box. Only the size-aware refinements below are skipped -- a resize will
+    // redo them the moment there is something to measure. Returning early here
+    // instead would leave every seat stacked at the top-left corner.
+    const measurable = box.width > 0 && box.height > 0;
+    const ringY = box.height > box.width ? RING_Y_PORTRAIT : RING_Y_LANDSCAPE;
+    let ringXPct = RING_X;
+    let ringYPct = ringY;
+    if (measurable) {
+      // Shrink the seats (all of them, together) when the ring cannot hold them
+      // at full size -- 8 players on a phone otherwise overlap each other before
+      // anything else goes wrong. Set on the document root, not the scene, so
+      // the flight ghosts on <body> can size themselves to match (style.css).
+      const perimeter = ellipsePerimeter((RING_X / 100) * box.width, (ringY / 100) * box.height);
+      const scale = Math.max(MIN_SEAT_SCALE, Math.min(1, perimeter / (order.length * (SEAT_W + SEAT_GAP))));
+      document.documentElement.style.setProperty("--seat-scale", scale.toFixed(3));
+      // Keep whole seats on screen: the ring never reaches closer to an edge
+      // than half a (scaled) seat. Without this, removing the old push away
+      // from the horizontal midline puts the left and right seats exactly where
+      // a phone runs out of width, and their name plates get cut off.
+      const rx = Math.max(RING_MIN, Math.min((RING_X / 100) * box.width, box.width / 2 - (SEAT_W * scale) / 2 - EDGE_PAD));
+      const ry = Math.max(RING_MIN, Math.min((ringY / 100) * box.height, box.height / 2 - (SEAT_H * scale) / 2 - EDGE_PAD));
+      ringXPct = (rx / box.width) * 100;
+      ringYPct = (ry / box.height) * 100;
+    }
+    order.forEach((pid, rel) => {
+      const el = seatEls.get(pid);
+      if (!el) return;
+      const theta = seatAngle(rel, order.length);
+      el.style.left = `${50 + ringXPct * Math.cos(theta)}%`;
+      el.style.top = `${50 + ringYPct * Math.sin(theta)}%`;
+    });
+    if (measurable) fitCenter();
   }
 
   function buildSeats(state) {
     seatLayer.innerHTML = "";
     seatEls.clear();
     const seats = state.table?.seats ?? [];
+    placed = null;
     if (!seats.length) return;
     const myIdx = Math.max(0, seats.findIndex((s) => s.player_id === state.playerId));
-    const box = seatLayer.getBoundingClientRect();
-    const portrait = box.height > box.width;
-    seats.forEach((s, i) => {
-      const rel = (i - myIdx + seats.length) % seats.length;
-      const theta = repelFromMidline(seatAngle(rel, seats.length), portrait);
-      const x = 50 + 41 * Math.cos(theta);
-      const y = 50 + (portrait ? 41 : 38) * Math.sin(theta);
+    seats.forEach((s) => {
       const el = document.createElement("div");
       el.className = "player-seat";
       el.classList.toggle("is-me", s.player_id === state.playerId);
-      el.style.left = `${x}%`;
-      el.style.top = `${y}%`;
       el.dataset.playerId = s.player_id;
       el.innerHTML = `
         <div class="turn-ring"></div>
@@ -90,6 +147,66 @@ export function createTableScene(root) {
       seatLayer.appendChild(el);
       seatEls.set(s.player_id, el);
     });
+    // Own seat first: it goes at the bottom, everyone else clockwise from there.
+    placed = { order: seats.map((_, i) => seats[(myIdx + i) % seats.length].player_id) };
+    placeSeats();
+  }
+
+  // -- the centre pile's room ------------------------------------------------
+  //
+  // The deck/pot/discard column used to be sized off the viewport (a share of
+  // vw with a flat cap). That is a guess about how much room is left, and on a
+  // phone with a full table the guess was wrong: the discard grew down into the
+  // seats and cards ended up underneath each other. So it is measured instead.
+  // The seats are placed first; whatever rectangle is left in the middle, the
+  // centre column gets -- as wide and as tall as actually fits.
+  const CENTER_MAX_W = 360;
+  const CENTER_MAX_H = 320;
+  // The floor. Below this the discard stops being able to show anything useful,
+  // so it stops shrinking and is allowed to sit close to the seats -- "fit it
+  // within a legible range", not "fit it at any cost".
+  const CENTER_MIN_W = 132;
+  const CENTER_MIN_H = 150;
+  const CENTER_GAP = 10; // breathing room between the box and a seat
+
+  function fitCenter() {
+    const box = seatLayer.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const cx = box.left + box.width / 2;
+    const cy = box.top + box.height / 2;
+    const boxes = [...seatEls.values()].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { dx: Math.abs(r.left + r.width / 2 - cx), dy: Math.abs(r.top + r.height / 2 - cy), w: r.width, h: r.height };
+    });
+    const maxW = Math.min(CENTER_MAX_W, box.width * 0.9);
+    const maxH = Math.min(CENTER_MAX_H, box.height * 0.9);
+
+    // For a given width, how tall can the box be before it reaches a seat?
+    // Only seats it overlaps horizontally can limit it -- the ones beside it
+    // (now that seats may sit level with the deck) are cleared sideways.
+    const heightFor = (w) => {
+      let h = maxH;
+      for (const s of boxes) {
+        if (s.dx >= (w + s.w) / 2 + CENTER_GAP) continue;
+        h = Math.min(h, 2 * (s.dy - CENTER_GAP) - s.h);
+      }
+      return h;
+    };
+
+    // Widest is not always best: a narrow-and-tall box can hold more discards
+    // than a wide-and-flat one. Sweep the width and keep the largest area.
+    let best = null;
+    const STEPS = 16;
+    for (let i = 0; i <= STEPS; i++) {
+      const w = maxW - ((maxW - CENTER_MIN_W) * i) / STEPS;
+      const h = Math.min(maxH, heightFor(w));
+      if (h < CENTER_MIN_H) continue;
+      if (!best || w * h > best.w * best.h) best = { w, h };
+    }
+    // Nothing clears the seats even at the floor: take the floor anyway.
+    if (!best) best = { w: CENTER_MIN_W, h: CENTER_MIN_H };
+    root.style.setProperty("--center-w", `${Math.round(best.w)}px`);
+    root.style.setProperty("--center-h", `${Math.round(best.h)}px`);
   }
 
   function cardFaceHTML(rank, elevated = false) {
@@ -210,6 +327,45 @@ export function createTableScene(root) {
         : "";
     }
   }
+
+  // Turning the phone changes the ring (portrait and landscape use different
+  // vertical radii) and how much middle is left over, and both are computed
+  // from the measured box -- so both have to be redone. Only the geometry is
+  // recomputed, never the markup: a rebuild here would wipe whatever the
+  // animation queue has just put in the slots.
+  //
+  // Two triggers, because neither covers the other's gap. ResizeObserver sees
+  // everything that changes the scene's own size -- rotation, the dock growing
+  // when the turn buttons appear, a container that only gets its real size a
+  // beat after the scene was built (placeSeats falls back to plain percentages
+  // until then) -- but its callbacks are frame-driven, so a BACKGROUNDED tab
+  // gets none of them, and a phone rotated while the app was in the background
+  // would come back laid out for the old orientation. The window events keep
+  // firing there. Both funnel into the same debounced pass, so a change that
+  // both notice still costs one relayout.
+  let pendingRelayout = 0;
+  const relayout = () => {
+    // main.js drops the whole scene when it leaves the table screen and builds
+    // a fresh one on the way back, so an old scene's listeners would otherwise
+    // pile up for the life of the page. Detached means retired.
+    if (!root.isConnected) {
+      window.removeEventListener("resize", relayout);
+      window.removeEventListener("orientationchange", relayout);
+      sizeWatch.disconnect();
+      return;
+    }
+    // setTimeout rather than requestAnimationFrame, for the same reason: rAF
+    // does not run in a background tab either. Measuring works fine there. The
+    // delay just collapses a drag-resize into one pass.
+    clearTimeout(pendingRelayout);
+    pendingRelayout = setTimeout(placeSeats, 120);
+  };
+  // Repositioning seats never resizes the observed element, so this cannot
+  // feed itself.
+  const sizeWatch = new ResizeObserver(relayout);
+  sizeWatch.observe(seatLayer);
+  window.addEventListener("resize", relayout);
+  window.addEventListener("orientationchange", relayout);
 
   return {
     sync,

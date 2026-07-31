@@ -151,9 +151,14 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
    on a narrow portrait screen it ended up nearer the left-hand seats than the
    middle of the felt, which is the thing the centre pile is supposed to
    anchor. Stacking keeps the deck on the felt's axis at every width. */
+/* Both sizes come from the scene layer, which measures the seats first and
+   hands the middle whatever rectangle is genuinely free (scene/table.js
+   fitCenter). The values here are only the pre-measurement fallback. */
 .center {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   display: flex; flex-direction: column; align-items: center; gap: 0.7rem;
+  width: var(--center-w, min(66vw, 340px));
+  max-height: var(--center-h, 60%);
 }
 .pile-area { display: flex; flex-direction: column; align-items: center; gap: 0.8rem; }
 .pile-area > * { display: flex; align-items: center; gap: 0.5rem; }
@@ -161,28 +166,17 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 .deck-count, .pot-count { color: #fff; font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
 .pot-stack { font-size: 1.5rem; }
 /* The discard is a bounded box: its contents (grouped chips, or the pile's
-   top card) wrap INSIDE it instead of spilling across the felt. */
-/* Width follows the screen, in two steps -- the base rule for portrait, the
-   landscape override below. A flat 168px left the discard a 14%-wide column on
-   a wide felt that grew DOWNWARD as cards piled up: tall and thin with the
-   whole middle of the table empty either side of it. Both caps are set so the
-   box never reaches the seats flanking the centre.
-   The base rule has to be responsive too, not just the landscape one: a
-   tablet held upright (768px wide, portrait) is too wide for the phone
-   breakpoint and not landscape either, so a fixed base width left exactly the
-   original problem in that gap. */
+   top card) wrap INSIDE it instead of spilling across the felt.
+   It fills the width its parent was given and takes whatever height the deck
+   and pot leave -- the sizing itself is measured, not guessed at from vw/vh.
+   Guessing is what put it on top of the seats on a phone with a full table:
+   the box was a share of the viewport, which says nothing about how much room
+   eight players have left in the middle. */
 .discard {
-  width: min(66vw, 340px); max-height: 44%;
+  width: 100%; flex: 0 1 auto; min-height: 0;
   display: flex; flex-wrap: wrap; gap: 0.25rem; justify-content: center; align-content: flex-start;
   overflow-y: auto; padding: 0.4rem 0.5rem;
   background: rgba(0, 0, 0, 0.22); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 12px;
-}
-/* Every landscape width, not just wide ones: a phone on its side is landscape
-   too, and there the portrait base width (tuned for a tall felt) overflowed
-   into the seats. The height cap is in vh because what actually runs out on a
-   short landscape screen is vertical room, not horizontal. */
-@media (orientation: landscape) {
-  .discard { width: min(42vw, 520px); max-height: min(30%, 20vh); }
 }
 .discard:empty::before { content: "捨て札"; color: #9db3a6; font-size: 0.72rem; margin: auto; }
 .discard-title { width: 100%; text-align: center; color: #d9e8dd; font-size: 0.75rem; margin-bottom: 0.1rem; }
@@ -201,8 +195,12 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 .discard-pile-top::after { transform: translate(6px, 6px); z-index: -1; }
 
 /* -- seats -- */
+/* --seat-scale is set by scene/table.js: 1 when the ring has room for everyone
+   at full size, smaller as the table fills up, floored where the names stop
+   being readable. Scaling the whole seat (rather than each part) keeps the
+   card, the plate and the chip count in proportion. */
 .player-seat {
-  position: absolute; transform: translate(-50%, -50%);
+  position: absolute; transform: translate(-50%, -50%) scale(var(--seat-scale, 1));
   display: flex; flex-direction: column; align-items: center; gap: 0.18rem;
   width: 108px; text-align: center;
 }
@@ -349,6 +347,14 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 
 /* -- animation layer -- */
 .fly-ghost { position: fixed; z-index: 15; pointer-events: none; }
+/* A card in flight is the same card that will land in the seat, so it wears
+   the same shrink a crowded table applies to the seats (--seat-scale). Sized
+   rather than transformed: fly() animates the ghost's own transform, and
+   measures this element to centre it on the slot. */
+.fly-ghost .card {
+  width: calc(54px * var(--seat-scale, 1));
+  height: calc(76px * var(--seat-scale, 1));
+}
 .chip-ghost { font-size: 1.6rem; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); }
 
 .fx-banner {
