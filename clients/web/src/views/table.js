@@ -21,6 +21,7 @@ export function render(el, state, actions) {
         <span>ポット ${t.pot_number}・ディール ${t.deal_number}</span>
         <span class="pot-chips">💰 ポット ${state.potChips}枚</span>
         <span>残り山札: ${t.deck_remaining_count}枚</span>
+        <button id="leave-table-btn" class="secondary">退出</button>
       </header>
 
       ${renderStatusBar(state, isSpectator)}
@@ -40,6 +41,12 @@ export function render(el, state, actions) {
     ${state.resultPause ? renderResultPauseModal(state) : ""}
   `;
 
+  // 途中退出: reachable at any time, not just from the result screen -- a
+  // spectator otherwise had no way to stop watching but closing the tab, and
+  // the server needs to be told either way (main.js leaveRoom).
+  el.querySelector("#leave-table-btn")?.addEventListener("click", () => {
+    if (confirm("この卓から退出してロビーに戻ります。よろしいですか?")) actions.leaveRoom();
+  });
   el.querySelector("#dealer-ready-btn")?.addEventListener("click", actions.sendDealerReady);
   el.querySelector("#cambio-btn")?.addEventListener("click", actions.sendCambio);
   el.querySelector("#no-change-btn")?.addEventListener("click", actions.sendNoChange);

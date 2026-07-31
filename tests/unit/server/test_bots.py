@@ -109,7 +109,11 @@ async def test_host_ready_starts_the_game_with_bots_and_it_finishes(unpaced):
 
 
 @pytest.mark.asyncio
-async def test_bots_re_ready_for_a_rematch(unpaced):
+async def test_a_rematch_waits_for_the_host_even_though_the_bots_re_ready(unpaced):
+    """連戦は自動で始まらない。The bots declare themselves ready for another
+    game (a room stays usable), but nothing starts until the human running the
+    room asks for it -- otherwise the next game deals itself over the result
+    screen the watchers are still reading."""
     conn = FakeConnection()
     handler = ConnectionHandler(conn, TableRegistry())
     await handler.handle_message(build_envelope("identify", {"name": "Watcher", "player_type": "spectator"}))
@@ -123,21 +127,64 @@ async def test_bots_re_ready_for_a_rematch(unpaced):
     await _settle()
     await handler.handle_message(build_envelope("start_pot", {}))  # first start is manual
 
-    async def wait_for_second_game():
-        games_seen = 0
-        running = False
-        while games_seen < 2:
-            if table.game is not None and not running:
-                running = True
-                games_seen += 1
-            elif table.game is None and running:
-                running = False
+    async def first_game_over():
+        started = False
+        while True:
+            if table.game is not None:
+                started = True
+            if started and table.game is None:
+                return
             await asyncio.sleep(0.01)
 
-    # Bot-only normal table: after game_ended the bots re-ready, and their
-    # all-ready auto-starts the NEXT game -- only the first start is gated on
-    # the host, so the 連戦 flow with no human still runs by itself.
-    await asyncio.wait_for(wait_for_second_game(), timeout=60)
+    await asyncio.wait_for(first_game_over(), timeout=60)
+    # The bots are ready for another one...
+    await _settle()
+    assert len(table.ready_ids) == 2
+    # ...but a good while later, still nothing has started by itself.
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        assert table.game is None
+    # The watcher asks for the rematch, and only then does it start.
+    await handler.handle_message(build_envelope("start_pot", {}))
+    assert table.game is not None
+
+
+@pytest.mark.asyncio
+async def test_a_deserted_table_closes_itself_when_its_game_ends(unpaced):
+    """人間が誰もいなくなった卓: the game in progress is played to its end (and
+    recorded), and the room is closed at that boundary instead of dealing
+    another game to an empty room -- or being left for the GC, which would cut
+    a game mid-play ten minutes later."""
+    conn = FakeConnection()
+    registry = TableRegistry()
+    handler = ConnectionHandler(conn, registry)
+    await handler.handle_message(build_envelope("identify", {"name": "Watcher", "player_type": "spectator"}))
+    room_id = await _create_table_with_bots(
+        handler,
+        [{"policy": "always_no_change", "count": 2}],
+        config={"starting_chips": 2},
+    )
+    table = registry.get(room_id)
+    await handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    await _settle()
+    await handler.handle_message(build_envelope("start_pot", {}))
+    assert table.game is not None
+
+    # The watcher closes their tab while the bots are playing.
+    await handler.on_disconnect()
+
+    async def table_closed():
+        while registry.get(room_id) is not None:
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(table_closed(), timeout=60)
+    # Closed at a game boundary, not by force: the runner returned on its own
+    # (which is what clears `game`), rather than being cancelled mid-play the
+    # way the GC sweep and the admin abort do it.
+    assert table.game is None
+    assert table.finished
+    # The bots were stopped with it -- nothing keeps playing in the background.
+    assert all(task.done() or task.cancelled() for task in table.bot_tasks)
 
 
 @pytest.mark.asyncio

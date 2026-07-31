@@ -106,15 +106,24 @@ class Table:
         """Who currently holds the organizer role (start_pot rights).
 
         The original creator, unless they are gone/disconnected -- then the
-        earliest-joined connected player (dict insertion order = join order)
-        inherits it, so a room is never stuck unable to start because its
-        creator left. The role snaps back to the creator when they return;
-        evaluated lazily on demand so a brief reload doesn't permanently
-        bounce the role around.
+        earliest-joined connected REAL client (dict insertion order = join
+        order), player or spectator, inherits it, so a room is never stuck
+        unable to start because its creator left. The role snaps back to the
+        creator when they return; evaluated lazily on demand so a brief reload
+        doesn't permanently bounce the role around.
+
+        Spectators are eligible on purpose, and embedded bots are only the
+        last resort: since a game only ever starts when the organizer says so,
+        an inherited role that landed on a bot would mean nobody can start the
+        next game (bots never press start), and a room whose only humans are
+        watching it would have no way to ask for another one.
         """
         creator = self.sessions.get(self.creator_id)
         if creator is not None and creator.connected:
             return self.creator_id
+        for session in self.sessions.values():
+            if session.connected and session.ai_policy is None:
+                return session.player_id
         for session in self.players():
             if session.connected:
                 return session.player_id

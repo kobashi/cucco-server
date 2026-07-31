@@ -111,6 +111,18 @@ export function createTableScene(root) {
     // note on shownOpened in gameState.js.
     const opened = state.shownOpened;
     const dealInProgress = t.deal_number > 0 && !opened && !state.lastDealResult;
+    // Same rule for the mid-deal reveals and the disqualified seats: read the
+    // lagging snapshot the animation layer advances, never the live fields
+    // (gameState.js, shownFaces). Null before the first queued step has run --
+    // nothing has been animated yet then, so the live values ARE the shown ones.
+    const faces = state.shownFaces ?? {
+      revealed: state.revealedCards,
+      dq: state.disqualifiedIdsThisDeal,
+      dqInfo: state.disqualifiedInfo,
+    };
+    // The deal-out gate: until the last card has landed, seats show a back or
+    // nothing -- no open, no reveal, no disqualified face can jump the queue.
+    const dealingOut = state.shownDealing;
 
     for (const s of t.seats ?? []) {
       const el = seatEls.get(s.player_id);
@@ -121,14 +133,14 @@ export function createTableScene(root) {
       // gameState.js の shownTurnSeat のコメントを参照。
       el.classList.toggle("is-turn", s.player_id === state.shownTurnSeat && dealInProgress);
       el.classList.toggle("is-out", s.in_current_pot === false);
-      el.classList.toggle("is-disqualified", state.disqualifiedIdsThisDeal.has(s.player_id));
+      el.classList.toggle("is-disqualified", faces.dq.has(s.player_id));
       el.classList.toggle("is-disconnected", s.connected === false);
 
       const badges = [];
-      if (state.disqualifiedIdsThisDeal.has(s.player_id)) {
+      if (faces.dq.has(s.player_id)) {
         // 卓の上でも理由まで見えるようにする -- 席を見ただけで「なぜ抜けたか」が
         // 分かるほうが、結果発表を待たずに状況を追える。
-        const cause = state.disqualifiedInfo?.[s.player_id]?.cause;
+        const cause = faces.dqInfo?.[s.player_id]?.cause;
         badges.push(cause ? `失格(${CAUSE_LABELS[cause] ?? cause})` : "失格");
       }
       else if (s.in_current_pot === false) badges.push("脱落中");
@@ -139,15 +151,22 @@ export function createTableScene(root) {
       // mid-deal (revealedCards), and everyone at open; face-down otherwise.
       const slot = el.querySelector(".card-slot");
       const openedCard = opened?.hands?.[s.player_id];
-      const revealed = state.revealedCards?.[s.player_id];
-      if (openedCard !== undefined) {
+      const revealed = faces.revealed?.[s.player_id];
+      if (dealingOut) {
+        // Mid deal-out: this seat either has its face-down card already or is
+        // waiting for it. Nothing else may be drawn here -- not my own hand
+        // (the deal step flips it once every seat is served), not a クク some
+        // AI has already declared, not a disqualified card. Any state that
+        // arrived early simply waits for the sync at the end of the deal step.
+        slot.innerHTML = state.shownDealtSeats.has(s.player_id) ? '<div class="card card-back"></div>' : "";
+      } else if (openedCard !== undefined) {
         slot.innerHTML = cardFaceHTML(openedCard, opened.elevated_joker_holders?.includes(s.player_id));
-      } else if (state.disqualifiedIdsThisDeal.has(s.player_id)) {
+      } else if (faces.dq.has(s.player_id)) {
         // Disqualified: the card is taken out of play but STAYS in front of
         // its ex-holder until the deal opens, exactly as at a physical table.
         // Whether it is face-up depends on the disclosure setting -- 遅延公開
         // leaves it there face-DOWN, which is not the same as it being gone.
-        const dq = state.disqualifiedInfo?.[s.player_id];
+        const dq = faces.dqInfo?.[s.player_id];
         if (opened || !dq?.onTable) {
           // Collected into the discard at the open, or swept into the deck by
           // a reshuffle (reshuffle_includes_revealed): the seat really is empty.

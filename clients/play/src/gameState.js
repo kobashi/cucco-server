@@ -41,6 +41,19 @@
 //      to drain between two events (e.g. between a refusal and the
 //      disqualification it causes), advancing it there puts the ring ahead
 //      again -- the exact bug, reintroduced. main.js excludes it on purpose.
+//   4. An escape hatch armed for one chapter must not fire in the next. The
+//      result pane's fastForward timer outlived its deal and snapped the NEXT
+//      deal's deal-out mid-flight (visible as a クク turning face-up before
+//      every seat had a card). Anything scheduled with setTimeout that ends up
+//      calling queue.fastForward()/hurry() has to be cancelled at the deal
+//      boundary -- corollary 2's `resume()` cannot help, because the timer
+//      fires AFTER it and sets `instant` all over again.
+//
+// And one structural backstop, because the corollaries are only as good as the
+// next person applying them: while the deal-out animation is running, the scene
+// refuses to draw ANY face-up card (`shownDealing` / `shownDealtSeats` below).
+// A leak that gets past the rule can no longer show a card before the deal
+// finishes; it can only fail to hide one afterwards, which is far less wrong.
 //
 // Note for whoever verifies a change here: animation TIMING cannot be checked
 // in a hidden/background browser tab (requestAnimationFrame never fires and
@@ -84,6 +97,23 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
     // いる。権威状態を直接描くと「処理中の席」ではなく「次の席」が先に光って
     // しまうので、演出が終わったステップだけがこちらを進める。
     shownTurnSeat: null,
+    // Presentation mirror of the OTHER two things a seat draws: the cards an
+    // effect has made public mid-deal (revealedCards) and who is out with what
+    // card still in front of them (disqualifiedIdsThisDeal / disqualifiedInfo).
+    // Both jump ahead the instant their event arrives -- on an AI-only table a
+    // クク宣言 lands while the deal is still being dealt out -- so the scene
+    // reads this snapshot instead, and each queued step sets it to the value
+    // captured when ITS op arrived. `null` until the first step runs (the scene
+    // then falls back to the live values, which at that point are the same).
+    shownFaces: null,
+    // The deal-out gate. True from the first card leaving the deck until the
+    // last one has landed; `shownDealtSeats` is who has one so far. While it is
+    // set, the scene draws card BACKS (or nothing) and refuses to turn any seat
+    // face-up, whatever the authoritative state says -- the backstop that makes
+    // "a card is visible before the deal finishes" structurally impossible
+    // rather than a property of every step being individually careful.
+    shownDealing: false,
+    shownDealtSeats: new Set(),
     disqualifiedThisDeal: false,
     disqualifiedIdsThisDeal: new Set(),
     disqualifiedInfo: {},

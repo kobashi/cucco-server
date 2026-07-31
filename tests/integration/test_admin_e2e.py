@@ -1,7 +1,10 @@
-"""End-to-end admin surface: real sockets, a genuinely stuck table.
+"""End-to-end admin surface: real sockets, a running table put down by hand.
 
-A bot-only normal table rematches forever (the documented stage-1 caveat);
-the operator's abort over the real admin listener is what puts it down.
+A game in progress does not stop for the operator asking nicely -- `abort` over
+the real admin listener is what ends it (and it is still the tool for a table
+that is running but should not be: a game that has wedged, a session that has
+run long). Tables that merely have nobody left now close themselves at the end
+of their game, so this is no longer the routine cleanup path.
 """
 
 import asyncio
@@ -30,8 +33,7 @@ async def test_admin_abort_over_a_real_socket():
         game_port = game_server.sockets[0].getsockname()[1]
         admin_port = admin_server.sockets[0].getsockname()[1]
 
-        # A spectator creates a bot-only table; the bots start and rematch
-        # endlessly on their own.
+        # A spectator creates a bot-only table and starts it.
         async with websockets.connect(f"ws://localhost:{game_port}") as ws:
             async def send(t, p):
                 await ws.send(json.dumps({"type": t, "table_id": None, "protocol_version": "1.0", "payload": p, "ts": ""}))
@@ -43,8 +45,8 @@ async def test_admin_abort_over_a_real_socket():
             await send("join_table", {"room_id": room_id})
 
             table = registry.get(room_id)
-            # The first start is the creator's; the bots rematch on their own
-            # after that (which is what makes this the stuck-table case).
+            # Every start is the creator's -- the bots ready themselves but
+            # never begin a game on their own.
             await asyncio.sleep(0.1)  # let the bots join and ready
             await send("start_pot", {})
 

@@ -140,11 +140,43 @@ const turnButtonsPending = () => queue.busy && Date.now() < turnGateUntil;
 // by the time a step runs the authoritative currentTurnSeat has usually moved
 // on to the NEXT player; painting that would light the next seat's ring while
 // this seat's 猫 effect is still playing.
-const syncStep = (turnSeat) =>
+const syncStep = (turnSeat, faces) =>
   queue.enqueue(async () => {
     if (turnSeat !== undefined) state.shownTurnSeat = turnSeat;
+    if (faces) state.shownFaces = faces;
     sceneRefs?.scene?.sync(state);
   });
+// What the seats may show AS OF one op, captured the moment that op arrived --
+// the reveal map and the disqualified seats, the two remaining things sync()
+// used to read live. Same reasoning as `turnSeat` above: a step that read them
+// at run time would draw a クク or a 失格 card that belongs to a LATER event.
+// disqualifiedInfo entries are copied because `onTable` is flipped in place
+// when a reshuffle sweeps the card away -- the snapshot must not follow that.
+const captureFaces = (s) => ({
+  revealed: { ...s.revealedCards },
+  dq: new Set(s.disqualifiedIdsThisDeal),
+  dqInfo: Object.fromEntries(Object.entries(s.disqualifiedInfo ?? {}).map(([pid, info]) => [pid, { ...info }])),
+});
+
+// The deal-out gate (gameState.js, shownDealing): while it is up the scene
+// draws backs and empty seats only. Always paired -- see the `finally` in the
+// deal step, and the idle catch-up in render(), which lowers it if a rebuild
+// or a cleared queue ever leaves it up.
+function beginDealOut() {
+  state.shownDealing = true;
+  state.shownDealtSeats = new Set();
+}
+function endDealOut() {
+  state.shownDealing = false;
+}
+
+// The pending result-pane fast-forward net, if one is armed (see result_pause).
+let resultPaneNet = null;
+function cancelResultPaneNet() {
+  if (resultPaneNet === null) return;
+  clearTimeout(resultPaneNet);
+  resultPaneNet = null;
+}
 // The reveal point for MY own card: advance the presentation mirror
 // (shownHand) to the authoritative hand, then sync the scene + hand-info so
 // my seat and effect line update together -- and only here, so an effect
@@ -160,11 +192,12 @@ const syncStep = (turnSeat) =>
 // exchange step then flew whatever was sitting there.
 // Pass `undefined` for ops that don't change my hand: the sync still runs, but
 // the shown hand is left alone.
-const revealHandStep = (card, turnSeat) =>
+const revealHandStep = (card, turnSeat, faces) =>
   queue.enqueue(async () => {
     if (!sceneRefs) return;
     if (card !== undefined) state.shownHand = card;
     if (turnSeat !== undefined) state.shownTurnSeat = turnSeat;
+    if (faces) state.shownFaces = faces;
     sceneRefs.scene.sync(state);
     renderHandInfo(sceneRefs.handInfoEl, state);
   });
@@ -194,8 +227,12 @@ async function sweepToDiscard(sc) {
 // The open collects every disqualified player's card into the discard pile.
 // Their seats hold a real card until this runs (face-up under 即時公開,
 // face-down under 遅延公開), so fly what is actually sitting there.
-async function collectDisqualifiedCards(sc) {
-  const seats = Object.entries(state.disqualifiedInfo ?? {})
+async function collectDisqualifiedCards(sc, faces) {
+  // What is actually SITTING in the seats, i.e. the shown snapshot -- a card
+  // the live state has already taken off the table (or put there) is not what
+  // the player is looking at.
+  const shown = faces?.dqInfo ?? state.disqualifiedInfo ?? {};
+  const seats = Object.entries(shown)
     .filter(([, dq]) => dq?.onTable)
     .map(([pid]) => pid);
   if (!seats.length) return;
@@ -217,6 +254,8 @@ function handleOp(op) {
   // right after the event mutated the state, so this is that op's value; the
   // queued steps below use it instead of reading the live one later.
   const turnSeat = state.currentTurnSeat;
+  // Same capture, for the reveals and the disqualified seats (captureFaces).
+  const faces = captureFaces(state);
   switch (op.kind) {
     case "rejected":
       actions.resync();
@@ -245,6 +284,10 @@ function handleOp(op) {
       state.shownTurnSeat = state.currentTurnSeat;
       state.shownHand = state.yourHand;
       state.shownOpened = state.lastDealOpened;
+      state.shownFaces = captureFaces(state);
+      // Whatever deal-out was running belonged to the scene we just threw
+      // away; leaving the gate closed would hide the rebuilt table.
+      endDealOut();
       return; // onChange render syncs immediately once the queue is empty
 
     // The result pane explains what the animations just showed (the クク
@@ -274,7 +317,16 @@ function handleOp(op) {
         const grace = deadline
           ? Math.max(0, deadline - Date.now() - RESULT_PANE_RESERVE_MS)
           : RESULT_PANE_GRACE_MS;
-        setTimeout(() => {
+        // Kept so the next deal can cancel it (see cancelResultPaneNet). On an
+        // AI-only table the server's result wait is 0s, so this timer fires
+        // essentially immediately -- typically AFTER the next deal_started has
+        // already called queue.resume() and enqueued its deal-out. Left armed,
+        // its fastForward() then set `instant` again and finished the flights
+        // mid-deal: cards snapped into place unanimated and the following steps
+        // (a クク宣言 an AI had already declared) painted straight onto the
+        // table. That is corollary 4 in gameState.js.
+        resultPaneNet = setTimeout(() => {
+          resultPaneNet = null;
           if (revealed) return;
           queue.fastForward();
           requestAnimationFrame(reveal); // let the flushed ghosts clear first
@@ -294,32 +346,49 @@ function handleOp(op) {
       // so this deal's own dealing animation (enqueued just below) still plays.
       if (confirmMode !== "off") queue.clear();
       // A new deal is a fresh chapter: play it at full speed even if the tail
-      // of the last one was fast-forwarded (see queue.resume).
+      // of the last one was fast-forwarded (see queue.resume) -- and disarm the
+      // previous deal's result-pane net, which would otherwise fast-forward
+      // THIS deal (corollary 4).
+      cancelResultPaneNet();
       queue.resume();
       const seatsInOrder = (state.table?.seats ?? []).filter((s) => s.in_current_pot !== false).map((s) => s.player_id);
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
-        await sweepToDiscard(sc);
-        for (const pid of seatsInOrder) {
-          sound.play("deal");
-          await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(pid), html: cardHTML(null), duration: 160 });
-          // The dealt card settles face-down in the seat the moment its own
-          // flight lands, so seats fill one by one like a real deal instead of
-          // every card popping in at the final sync.
-          const slot = sc.slotEl(pid);
-          if (slot) slot.innerHTML = cardHTML(null);
+        // The gate is up for the whole step -- the sweep empties every slot,
+        // so from here until the last card lands no seat may show a face, no
+        // matter what has arrived off the socket meanwhile (gameState.js,
+        // shownDealing).
+        beginDealOut();
+        try {
+          await sweepToDiscard(sc);
+          for (const pid of seatsInOrder) {
+            sound.play("deal");
+            await fly(queue, { fromEl: sc.deckEl(), toEl: sc.slotEl(pid), html: cardHTML(null), duration: 160 });
+            // The dealt card settles face-down in the seat the moment its own
+            // flight lands, so seats fill one by one like a real deal instead of
+            // every card popping in at the final sync.
+            state.shownDealtSeats.add(pid);
+            const slot = sc.slotEl(pid);
+            if (slot) slot.innerHTML = cardHTML(null);
+          }
+        } finally {
+          // Whatever happened in there (a fast-forward finishing the flights,
+          // a scene rebuild pulling the elements out from under us), the gate
+          // must come down -- a stuck gate would hide the whole table.
+          endDealOut();
         }
         // Only now, with the whole deal on the table, do I look at my own
         // card: it turns face-up in place rather than having been readable
         // from the moment the event arrived.
         state.shownHand = dealtHand;
         state.shownTurnSeat = turnSeat;
+        state.shownFaces = faces;
         sc.sync(state);
         renderHandInfo(sceneRefs.handInfoEl, state);
         await flipReveal(queue, sc.slotEl(state.playerId)?.querySelector(".card-face"));
       });
-      revealHandStep(dealtHand, turnSeat); // safety net: also reveals when the step above was skipped
+      revealHandStep(dealtHand, turnSeat, faces); // safety net: also reveals when the step above was skipped
       return;
     }
 
@@ -331,7 +400,7 @@ function handleOp(op) {
         sound.play("pass");
         await confirmPulse(queue, sc.slotEl(player));
       });
-      syncStep(turnSeat);
+      syncStep(turnSeat, faces);
       return;
     }
 
@@ -343,7 +412,7 @@ function handleOp(op) {
         sound.play("leave");
         await banner(queue, `${game.seatName(player)} が離脱`, "warn");
       });
-      syncStep(turnSeat);
+      syncStep(turnSeat, faces);
       return;
     }
 
@@ -380,11 +449,12 @@ function handleOp(op) {
         // the next idle render.
         if (involvesMe) state.shownHand = yourNewCard;
         state.shownTurnSeat = turnSeat;
+        state.shownFaces = faces;
         sc.sync(state);
         renderHandInfo(sceneRefs.handInfoEl, state);
       });
       // Only my own exchanges move my hand; someone else's is a plain re-sync.
-      revealHandStep(involvesMe ? yourNewCard : undefined, turnSeat);
+      revealHandStep(involvesMe ? yourNewCard : undefined, turnSeat, faces);
       // Confirm mode: pause on a card naming what I received, but ONLY when I
       // was the exchange TARGET -- someone else's cambio landed on me, which I
       // didn't initiate and might miss. When I'm the turn player (requester) I
@@ -420,12 +490,13 @@ function handleOp(op) {
         // (possibly my) new card -- advance shownHand here.
         if (actor === state.playerId) state.shownHand = newCard;
         state.shownTurnSeat = turnSeat;
+        state.shownFaces = faces;
         sc.sync(state); // the actor's slot now holds the revealed drawn card
         renderHandInfo(sceneRefs.handInfoEl, state);
         await banner(queue, `${game.seatName(actor)} が山札から ${newCard} を引く`, "info");
         await pause(queue, REVEAL_HOLD_MS);
       });
-      syncStep(turnSeat);
+      syncStep(turnSeat, faces);
       return;
     }
 
@@ -442,7 +513,7 @@ function handleOp(op) {
         await banner(queue, `${game.seatName(actor)} が山札から ${drawn} を引く`, "warn");
         await pause(queue, REVEAL_HOLD_MS);
       });
-      syncStep(turnSeat);
+      syncStep(turnSeat, faces);
       return;
     }
 
@@ -457,6 +528,7 @@ function handleOp(op) {
         if (revealed) {
           // The refusing card's identity became public: flip it up in the
           // target's slot and play the effect's motion so everyone sees it.
+          state.shownFaces = faces;
           sc.sync(state); // the revealed face is now in the target's slot
           const cardEl = sc.slotEl(target)?.querySelector(".card-face");
           await flipReveal(queue, cardEl);
@@ -469,7 +541,7 @@ function handleOp(op) {
         }
         await pause(queue, REVEAL_HOLD_MS);
       });
-      syncStep(turnSeat);
+      syncStep(turnSeat, faces);
       return;
     }
 
@@ -479,6 +551,7 @@ function handleOp(op) {
         const sc = scene();
         if (!sc || instant) return;
         sound.play("cucco");
+        state.shownFaces = faces;
         sc.sync(state); // the declarer's クク is now revealed in their slot
         const cardEl = sc.slotEl(player)?.querySelector(".card-face");
         await flipReveal(queue, cardEl);
@@ -487,7 +560,7 @@ function handleOp(op) {
         await banner(queue, `クク宣言!! — ${game.seatName(player)}`, "cucco", 1500, true);
         await pause(queue, REVEAL_HOLD_MS);
       });
-      syncStep(turnSeat);
+      syncStep(turnSeat, faces);
       return;
     }
 
@@ -518,7 +591,7 @@ function handleOp(op) {
           await pause(queue, REVEAL_HOLD_MS);
         }
       });
-      syncStep(turnSeat);
+      syncStep(turnSeat, faces);
       return;
     }
 
@@ -545,7 +618,7 @@ function handleOp(op) {
         sound.play("reshuffle");
         await fly(queue, { fromEl: sc.discardEl(), toEl: sc.deckEl(), html: cardHTML(null), duration: 500 });
       });
-      syncStep(turnSeat);
+      syncStep(turnSeat, faces);
       return;
     }
 
@@ -560,13 +633,14 @@ function handleOp(op) {
         // discard pile (docs/rules/final_rules.md 7.). Fly it there first, so
         // it is seen being collected rather than just vanishing out of the
         // seat when the sync below empties it.
-        if (!instant) await collectDisqualifiedCards(sc);
+        if (!instant) await collectDisqualifiedCards(sc, faces);
         // THE reveal point for everyone's hand: advance the presentation
         // mirror here and nowhere else, so the table stays face-down until
         // the last turn's animation has finished playing.
         if (instant) {
           // Snapped: no theatre, just land on the end state.
           state.shownOpened = openedSnapshot;
+          state.shownFaces = faces;
           sc.sync(state);
           return;
         }
@@ -597,6 +671,7 @@ function handleOp(op) {
           await pause(queue, gapMs);
         }
         state.shownOpened = openedSnapshot;
+        state.shownFaces = faces;
         sc.sync(state); // reconcile anything the loop didn't touch
         // Pad whatever the reveal did not spend, so the total from the open to
         // the result pane is the same at a 2-seat table and a 15-seat one.
@@ -614,7 +689,7 @@ function handleOp(op) {
         sound.play("chip");
         await fly(queue, { fromEl: sc.seatEl(player), toEl: sc.potEl(), html: '<div class="chip-ghost">🪙</div>', duration: 500 });
       });
-      syncStep(turnSeat);
+      syncStep(turnSeat, faces);
       return;
     }
 
@@ -628,7 +703,7 @@ function handleOp(op) {
           await fly(queue, { fromEl: sc.potEl(), toEl: sc.seatEl(winner), html: '<div class="chip-ghost">💰</div>', duration: 600 });
         });
       }
-      syncStep(turnSeat);
+      syncStep(turnSeat, faces);
       return;
     }
 
@@ -637,11 +712,11 @@ function handleOp(op) {
       // behind the final ranking modal.
       if (confirmMode !== "off") queue.clear();
       sound.play("pot_win");
-      syncStep(turnSeat);
+      syncStep(turnSeat, faces);
       return;
 
     default:
-      syncStep(turnSeat);
+      syncStep(turnSeat, faces);
       return;
   }
 }
@@ -678,6 +753,39 @@ function mountInviteButton(cluster) {
   });
   cluster.appendChild(btn);
   return btn;
+}
+
+// Leaving mid-table. The result screen has always offered 部屋を出る, but that
+// is only reachable once a game ENDS -- a spectator who wanted to stop watching
+// (or a player who has to go) had no way out but closing the tab, which also
+// meant the server only found out via the socket dropping. This sits next to
+// the invite button for the whole time we are at a table.
+function mountExitButton(cluster) {
+  const btn = document.createElement("button");
+  btn.id = "exit-table";
+  btn.type = "button";
+  btn.innerHTML = '🚪<span class="tool-label"> 退出</span>';
+  btn.title = "この卓から退出してロビーに戻る";
+  btn.addEventListener("click", () => {
+    // A seat in a running game is a different matter from a spectator slot:
+    // the table plays on without you (auto-ノンチェンジ), so say so plainly.
+    const seated = state.playerType !== "spectator" && (state.table?.seats ?? []).some((s) => s.player_id === state.playerId);
+    const inGame = seated && state.table?.deal_number > 0 && !state.gameEnded;
+    const message = inGame
+      ? "対局中です。退出すると席は残りますが、あなたの手番は自動で処理されます。退出しますか?"
+      : "この卓から退出してロビーに戻ります。よろしいですか?";
+    if (!confirm(message)) return;
+    actions.leaveRoom();
+  });
+  cluster.appendChild(btn);
+  return btn;
+}
+
+// Only meaningful once we are actually at a table (same rule as the invite
+// button, which renderInviteOverlay applies on every render).
+function renderExitButton() {
+  const btn = document.getElementById("exit-table");
+  if (btn) btn.hidden = !state.roomId;
 }
 
 function renderInviteOverlay() {
@@ -832,9 +940,12 @@ function render() {
     else renderLobby(screenEl, state, actions, target);
     prependConnBanner();
     // Also on the way out: this branch returns early, so without it the invite
-    // button keeps whatever visibility it had and stays hidden in the waiting
-    // room -- the one screen where handing out the link matters most.
+    // and exit buttons keep whatever visibility they had and stay hidden in the
+    // waiting room -- the one screen where handing out the link matters most,
+    // and where a watcher waiting on a game that may never start most wants a
+    // way out.
     renderInviteOverlay();
+    renderExitButton();
     return;
   }
 
@@ -894,6 +1005,10 @@ function render() {
     // stale by leaving it alone here.
     state.shownHand = state.yourHand;
     state.shownOpened = state.lastDealOpened;
+    state.shownFaces = captureFaces(state);
+    // Idle means the deal step is over (or never ran, as after a reconnect):
+    // holding the gate up here would leave the table permanently blank.
+    endDealOut();
     if (justCreated) state.shownTurnSeat = state.currentTurnSeat;
     sceneRefs.scene.sync(state);
   }
@@ -904,6 +1019,7 @@ function render() {
   renderLogDrawer(sceneRefs.logEl, state);
   prependConnBanner();
   renderInviteOverlay();
+  renderExitButton();
 }
 
 function prependConnBanner() {
@@ -1188,12 +1304,18 @@ const actions = {
   },
 
   leaveRoom() {
+    // Tell the server, don't just walk away: the socket stays open (this page
+    // goes back to the lobby, it does not close), so without this the table
+    // would still count us as watching -- keeping a room alive that nobody is
+    // actually at. See connection.js leaveTable.
+    if (state.roomId) conn.leaveTable();
     clearSession();
     state.savedSession = null;
     state.roomId = null;
     state.table = null;
     state.gameEnded = null;
     uiPhase = "lobby";
+    renderExitButton();
     render();
   },
 };
@@ -1239,7 +1361,9 @@ mountAutoContinueToggle(toolCluster);
 mountCardReference(toolCluster);
 mountSoundToggle(toolCluster);
 mountInviteButton(toolCluster);
+mountExitButton(toolCluster);
 renderInviteOverlay(); // hides the button until a table is joined
+renderExitButton();
 
 const saved = loadSession();
 if (saved && saved.sessionToken && saved.roomId) {

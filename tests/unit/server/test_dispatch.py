@@ -255,7 +255,7 @@ async def test_start_game_still_starts_if_the_action_log_cannot_be_created(tmp_p
 
     ran_without_action_log = asyncio.Event()
 
-    async def fake_run_table_safely(table, action_log=None):
+    async def fake_run_table_safely(table, registry, action_log=None):
         assert action_log is None
         ran_without_action_log.set()
 
@@ -266,7 +266,7 @@ async def test_start_game_still_starts_if_the_action_log_cannot_be_created(tmp_p
         table.add_session(PlayerSession(player_id=pid, name=pid, player_type="ai", session_token=pid, connection=FakeConnection()))
     table.ready_ids = {"p1", "p2"}
 
-    await _start_game(table)
+    await _start_game(table, TableRegistry())
 
     assert table.game is not None
     assert set(table.game.seats) == {"p1", "p2"}
@@ -283,7 +283,7 @@ async def test_ready_timeout_starts_game_with_only_the_players_who_readied():
     # rather than waiting forever for the third.
     table.ready_ids = {"p1", "p2"}
 
-    await _start_game(table)
+    await _start_game(table, TableRegistry())
 
     assert table.game is not None
     assert set(table.game.seats) == {"p1", "p2"}
@@ -297,7 +297,7 @@ async def test_ready_timeout_with_too_few_players_resets_for_a_retry():
     stale_task = asyncio.create_task(asyncio.sleep(0))
     table.ready_deadline_task = stale_task  # simulates the just-fired watchdog
 
-    await _start_game(table)
+    await _start_game(table, TableRegistry())
 
     assert table.game is None
     assert table.ready_ids == set()
@@ -324,7 +324,7 @@ async def test_ready_after_a_failed_timeout_retry_rearms_a_fresh_watchdog():
     assert first_watchdog is not None
 
     # Simulate that watchdog firing with too few players ready.
-    await _start_game(table)
+    await _start_game(table, handler.registry)
     assert table.ready_deadline_task is None
     first_watchdog.cancel()
 
@@ -780,3 +780,96 @@ async def test_wipeout_instant_win_after_carryover_sends_a_pot_result_aggregate(
         "chips_now": {"A": 26, "B": 0},
     }
     assert game.is_finished  # B is still at 0 chips (chips_zero end condition)
+
+
+@pytest.mark.asyncio
+async def test_spectator_leave_table_removes_them_from_the_room():
+    """観戦者の途中退出. The tab stays open (the client just goes back to its
+    lobby), so nothing about the socket tells the server -- `leave_table` is
+    how the room learns it is empty, which is now what decides whether the
+    next game starts at all."""
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    watcher = ConnectionHandler(FakeConnection(), registry)
+    await watcher.handle_message(build_envelope("identify", {"name": "Eve", "player_type": "spectator"}))
+    await watcher.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    table = registry.get(room_id)
+    assert len(table.spectators()) == 1
+
+    await watcher.handle_message(build_envelope("leave_table", {}))
+
+    assert table.spectators() == []
+    assert watcher.session.player_id not in table.sessions
+    assert watcher.table is None
+    # The rest of the table was told, so nobody is left labelled as watching.
+    assert creator.connection.sent[-1]["type"] == "presence_changed"
+
+
+@pytest.mark.asyncio
+async def test_leaving_mid_game_keeps_the_seat_but_stops_counting_as_present():
+    """A seat in a RUNNING game is only marked gone -- the domain game has
+    already dealt them in, and the runner knows how to play around a player
+    who stopped answering. Pulling the participant out mid-deal would be a
+    much bigger change than "they went quiet"."""
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    p2 = ConnectionHandler(FakeConnection(), registry)
+    await p2.handle_message(build_envelope("identify", {"name": "Bob", "player_type": "human"}))
+    await p2.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    await p2.handle_message(build_envelope("ready", {}))
+    await creator.handle_message(build_envelope("start_pot", {}))
+    table = registry.get(room_id)
+    assert table.game is not None
+
+    await p2.handle_message(build_envelope("leave_table", {}))
+
+    assert p2.session.player_id in table.sessions  # the seat is still there
+    assert table.get(p2.session.player_id).connected is False
+    assert p2.session.player_id in table.game.seats
+
+
+@pytest.mark.asyncio
+async def test_leave_table_before_joining_is_rejected():
+    registry = TableRegistry()
+    handler = ConnectionHandler(FakeConnection(), registry)
+    await handler.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await handler.handle_message(build_envelope("leave_table", {}))
+    assert handler.connection.sent[-1]["type"] == "action_rejected"
+
+
+@pytest.mark.asyncio
+async def test_a_watching_human_inherits_the_start_right_over_the_bots():
+    """When the creator is gone, the organizer role must land on somebody who
+    can actually press start. Embedded bots never do -- if the role stopped at
+    the first connected SEAT, a room whose only human is watching could never
+    start another game."""
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    table = registry.get(room_id)
+
+    bot = PlayerSession(
+        player_id="bot1", name="AI-matrix-1", player_type="ai", session_token="t", connection=FakeConnection()
+    )
+    bot.ai_policy = "matrix"
+    table.add_session(bot)
+
+    watcher = ConnectionHandler(FakeConnection(), registry)
+    await watcher.handle_message(build_envelope("identify", {"name": "Eve", "player_type": "spectator"}))
+    await watcher.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    creator.session.connected = False
+    assert table.effective_creator_id() == watcher.session.player_id

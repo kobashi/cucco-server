@@ -116,6 +116,21 @@ class StartPot:
 
 
 @dataclass(frozen=True)
+class LeaveTable:
+    """Leave the table deliberately (docs/protocol/design.md 「退出」).
+
+    Distinct from a socket simply dropping: a drop is assumed to be temporary
+    (the seat is held, the session can come back with its `session_token`),
+    whereas this says the client is not coming back. It is what lets the server
+    know a room is empty -- a watcher who closed the browser tab is a dropped
+    socket the server notices at once, but one who navigated back to the lobby
+    with the page still open is not.
+    """
+
+    pass
+
+
+@dataclass(frozen=True)
 class ResultAck:
     """The player confirmed the result screen -- once every seated,
     connected player has acked, the result pause ends early."""
@@ -150,6 +165,7 @@ Action = Union[
     CuccoDeclare,
     ContinueDeclare,
     StartPot,
+    LeaveTable,
     ResultAck,
     EffectDeclare,
     EffectPass,
@@ -326,6 +342,7 @@ _PARSERS: dict[str, Callable[[dict], Action]] = {
     "cucco_declare": lambda payload: CuccoDeclare(),
     "continue_declare": _parse_continue_declare,
     "start_pot": lambda payload: StartPot(),
+    "leave_table": lambda payload: LeaveTable(),
     "result_ack": lambda payload: ResultAck(),
     "effect_declare": lambda payload: EffectDeclare(),
     "effect_pass": lambda payload: EffectPass(),

@@ -28,7 +28,9 @@ AIクライアントは基本的に「サーバーからの通知を待ち、必
 | `effect_window` | (宣言式ルールの卓のみ)交換を要求された。**保持カードにかかわらず全対象者に届く** | 宣言可能札(人間/馬/猫/家)を持っていれば`effect_declare`(効果発動)または`effect_pass`(交換に応じる)。それ以外の札なら`effect_pass`(交換受諾。`effect_declare`を送っても受諾として扱われる) |
 | `continue_prompt` | 子供の時間(1〜3ディール目)で敗者になった | `continue_declare`(`{continue: true/false}`) |
 
-**`ready`が必要なのはゲーム開始前だけ**。ゲーム進行中の後続ポットは自動復活ルール(`docs/rules/final_rules.md`「次のポットへの参加」)で全員が自動的に参加するため、`pot_result`のたびに`ready`を送り直す必要はない(送っても無害で、サーバーは無視する)。改めて`ready`が要るのは、`game_ended`後に同じ部屋で連戦する場合。ゲーム開始は「参加者全員(作成者含む)のready」「作成者の`start_pot`」「最初の`ready`から10分の安全弁」のいずれかで行われる。評価モード(`mode: "evaluation"`)では、1回の`ready`で`game_count`回分のゲームが自動連続実行される。
+**`ready`が必要なのはゲーム開始前だけ**。ゲーム進行中の後続ポットは自動復活ルール(`docs/rules/final_rules.md`「次のポットへの参加」)で全員が自動的に参加するため、`pot_result`のたびに`ready`を送り直す必要はない(送っても無害で、サーバーは無視する)。改めて`ready`が要るのは、`game_ended`後に同じ部屋で連戦する場合。**最初の**ゲームの開始は「参加者全員(作成者含む)のready」「作成者の`start_pot`」「最初の`ready`から10分の安全弁」のいずれかで行われるが、**2ゲーム目以降は主催者の`start_pot`だけが開始手段**で、AIが`ready`を送り直しても自動では始まらない(`docs/protocol/design.md`「連戦の開始」)。AIクライアントは`ready`を送ったあと`pot_started`を待ち続ける実装でよい — 来ないまま卓が閉じることもある。評価モード(`mode: "evaluation"`)では、1回の`ready`で`game_count`回分のゲームが自動連続実行される。
+
+卓から抜けるときは`leave_table`を送る。送らずに接続を張ったままにすると、サーバーはそのクライアントがまだ卓にいるとみなす(卓が閉じられなくなる)。ソケットを閉じるだけでも切断として扱われるので、通常はどちらでもよい。
 
 上記以外の通知(`exchange_result`, `player_disqualified`, `deal_opened`, `deal_result`, `pot_result`, `game_ended`など)は状態把握のためのイベントであり、応答アクションは不要。`pot_result`はそのポットの決着(勝者確定または持ち越し)、`game_ended`はゲーム全体の終了(チップ数による最終順位)を表す。
 

@@ -354,6 +354,29 @@ async def run_gc_loop(
             logger.exception("table GC sweep failed")
 
 
+async def close_deserted_table(registry: TableRegistry, table: Table) -> bool:
+    """Close a table whose game just ended with no real client left on it.
+
+    The room exists to be watched or played; once its game is over and nobody
+    real is there, the next game would be dealt to an empty room. So the game
+    is always played to its end (and recorded), and the room is closed HERE,
+    at the boundary -- rather than left to the GC, which measures wall-clock
+    time and therefore cuts whatever game happens to be running when the ten
+    minutes are up, losing that game's record.
+
+    Returns True if the table was closed. The caller is the runner task, so
+    `runner_task` is cleared first: _shutdown_table cancels it, and cancelling
+    ourselves here would raise CancelledError out of the very function doing
+    the cleanup.
+    """
+    if real_participant_connected(table):
+        return False
+    table.runner_task = None
+    await _shutdown_table(registry, table, notify_reason=None)
+    logger.info("closed table %s: its game ended with no human present", table.room_id)
+    return True
+
+
 async def abort_table(registry: TableRegistry, table: Table) -> dict:
     """Force-end whatever is running, tell the players, and unregister."""
     game = table.game

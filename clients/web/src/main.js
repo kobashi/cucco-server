@@ -285,6 +285,10 @@ const actions = {
   },
 
   leaveRoom() {
+    // Tell the server first: this page stays open (it just goes back to the
+    // lobby), so the socket never drops and without this the table would keep
+    // counting us as present. See connection.js leaveTable.
+    if (state.roomId) conn.leaveTable();
     clearSession();
     update(() => {
       state.screen = "lobby";

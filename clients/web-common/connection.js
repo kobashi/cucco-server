@@ -130,6 +130,17 @@ export class CuccoConnection extends EventTarget {
     return payload;
   }
 
+  // Leave deliberately. Fire-and-forget (there is no reply to wait for), but
+  // it matters that it goes out at all: without it the server keeps counting
+  // this client as present -- it only ever learns about a leave from the
+  // socket dropping, which does not happen when the page stays open and just
+  // navigates back to the lobby. A room that still looks occupied keeps its
+  // AI players' next game alive and stays out of the sweep.
+  leaveTable() {
+    this.send("leave_table", {});
+    this.roomId = null;
+  }
+
   async joinTable(roomId, sessionToken) {
     const waiter = this._waitFor("state_snapshot");
     const payload = { room_id: roomId };

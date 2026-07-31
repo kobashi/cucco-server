@@ -35,6 +35,7 @@ from cucco.protocol.actions import (
     EffectPass,
     Identify,
     JoinTable,
+    LeaveTable,
     NoChangeDeclare,
     Ready,
     ResultAck,
@@ -45,6 +46,7 @@ from cucco.protocol.actions import (
 )
 from cucco.protocol.envelope import build_envelope, check_protocol_version, parse_envelope
 from cucco.protocol.errors import ProtocolError
+from cucco.server.admin import close_deserted_table
 from cucco.server.bots import bot_names, spawn_bot
 from cucco.server.registry import MAX_PLAYERS_PER_TABLE, MAX_SPECTATORS_PER_TABLE, TableRegistry
 from cucco.server.runner import TableRunner, build_state_snapshot
@@ -75,8 +77,22 @@ def _eligible_participant_ids(table: Table) -> list[str]:
     return ids
 
 
-async def _start_game(table: Table) -> None:
-    if table.game is not None or table.evaluation_started:
+def _game_running(table: Table) -> bool:
+    """Is a game actually still being played here?
+
+    `table.game` outlives its game by a moment: the runner broadcasts
+    `game_ended` and only then returns, letting _run_table_safely clear it.
+    Every `ready` that arrives in that window belongs to the NEXT game (the
+    embedded bots send theirs the instant they see game_ended), so treating a
+    finished Game as "a game is running" silently dropped them -- and with
+    rematches now waiting for a human to press start, those lost readies would
+    mean the next game starts a bot short instead of merely being late.
+    """
+    return table.game is not None and not table.game.is_finished
+
+
+async def _start_game(table: Table, registry: TableRegistry) -> None:
+    if _game_running(table) or table.evaluation_started:
         return
     participants = [pid for pid in _eligible_participant_ids(table) if pid in table.ready_ids]
     if len(participants) < table.min_players:
@@ -94,6 +110,10 @@ async def _start_game(table: Table) -> None:
     # above, or a failed start would count as "this room has played" and the
     # first real start would lose its wait-for-the-creator gate.
     table.first_game_started = True
+    # Consumed here, at the start, NOT after the game ends: the bots re-ready
+    # for the next game while the previous one is still winding down, and a
+    # post-game clear would throw those declarations away (see _game_running).
+    table.ready_ids.clear()
 
     if table.config.mode == "evaluation":
         # EvaluationRunner assigns table.game itself, once per game_count
@@ -119,13 +139,13 @@ async def _start_game(table: Table) -> None:
     # recorded seed still deterministically reproduces seats + deals alike.
     rng.shuffle(participants)
     table.game = Game(participants, table.config, rng)
-    table.runner_task = asyncio.create_task(_run_table_safely(table, action_log))
+    table.runner_task = asyncio.create_task(_run_table_safely(table, registry, action_log))
 
 
-async def _ready_timeout_watchdog(table: Table) -> None:
+async def _ready_timeout_watchdog(table: Table, registry: TableRegistry) -> None:
     await asyncio.sleep(READY_TIMEOUT_SEC)
-    if table.game is None and not table.evaluation_started:
-        await _start_game(table)
+    if not _game_running(table) and not table.evaluation_started:
+        await _start_game(table, registry)
 
 
 async def _notify_table_crashed(table: Table) -> None:
@@ -143,21 +163,31 @@ async def _notify_table_crashed(table: Table) -> None:
             logger.exception("failed to notify session %s of table crash", session.player_id)
 
 
-async def _run_table_safely(table: Table, action_log: ActionLogWriter | None = None) -> None:
+async def _run_table_safely(
+    table: Table, registry: TableRegistry, action_log: ActionLogWriter | None = None
+) -> None:
     """`TableRunner.run()` is launched as a fire-and-forget task; without
     this wrapper, an uncaught exception would silently kill the task and
     leave the table permanently hung with no explanation to its players."""
     try:
+        game = table.game
         await TableRunner(table, action_log=action_log, results_store=table.results_store).run()
         # A normal-mode room outlives its game: reset to the waiting state so
         # the same room (same room_id, same and/or new players) can ready up
         # and start another game with fresh chips, instead of becoming a
-        # zombie that silently swallows every `ready`.
-        table.game = None
-        table.ready_ids.clear()
+        # zombie that silently swallows every `ready`. Identity-checked: if a
+        # start for the NEXT game somehow got in first, clearing here would
+        # unhook the game that just started. (ready_ids is deliberately NOT
+        # cleared -- _start_game consumes it; see the note there.)
+        if table.game is game:
+            table.game = None
         if table.ready_deadline_task is not None:
             table.ready_deadline_task.cancel()
             table.ready_deadline_task = None
+        # The game has been played to its end and recorded. If nobody real is
+        # left to see the next one, this room is done (close_deserted_table).
+        if await close_deserted_table(registry, table):
+            return
     except Exception:
         logger.exception("TableRunner crashed for table %s", table.room_id)
         await _notify_table_crashed(table)
@@ -210,6 +240,8 @@ class ConnectionHandler:
                 await self._handle_ready()
             elif isinstance(action, StartPot):
                 await self._handle_start_pot()
+            elif isinstance(action, LeaveTable):
+                await self._handle_leave_table()
             elif isinstance(action, ResultAck):
                 await self._handle_result_ack()
             elif isinstance(action, QUEUE_ROUTED):
@@ -394,11 +426,21 @@ class ConnectionHandler:
             # game start with fewer AIs than intended, silently.
             raise ProtocolError("only AI players can declare ready on an evaluation table")
         table = self.table
-        if table.game is not None or table.evaluation_started:
+        if _game_running(table) or table.evaluation_started:
             return  # already started; later pots/games auto-include everyone eligible
         table.ready_ids.add(self.session.player_id)
+        # 連戦(2ゲーム目以降)は自動で始めない。The room has already played a
+        # game, so somebody real is at the screen deciding whether to play
+        # another -- and if nobody is, the table is closed at the game boundary
+        # instead (close_deserted_table). Starting again on the strength of the
+        # bots' own `ready` alone is exactly what made a table run for ten
+        # minutes with nobody watching, and what wiped the result screen out
+        # from under the people who WERE watching. No watchdog either: its
+        # ten-minute auto-start would be the same thing, just later.
+        if table.config.mode == "normal" and table.first_game_started:
+            return
         if table.ready_deadline_task is None:
-            table.ready_deadline_task = asyncio.create_task(_ready_timeout_watchdog(table))
+            table.ready_deadline_task = asyncio.create_task(_ready_timeout_watchdog(table, self.registry))
         # A normal-mode table waits for the creator's start_pot. That gate used
         # to be implicit: the creator was one of the eligible participants, so
         # "everyone eligible is ready" could not become true until they readied
@@ -407,16 +449,14 @@ class ConnectionHandler:
         # started the instant it was made -- leaving no window to look at the
         # roster or invite anyone.
         #
-        # Only the FIRST start waits. Rematches keep auto-starting, so a
-        # bot-only table still runs 連戦 on its own once under way (and stays
-        # the "never stops by itself" case the admin abort exists for). The
-        # auto-start also stands for evaluation runs, a creator who readied
-        # like a guest, and a creator who has dropped (so nothing wedges).
+        # This is the FIRST game only (a rematch has already returned above).
+        # The auto-start still stands for evaluation runs, a creator who
+        # readied like a guest, and a creator who has dropped (so nothing
+        # wedges); the ten-minute watchdog remains the last resort.
         creator_id = table.effective_creator_id()
         creator = table.get(creator_id) if creator_id else None
         creator_will_start = (
             table.config.mode == "normal"
-            and not table.first_game_started
             and creator is not None
             and creator.connected
             and creator_id not in table.ready_ids
@@ -425,7 +465,7 @@ class ConnectionHandler:
             table.min_players, len(_eligible_participant_ids(table))
         ):
             table.ready_deadline_task.cancel()
-            await _start_game(table)
+            await _start_game(table, self.registry)
 
     async def _handle_start_pot(self) -> None:
         if self.session is None or self.table is None:
@@ -435,7 +475,7 @@ class ConnectionHandler:
             raise ProtocolError("only the table creator can start the pot")
         if table.config.mode != "normal":
             raise ProtocolError("start_pot is only available on normal-mode tables")
-        if table.game is not None or table.evaluation_started:
+        if _game_running(table) or table.evaluation_started:
             return  # already started; no-op
         # Pressing start IS the creator's participation declaration -- the
         # organizer's flow is "wait for everyone else to ready up, then
@@ -448,7 +488,40 @@ class ConnectionHandler:
         if table.ready_deadline_task is not None:
             table.ready_deadline_task.cancel()
             table.ready_deadline_task = None
-        await _start_game(table)
+        await _start_game(table, self.registry)
+
+    async def _handle_leave_table(self) -> None:
+        """The client is leaving on purpose (docs/protocol/design.md 「退出」).
+
+        Two shapes, because a seat and a spectator slot are not the same thing:
+
+        - A spectator (or anyone the table isn't currently playing with) is
+          removed outright. They hold nothing the table needs, and leaving the
+          roster behind would keep the room looking occupied -- which now
+          decides whether the next game starts at all.
+        - A seat in a RUNNING game is only marked gone, exactly like a dropped
+          socket: the domain game has already dealt them a hand and the runner
+          is mid-deal, so pulling the participant out from under it would be a
+          far bigger change than "this player stopped answering" (which the
+          runner already handles -- auto no-change, auto-decline, and a
+          force-end once fewer than two seats are live).
+
+        Either way the session stops counting as a connected real client, so a
+        room nobody is left at closes at the end of its game instead of dealing
+        another one to nobody.
+        """
+        if self.session is None or self.table is None:
+            raise ProtocolError("must join_table before leave_table")
+        table, session = self.table, self.session
+        session.connected = False
+        seated_in_running_game = _game_running(table) and session.player_id in (table.game.seats if table.game else ())
+        if not seated_in_running_game:
+            table.sessions.pop(session.player_id, None)
+            table.ready_ids.discard(session.player_id)
+            table.result_acks.discard(session.player_id)
+        await self._broadcast_presence(table, session.player_id, connected=False)
+        session.room_id = None
+        self.table = None
 
     async def _handle_result_ack(self) -> None:
         if self.session is None or self.table is None:

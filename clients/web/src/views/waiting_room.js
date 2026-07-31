@@ -53,6 +53,7 @@ export function render(el, state, actions) {
               : `<button id="ready-btn">準備完了</button><p class="muted">準備完了すると、主催者の開始操作でポットが始まります。</p>`
       }
       ${state.error ? `<p class="error">${esc(state.error)}</p>` : ""}
+      <button id="leave-table-btn" class="secondary">この卓から退出する</button>
     </div>
   `;
   el.querySelector("#copy-btn").addEventListener("click", () => navigator.clipboard?.writeText(state.roomId));
@@ -61,4 +62,9 @@ export function render(el, state, actions) {
   // re-enable a button the player already pressed.
   el.querySelector("#ready-btn")?.addEventListener("click", () => actions.sendReady());
   el.querySelector("#start-pot-btn")?.addEventListener("click", () => actions.sendStartPot());
+  // 途中退出: a spectator waiting for a game that may never start needs a way
+  // out that isn't closing the tab -- and the server has to be told (main.js).
+  el.querySelector("#leave-table-btn")?.addEventListener("click", () => {
+    if (confirm("この卓から退出してロビーに戻ります。よろしいですか?")) actions.leaveRoom();
+  });
 }
