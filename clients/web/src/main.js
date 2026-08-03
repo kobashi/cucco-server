@@ -2,7 +2,7 @@ import { CuccoConnection, wsUrlFor } from "../../web-common/connection.js";
 import { createStore, pushLog, seatName } from "./state.js";
 import { loadSession, saveSession, clearSession } from "../../web-common/persistence.js";
 import { turnOrderFor, advanceTurn } from "./deriveTurn.js";
-import { sanitizeWsHost } from "../../web-common/utils.js";
+import { sanitizeWsHost, isTypingIn } from "../../web-common/utils.js";
 import { CAUSE_LABELS, REFUSAL_LABELS } from "../../web-common/cards.js";
 import * as lobby from "./views/lobby.js";
 import * as waitingRoom from "./views/waiting_room.js";
@@ -37,7 +37,44 @@ let conn = new CuccoConnection(wsUrlFor(savedHost));
 
 // -- rendering -----------------------------------------------------------
 
+// A render that was held back because the user was typing (see below), and
+// which screen is currently up -- a redraw of the same screen can wait for
+// them to finish typing, a change of screen cannot.
+let renderPending = false;
+let shownScreen = null;
+let heldRenderTimer = 0;
+
+// The held render is released by focusout (below), but never ONLY by it: a
+// field can stop being the focused one without this document seeing a focus
+// event at all (the window loses focus, a background tab is restored). A
+// screen stuck showing stale state would be worse than the bug being fixed,
+// so it also re-checks on its own; while the caret is still in a field this
+// just re-arms.
+function scheduleHeldRender() {
+  clearTimeout(heldRenderTimer);
+  heldRenderTimer = setTimeout(() => {
+    if (!renderPending) return;
+    if (isTypingIn(appEl)) scheduleHeldRender();
+    else render();
+  }, 800);
+}
+
 function render() {
+  // Don't rebuild a screen the user is filling in. Every screen here is
+  // rebuilt wholesale, and renders arrive on their own schedule -- the
+  // waiting room polls the roster every 3 seconds, the connection banner
+  // flips -- so a rebuild lands under the caret and cancels an IME
+  // composition mid-word. The held-back render runs on focusout below.
+  // Only ever holds back a redraw of the SAME screen. A change of screen --
+  // the game starting while a guest is still typing their name -- must not
+  // wait for anyone: it is the thing they are waiting to see.
+  if (state.screen === shownScreen && isTypingIn(appEl)) {
+    renderPending = true;
+    scheduleHeldRender();
+    return;
+  }
+  renderPending = false;
+  shownScreen = state.screen;
   appEl.innerHTML = "";
   const screens = { name: lobby, lobby: lobby, create: lobby, join: lobby, waiting: waitingRoom, table, result: table, ended: result };
   const view = screens[state.screen] ?? lobby;
@@ -53,6 +90,15 @@ function render() {
   }
 }
 subscribe(render);
+
+// Deferred by a tick: focusout fires BEFORE the next field gets focus, so an
+// immediate check would see "nobody is typing" while the user is merely
+// tabbing between fields, and rebuild the screen out from under them.
+appEl.addEventListener("focusout", () => {
+  setTimeout(() => {
+    if (renderPending && !isTypingIn(appEl)) render();
+  }, 0);
+});
 
 function update(mutator) {
   mutator();

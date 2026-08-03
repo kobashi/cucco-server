@@ -1,4 +1,4 @@
-import { esc } from "../../../web-common/utils.js";
+import { esc, MACHINE_INPUT_ATTRS } from "../../../web-common/utils.js";
 
 // The name screen's whole panel is torn down and rebuilt (innerHTML = "...")
 // on every notify() -- including connectionStatus flipping to "open" moments
@@ -40,8 +40,8 @@ function renderName(el, state, actions) {
       <details class="ws-host-details" ${wsHostOpen ? "open" : ""}>
         <summary>接続先を変更(通常は不要)</summary>
         <p class="muted">現在の接続先: ${esc(localStorage.getItem("cucco_ws_host") || `${location.hostname}:8765`)}</p>
-        <form id="ws-host-form">
-          <label>ホスト名のみ(URL全体は不可。:ポート省略時は443/wss扱い) <input id="ws-host-input" placeholder="ws.example.trycloudflare.com" value="${esc(wsHostDraft)}"></label>
+        <form id="ws-host-form" novalidate>
+          <label>ホスト名のみ(URL全体は不可。:ポート省略時は443/wss扱い) <input id="ws-host-input" placeholder="ws.example.trycloudflare.com" value="${esc(wsHostDraft)}" ${MACHINE_INPUT_ATTRS}></label>
           <button type="submit" class="secondary">接続先を保存</button>
         </form>
       </details>

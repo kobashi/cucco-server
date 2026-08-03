@@ -2,7 +2,7 @@
 // simplified: same actions contract (identify/createTable/joinTable/
 // sendReady/sendStartPot/reconnect/forgetSession/setWsHost).
 
-import { esc, sanitizeWsHost } from "../../../web-common/utils.js";
+import { esc, sanitizeWsHost, MACHINE_INPUT_ATTRS } from "../../../web-common/utils.js";
 import { serverInviteUrl, tableInviteUrl, copyText } from "../../../web-common/invite.js";
 
 const currentWsHost = () => localStorage.getItem("cucco_ws_host") || `${location.hostname}:8765`;
@@ -49,7 +49,7 @@ export function inviteBlockHTML(id, label, hint, buildUrl) {
     <div class="invite-block">
       <label for="${id}-host">ゲームサーバーのドメイン名</label>
       <input id="${id}-host" class="invite-host" value="${esc(host)}" placeholder="xxxx.trycloudflare.com"
-             autocapitalize="off" autocorrect="off" spellcheck="false">
+             ${MACHINE_INPUT_ATTRS}>
       <p class="muted invite-hint">
         招待リンクに載せる公開ドメイン。外から繋いでもらうトンネルのドメインを入れる
         (この欄はリンク用で、この画面自身の接続先は変わりません)。
@@ -141,8 +141,8 @@ function renderName(el, state, actions) {
       <details class="ws-host-details" ${wsHostOpen ? "open" : ""}>
         <summary>接続先を変更(通常は不要)</summary>
         <p class="muted">現在の接続先: ${esc(localStorage.getItem("cucco_ws_host") || `${location.hostname}:8765`)}</p>
-        <form id="ws-host-form">
-          <label>ホスト名のみ(URL全体は不可) <input id="ws-host-input" placeholder="ws.example.trycloudflare.com" value="${esc(wsHostDraft)}"></label>
+        <form id="ws-host-form" novalidate>
+          <label>ホスト名のみ(URL全体は不可) <input id="ws-host-input" placeholder="ws.example.trycloudflare.com" value="${esc(wsHostDraft)}" ${MACHINE_INPUT_ATTRS}></label>
           <button type="submit" class="secondary">接続先を保存</button>
         </form>
       </details>

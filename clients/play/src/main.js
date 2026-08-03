@@ -4,7 +4,7 @@
 
 import { CuccoConnection, wsUrlFor } from "../../web-common/connection.js";
 import { loadSession, saveSession, clearSession } from "../../web-common/persistence.js";
-import { sanitizeWsHost, esc } from "../../web-common/utils.js";
+import { sanitizeWsHost, esc, isTypingIn } from "../../web-common/utils.js";
 import { tableInviteUrl } from "../../web-common/invite.js";
 import { createGameState } from "./gameState.js";
 import { createTableScene, cardHTML } from "./scene/table.js";
@@ -117,6 +117,27 @@ state.invitedRoomId = invitedRoomFromUrl;
 
 // UI-only state (which screen family is showing)
 let uiPhase = "name"; // name | lobby | create | join | waiting | table
+// A panel render that was held back because the user was typing (see render),
+// and which panel is currently on screen -- a redraw of the same panel can
+// wait for them to finish typing, a change of panel cannot.
+let panelRenderPending = false;
+let shownPanel = null;
+let heldPanelTimer = 0;
+
+// The held render is released by focusout (below), but never ONLY by it: a
+// field can stop being the focused one without this document seeing a focus
+// event at all -- the window loses focus, the element is removed by something
+// else, the browser restores a background tab. A panel stuck showing stale
+// state would be a worse bug than the one being fixed, so it also re-checks on
+// its own. While the caret really is still in a field this just re-arms.
+function scheduleHeldPanelRender() {
+  clearTimeout(heldPanelTimer);
+  heldPanelTimer = setTimeout(() => {
+    if (!panelRenderPending) return;
+    if (isTypingIn(screenEl)) scheduleHeldPanelRender();
+    else render();
+  }, 800);
+}
 // Until when the dock may keep the turn buttons disabled waiting on the
 // presentation (see TURN_GATE_MAX_MS).
 let turnGateUntil = 0;
@@ -935,6 +956,23 @@ function render() {
   else target = potRunning ? "table" : "waiting";
 
   if (target !== "table") {
+    // Hold the rebuild while a field is being filled in. These panels are
+    // rebuilt wholesale, and they are re-rendered on a schedule the user has
+    // no say in -- the waiting room polls the roster every 3 seconds, which is
+    // exactly where the invite block's ドメイン名 field lives. Rebuilding under
+    // the caret loses the position and cancels an IME composition outright.
+    // The deferred render runs when the field is left (see the focusout hook).
+    //
+    // Only ever holds back a redraw of the SAME screen. A change of screen --
+    // the game starting while a guest is still typing their name -- must not
+    // wait for anyone: it is the thing they are waiting to see.
+    if (target === shownPanel && isTypingIn(screenEl)) {
+      panelRenderPending = true;
+      scheduleHeldPanelRender();
+      return;
+    }
+    panelRenderPending = false;
+    shownPanel = target;
     sceneRefs = null;
     if (target === "waiting") renderWaiting(screenEl, state, actions);
     else renderLobby(screenEl, state, actions, target);
@@ -1352,6 +1390,19 @@ function wireConnection() {
 }
 
 // -- boot -------------------------------------------------------------------------
+
+// The other half of the "don't rebuild under the caret" rule in render(): once
+// the field is left, run whatever render was held back, so the panel is not
+// left showing stale content (a roster missing the person who just joined).
+// Deferred by a tick because focusout fires BEFORE the next field gets focus --
+// checking immediately would see "nobody is typing" while the user is simply
+// tabbing from one field to the next, and rebuild the panel out from under
+// the field they are moving into.
+screenEl.addEventListener("focusout", () => {
+  setTimeout(() => {
+    if (panelRenderPending && !isTypingIn(screenEl)) render();
+  }, 0);
+});
 
 wireConnection();
 conn.connect();
