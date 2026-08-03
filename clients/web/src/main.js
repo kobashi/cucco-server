@@ -168,6 +168,10 @@ const actions = {
     const host = sanitizeWsHost(rawHost);
     localStorage.setItem("cucco_ws_host", host);
     savedHost = host;
+    // Shut the old connection down first, or its own reconnect loop keeps
+    // retrying the address that was just replaced and keeps announcing
+    // "disconnected" over the new, working one (clients/play does the same).
+    conn.close();
     conn = new CuccoConnection(wsUrlFor(host));
     wireConnection();
     conn.connect();
@@ -427,7 +431,14 @@ function mergeChips(chipsNow) {
 // -- wire protocol event handling ------------------------------------------
 
 function wireConnection() {
-  conn.addEventListener("open", () => {
+  // Everything here belongs to THIS connection object. setWsHost replaces it,
+  // and the old one still delivers a parting "close" -- acting on that would
+  // drag the status back to "disconnected" while the new connection is fine.
+  const wired = conn;
+  const superseded = () => wired !== conn;
+
+  wired.addEventListener("open", () => {
+    if (superseded()) return;
     update(() => (state.connectionStatus = "open"));
     // A transport-level reconnect (network blip, not a page reload) gets a
     // brand new server-side session with no `join_table` on it yet -- resend
@@ -435,12 +446,19 @@ function wireConnection() {
     // rejecting every subsequent action with "must join_table first".
     if (state.roomId && state.sessionToken) actions.resync();
   });
-  conn.addEventListener("reconnecting", () => update(() => (state.connectionStatus = "reconnecting")));
-  conn.addEventListener("close", () => {
+  wired.addEventListener("reconnecting", () => {
+    if (superseded()) return;
+    update(() => (state.connectionStatus = "reconnecting"));
+  });
+  wired.addEventListener("close", () => {
+    if (superseded()) return;
     if (state.connectionStatus === "open") update(() => (state.connectionStatus = "reconnecting"));
   });
 
-  conn.addEventListener("event", (ev) => handleEvent(ev.detail.type, ev.detail.payload));
+  wired.addEventListener("event", (ev) => {
+    if (superseded()) return;
+    handleEvent(ev.detail.type, ev.detail.payload);
+  });
 }
 
 function handleEvent(type, p) {

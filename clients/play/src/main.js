@@ -1156,6 +1156,13 @@ const actions = {
     const host = sanitizeWsHost(rawHost);
     localStorage.setItem("cucco_ws_host", host);
     savedHost = host;
+    // Shut the old connection down first. Without this it keeps its own
+    // reconnect loop running against the address that was just replaced --
+    // and every one of its retries announced 「接続が切れました」 over the new,
+    // healthy connection, so the banner never went away after switching to a
+    // working server (exactly what happens when the tunnel URL changes).
+    // close() also stops it retrying: it sets the manual-close flag.
+    conn.close();
     conn = new CuccoConnection(wsUrlFor(host));
     wireConnection();
     conn.connect();
@@ -1370,25 +1377,35 @@ const actions = {
 function wireConnection() {
   // These only ever change the connection banner, which lives on <body> and is
   // updated in place -- so they must NOT call render(). A disconnected client
-  // retries on a backoff, andevery rebuild of the panel wiped whatever was being
+  // retries on a backoff, and every rebuild of the panel wiped whatever was being
   // typed into it: with the server down, the name and address fields could not
   // be filled in at all.
-  conn.addEventListener("open", () => {
+  // Everything here belongs to THIS connection object. setWsHost replaces it,
+  // and the old one still delivers a parting "close" -- acting on that would
+  // drag the status back to "disconnected" while the new connection is fine.
+  const wired = conn;
+  const superseded = () => wired !== conn;
+
+  wired.addEventListener("open", () => {
+    if (superseded()) return;
     connectionStatus = "open";
     prependConnBanner();
     if (state.roomId && state.sessionToken) actions.resync(); // renders on its own
   });
-  conn.addEventListener("reconnecting", () => {
+  wired.addEventListener("reconnecting", () => {
+    if (superseded()) return;
     connectionStatus = "reconnecting";
     prependConnBanner();
   });
-  conn.addEventListener("close", () => {
+  wired.addEventListener("close", () => {
+    if (superseded()) return;
     if (connectionStatus === "open") {
       connectionStatus = "reconnecting";
       prependConnBanner();
     }
   });
-  conn.addEventListener("event", (ev) => {
+  wired.addEventListener("event", (ev) => {
+    if (superseded()) return;
     if (ev.detail.type === "state_snapshot") {
       // Snapshot handling needs persist() alongside the state update.
       if (!state.gameEnded || ev.detail.payload.game_finished) {
