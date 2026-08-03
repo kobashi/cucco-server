@@ -2,7 +2,7 @@ import { CuccoConnection, wsUrlFor } from "../../web-common/connection.js";
 import { createStore, pushLog, seatName } from "./state.js";
 import { loadSession, saveSession, clearSession } from "../../web-common/persistence.js";
 import { turnOrderFor, advanceTurn } from "./deriveTurn.js";
-import { sanitizeWsHost, isTypingIn } from "../../web-common/utils.js";
+import { sanitizeWsHost, isTypingIn, preserveFormState, trackUserEdits } from "../../web-common/utils.js";
 import { CAUSE_LABELS, REFUSAL_LABELS } from "../../web-common/cards.js";
 import * as lobby from "./views/lobby.js";
 import * as waitingRoom from "./views/waiting_room.js";
@@ -74,11 +74,18 @@ function render() {
     return;
   }
   renderPending = false;
+  const sameScreen = state.screen === shownScreen;
   shownScreen = state.screen;
-  appEl.innerHTML = "";
   const screens = { name: lobby, lobby: lobby, create: lobby, join: lobby, waiting: waitingRoom, table, result: table, ended: result };
   const view = screens[state.screen] ?? lobby;
-  view.render(appEl, state, actions);
+  // Half-typed input survives a rebuild of the SAME screen -- a reconnect
+  // backoff must not empty the name box under someone who is filling it in.
+  const rebuild = () => {
+    appEl.innerHTML = "";
+    view.render(appEl, state, actions);
+  };
+  if (sameScreen) preserveFormState(appEl, rebuild);
+  else rebuild();
   if (state.connectionStatus === "reconnecting" || state.connectionStatus === "disconnected") {
     const banner = document.createElement("div");
     banner.className = "conn-banner";
@@ -90,6 +97,7 @@ function render() {
   }
 }
 subscribe(render);
+trackUserEdits(appEl);
 
 // Deferred by a tick: focusout fires BEFORE the next field gets focus, so an
 // immediate check would see "nobody is typing" while the user is merely

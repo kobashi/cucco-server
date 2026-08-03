@@ -2,7 +2,7 @@
 // simplified: same actions contract (identify/createTable/joinTable/
 // sendReady/sendStartPot/reconnect/forgetSession/setWsHost).
 
-import { esc, sanitizeWsHost, MACHINE_INPUT_ATTRS } from "../../../web-common/utils.js";
+import { esc, sanitizeWsHost, MACHINE_INPUT_ATTRS, keepHostFieldAscii } from "../../../web-common/utils.js";
 import { serverInviteUrl, tableInviteUrl, copyText } from "../../../web-common/invite.js";
 
 const currentWsHost = () => localStorage.getItem("cucco_ws_host") || `${location.hostname}:8765`;
@@ -69,6 +69,7 @@ export function inviteBlockHTML(id, label, hint, buildUrl) {
 export function wireInviteBlock(el, id, buildUrl) {
   const hostField = el.querySelector(`#${id}-host`);
   const urlField = el.querySelector(`#${id}-url`);
+  keepHostFieldAscii(hostField);
 
   // Rebuild the link as the domain is typed. The raw text stays in the field
   // (sanitising mid-typing would fight the user, e.g. eating a "/" they are
@@ -159,6 +160,7 @@ function renderName(el, state, actions) {
   const wsHostDetails = el.querySelector(".ws-host-details");
   wsHostDetails.addEventListener("toggle", () => (wsHostOpen = wsHostDetails.open));
   const wsHostInput = el.querySelector("#ws-host-input");
+  keepHostFieldAscii(wsHostInput);
   wsHostInput.addEventListener("input", () => (wsHostDraft = wsHostInput.value));
   el.querySelector("#ws-host-form").addEventListener("submit", (e) => {
     e.preventDefault();

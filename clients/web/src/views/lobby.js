@@ -1,4 +1,4 @@
-import { esc, MACHINE_INPUT_ATTRS } from "../../../web-common/utils.js";
+import { esc, MACHINE_INPUT_ATTRS, keepHostFieldAscii } from "../../../web-common/utils.js";
 
 // The name screen's whole panel is torn down and rebuilt (innerHTML = "...")
 // on every notify() -- including connectionStatus flipping to "open" moments
@@ -58,6 +58,7 @@ function renderName(el, state, actions) {
   const wsHostDetails = el.querySelector(".ws-host-details");
   wsHostDetails.addEventListener("toggle", () => (wsHostOpen = wsHostDetails.open));
   const wsHostInput = el.querySelector("#ws-host-input");
+  keepHostFieldAscii(wsHostInput);
   wsHostInput.addEventListener("input", () => (wsHostDraft = wsHostInput.value));
   el.querySelector("#ws-host-form").addEventListener("submit", (e) => {
     e.preventDefault();

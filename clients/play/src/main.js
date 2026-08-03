@@ -4,7 +4,7 @@
 
 import { CuccoConnection, wsUrlFor } from "../../web-common/connection.js";
 import { loadSession, saveSession, clearSession } from "../../web-common/persistence.js";
-import { sanitizeWsHost, esc, isTypingIn } from "../../web-common/utils.js";
+import { sanitizeWsHost, esc, isTypingIn, preserveFormState, trackUserEdits } from "../../web-common/utils.js";
 import { tableInviteUrl } from "../../web-common/invite.js";
 import { createGameState } from "./gameState.js";
 import { createTableScene, cardHTML } from "./scene/table.js";
@@ -972,10 +972,17 @@ function render() {
       return;
     }
     panelRenderPending = false;
+    const samePanel = target === shownPanel;
     shownPanel = target;
     sceneRefs = null;
-    if (target === "waiting") renderWaiting(screenEl, state, actions);
-    else renderLobby(screenEl, state, actions, target);
+    // Half-typed input survives a rebuild of the SAME panel (a screen change
+    // starts fresh, which is what a screen change means).
+    const rebuild = () => {
+      if (target === "waiting") renderWaiting(screenEl, state, actions);
+      else renderLobby(screenEl, state, actions, target);
+    };
+    if (samePanel) preserveFormState(screenEl, rebuild);
+    else rebuild();
     prependConnBanner();
     // Also on the way out: this branch returns early, so without it the invite
     // and exit buttons keep whatever visibility they had and stay hidden in the
@@ -1361,19 +1368,24 @@ const actions = {
 // -- connection wiring -----------------------------------------------------------
 
 function wireConnection() {
+  // These only ever change the connection banner, which lives on <body> and is
+  // updated in place -- so they must NOT call render(). A disconnected client
+  // retries on a backoff, andevery rebuild of the panel wiped whatever was being
+  // typed into it: with the server down, the name and address fields could not
+  // be filled in at all.
   conn.addEventListener("open", () => {
     connectionStatus = "open";
-    if (state.roomId && state.sessionToken) actions.resync();
-    render();
+    prependConnBanner();
+    if (state.roomId && state.sessionToken) actions.resync(); // renders on its own
   });
   conn.addEventListener("reconnecting", () => {
     connectionStatus = "reconnecting";
-    render();
+    prependConnBanner();
   });
   conn.addEventListener("close", () => {
     if (connectionStatus === "open") {
       connectionStatus = "reconnecting";
-      render();
+      prependConnBanner();
     }
   });
   conn.addEventListener("event", (ev) => {
@@ -1398,6 +1410,7 @@ function wireConnection() {
 // checking immediately would see "nobody is typing" while the user is simply
 // tabbing from one field to the next, and rebuild the panel out from under
 // the field they are moving into.
+trackUserEdits(screenEl);
 screenEl.addEventListener("focusout", () => {
   setTimeout(() => {
     if (panelRenderPending && !isTypingIn(screenEl)) render();

@@ -39,6 +39,113 @@ export function sanitizeWsHost(raw) {
 export const MACHINE_INPUT_ATTRS =
   'type="url" inputmode="url" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"';
 
+// What an address field is allowed to contain: host[:port] characters, plus
+// the punctuation a pasted URL is made of. The URL parts are kept on purpose
+// -- sanitizeWsHost cuts the value down to its host when it is saved, and it
+// can only do that if the "://" and the first "/" are still there. Dropping
+// them as they were typed turned "https://host/path?x=1" into "https:hostpathx1".
+const HOST_CHARS = /[^A-Za-z0-9.:_\-[\]/?#=&%~+]/g;
+
+// Normalise what an IME left behind in an address field.
+//
+// `type="url"` asks the platform to switch to direct alphanumeric input, and
+// Windows IMEs do; **macOS does not**, and no web API can force it -- so the
+// field has to cope with text that went through a conversion. NFKC turns the
+// full-width letters a Japanese input mode produces (ｈｏｓｔ) into the ASCII
+// they stand for, and anything that still cannot appear in a host name is
+// dropped rather than left to fail at connection time.
+//
+// Kana that was never converted has no ASCII to fall back to, so it goes.
+// That is the same result as having typed with the IME off, which is what the
+// field is asking for.
+export function sanitizeHostInput(raw) {
+  return String(raw ?? "").normalize("NFKC").replace(HOST_CHARS, "");
+}
+
+// Keep an address field ASCII as it is typed, without fighting the IME while
+// a conversion is still open. Returns nothing; wires the element in place.
+export function keepHostFieldAscii(el) {
+  if (!el) return;
+  let composing = false;
+  const clean = () => {
+    if (composing) return; // mid-conversion: let the IME finish first
+    const before = el.value;
+    const after = sanitizeHostInput(before);
+    if (after === before) return;
+    // Keep the caret where the user left it, counting only the characters
+    // that survived ahead of it.
+    const head = sanitizeHostInput(before.slice(0, el.selectionStart ?? before.length)).length;
+    el.value = after;
+    try {
+      el.setSelectionRange(head, head);
+    } catch {
+      /* not a field that carries a selection */
+    }
+  };
+  el.addEventListener("compositionstart", () => (composing = true));
+  el.addEventListener("compositionend", () => {
+    composing = false;
+    clean();
+  });
+  el.addEventListener("input", clean);
+  el.addEventListener("blur", clean);
+}
+
+// Rebuild a panel without throwing away what the user has half-typed into it.
+//
+// The panels are rebuilt wholesale, and a rebuild resets every field to
+// whatever the markup says -- so a connection blip while someone is filling in
+// their name empties the box under them. Renders are held back while a field
+// has focus (see the clients' render()), but not every rebuild can be held:
+// a screen change must go through, and focus can legitimately be elsewhere
+// (a stepper button) while a form is half-filled.
+//
+// So: remember what the user has edited, rebuild, and put it back. Only fields
+// the user actually touched are restored -- everything else is state-driven and
+// must come from the new markup.
+export function preserveFormState(container, rebuild) {
+  const active = document.activeElement;
+  const focusedId = active && container.contains(active) && active.id ? active.id : null;
+  const caret = focusedId && "selectionStart" in active ? [active.selectionStart, active.selectionEnd] : null;
+  const edited = [...container.querySelectorAll("[data-user-edited]")]
+    .filter((el) => el.id)
+    .map((el) => ({ id: el.id, value: el.value, checked: el.checked }));
+
+  rebuild();
+
+  for (const saved of edited) {
+    const el = container.querySelector(`#${CSS.escape(saved.id)}`);
+    if (!el) continue; // a different screen, or the field is gone: nothing to restore
+    el.value = saved.value;
+    if (el.type === "checkbox" || el.type === "radio") el.checked = saved.checked;
+    el.dataset.userEdited = "1";
+  }
+  if (!focusedId) return;
+  const back = container.querySelector(`#${CSS.escape(focusedId)}`);
+  if (!back) return;
+  back.focus();
+  if (caret && "setSelectionRange" in back) {
+    try {
+      back.setSelectionRange(caret[0], caret[1]);
+    } catch {
+      /* the field type does not carry a selection */
+    }
+  }
+}
+
+// Mark fields as touched, so preserveFormState knows what to put back. One
+// delegated listener per container, set up once.
+export function trackUserEdits(container) {
+  const mark = (ev) => {
+    const el = ev.target;
+    if (el && el.id && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) {
+      el.dataset.userEdited = "1";
+    }
+  };
+  container.addEventListener("input", mark);
+  container.addEventListener("change", mark);
+}
+
 // Is the user typing into a field right now?
 //
 // The panels are rebuilt wholesale (innerHTML = "...") on every render, and
