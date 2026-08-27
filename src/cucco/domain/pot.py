@@ -88,6 +88,10 @@ class Pot:
         active = self.active_participants()
         if len(active) < 2:
             raise IllegalAction("cannot start a deal with fewer than 2 active participants")
+        # 念のための保険。親が脱落・退出していたら配る前に回す -- 席にいない親で
+        # ディールを始めると、手番順の起点も「どうぞ」の相手も居ないことになる。
+        if self.dealer_id in self.eliminated:
+            self.dealer_id = _rotate_dealer(self.participants, self.dealer_id, self.eliminated)
         self.deal_number += 1
         self.current_deal = Deal(active, self.dealer_id, self.deck, self.config)
         return self.current_deal
@@ -151,7 +155,14 @@ class Pot:
             return []
         self._pending_losers.pop(player_id, None)
         self.eliminated.add(player_id)
-        return [PlayerLeftPot(player_id=player_id, reason="left")]
+        events: list[PotEvent] = [PlayerLeftPot(player_id=player_id, reason="left")]
+        # 親が抜けた場合はその場で次へ回す。親を決め直すのは本来ディールの
+        # 終わり(finalize_deal)だが、そこで回したあとに親が抜けると、次の
+        # ディールが「席にいない親」で始まってしまう。
+        if player_id == self.dealer_id and self.active_participants():
+            self.dealer_id = _rotate_dealer(self.participants, self.dealer_id, self.eliminated)
+            events.append(DealerChanged(player_id=self.dealer_id))
+        return events
 
     def submit_continue_declare(self, player_id: str, continue_playing: bool) -> list[PotEvent]:
         if player_id not in self._pending_losers:

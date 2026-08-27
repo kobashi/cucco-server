@@ -61,3 +61,37 @@ def test_withdrawing_clears_a_pending_continue_decision():
     assert pot.awaiting_continue_declare == frozenset()
     pot.finalize_deal()
     pot.start_next_deal()   # 待ちが残っていれば IllegalAction になる
+
+
+def test_the_dealer_leaving_hands_the_deal_to_the_next_seat():
+    """親が抜けたら、その場で次へ回す。親を決め直すのは本来ディールの終わりだが、
+    そこで回したあとに親が抜けると、次のディールが「席にいない親」で始まる。"""
+    from cucco.domain.events import DealerChanged
+
+    pot = _pot()                      # 親は A、席順 A B C D
+    pot.start_next_deal()
+    events = pot.withdraw("A")
+
+    assert events == [
+        PlayerLeftPot(player_id="A", reason="left"),
+        DealerChanged(player_id="B"),
+    ]
+    assert pot.dealer_id == "B"
+
+
+def test_a_deal_never_starts_with_an_eliminated_dealer():
+    """保険。何かの経路で親が脱落したまま残っても、配る前に回す。"""
+    pot = _pot()
+    deal, losers = play_deal_all_no_change(pot)
+    pot.resolve_losers(deal, losers)
+    for pid in list(pot.awaiting_continue_declare):
+        pot.submit_continue_declare(pid, True)
+    pot.finalize_deal()
+
+    pot.eliminated.add(pot.dealer_id)   # 親が脱落した状態を直接作る
+    stale = pot.dealer_id
+    next_deal = pot.start_next_deal()
+
+    assert pot.dealer_id != stale
+    assert pot.dealer_id not in pot.eliminated
+    assert pot.dealer_id in next_deal.hands

@@ -290,7 +290,10 @@ export function createTableScene(root) {
       el.classList.toggle("is-watched", s.player_id === state.watchSeat);
 
       const badges = [];
-      if (faces.dq.has(s.player_id)) {
+      // 退出はそれだけで「この卓にもういない」を意味するので、単独で出す。
+      // 退出すればポットからも外れる(脱落中)が、両方並べても情報は増えない。
+      if (s.left) badges.push("退出");
+      else if (faces.dq.has(s.player_id)) {
         // 卓の上でも理由まで見えるようにする -- 席を見ただけで「なぜ抜けたか」が
         // 分かるほうが、結果発表を待たずに状況を追える。
         const cause = faces.dqInfo?.[s.player_id]?.cause;
@@ -304,8 +307,7 @@ export function createTableScene(root) {
       }
       // 「退出」と「切断」は同じ connected=false だが意味が違う。戻ってくる
       // かもしれない人と、もう戻らない人を同じ札で表すと待つ理由が分からない。
-      if (s.left) badges.push("退出");
-      else if (s.connected === false) badges.push("切断");
+      if (!s.left && s.connected === false) badges.push("切断");
       el.querySelector(".seat-badges").textContent = badges.join("・");
 
       // Card slot: face-up for my own card, cards an effect made public
@@ -319,7 +321,11 @@ export function createTableScene(root) {
         // (the deal step flips it once every seat is served), not a クク some
         // AI has already declared, not a disqualified card. Any state that
         // arrived early simply waits for the sync at the end of the deal step.
-        slot.innerHTML = state.shownDealtSeats.has(s.player_id) ? '<div class="card card-back"></div>' : "";
+        slot.innerHTML = state.shownDealtSeats.has(s.player_id)
+          ? '<div class="card card-back"></div>'
+          : s.in_current_pot === false || s.left
+            ? '<div class="empty-seat"></div>'   // そもそも配られない席
+            : "";                                 // これから配られる席
       } else if (openedCard !== undefined) {
         slot.innerHTML = cardFaceHTML(openedCard, opened.elevated_joker_holders?.includes(s.player_id));
       } else if (faces.dq.has(s.player_id)) {
@@ -347,6 +353,11 @@ export function createTableScene(root) {
         // (サーバーが観戦者宛にしか送らない)。ここも faces 経由 = 遅れる
         // ミラーなので、交換の演出中に交換後の札が先に出ることはない。
         slot.innerHTML = cardFaceHTML(faces.disclosed[s.player_id]);
+      } else if (s.in_current_pot === false || s.left) {
+        // このディールに参加していない席。**札は置かない** -- 伏せ札を薄く出して
+        // いたが、配られたように見えてしまう(配布の演出で自分にも配られたと
+        // 読まれる)。空の枠だけを残し、「脱落中」「退出」は名札の下の印で示す。
+        slot.innerHTML = '<div class="empty-seat"></div>';
       } else {
         slot.innerHTML = dealInProgress || (t.deal_number > 0 && !state.lastDealResult) ? '<div class="card card-back"></div>' : "";
       }

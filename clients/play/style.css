@@ -595,3 +595,19 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
    もう戻らない席を同じ表示にすると、待つ理由があるように見えてしまう。 */
 .player-seat.is-left { opacity: 0.45; }
 .player-seat.is-left .name-plate { text-decoration: line-through; border: 1px solid var(--border); }
+
+/* このディールに参加していない席(脱落中・退出)。伏せ札を薄く置くと「配られた」
+   と読まれるので、札は置かず、枠だけを残す。何を持っているかではなく、
+   場にいないことを示す表示。 */
+.empty-seat {
+  width: 54px; height: 76px; border-radius: 8px;
+  border: 1px dashed rgba(255, 255, 255, 0.28);
+  background: repeating-linear-gradient(
+    45deg, rgba(255, 255, 255, 0.04) 0 6px, transparent 6px 12px
+  );
+}
+.player-seat.is-me .empty-seat { width: 60px; height: 84px; }
+@media (max-width: 640px) {
+  .empty-seat { width: 44px; height: 62px; }
+  .player-seat.is-me .empty-seat { width: 48px; height: 67px; }
+}

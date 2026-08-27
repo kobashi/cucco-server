@@ -375,7 +375,11 @@ function handleOp(op) {
       // THIS deal (corollary 4).
       cancelResultPaneNet();
       queue.resume();
-      const seatsInOrder = (state.table?.seats ?? []).filter((s) => s.in_current_pot !== false).map((s) => s.player_id);
+      // 配る相手はこのディールの参加者だけ。退出した席も明示的に外す --
+      // サーバーが外す前の一瞬でも、出ていった席に配る絵は出したくない。
+      const seatsInOrder = (state.table?.seats ?? [])
+        .filter((s) => s.in_current_pot !== false && !s.left)
+        .map((s) => s.player_id);
       queue.enqueue(async (instant) => {
         const sc = scene();
         if (!sc || instant) return;
