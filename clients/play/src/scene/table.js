@@ -122,13 +122,32 @@ export function createTableScene(root) {
     if (measurable) fitCenter();
   }
 
+  // 手前に来る席から時計回りの並び。手前は自分の席、観戦者なら「観察中」に
+  // 選んだ席。どちらも無い(観戦者がまだ選んでいない)ときは先頭の席。
+  function seatOrder(state) {
+    const seats = state.table?.seats ?? [];
+    const focusId = state.watchSeat ?? state.playerId;
+    const myIdx = Math.max(0, seats.findIndex((s) => s.player_id === focusId));
+    return seats.map((_, i) => seats[(myIdx + i) % seats.length].player_id);
+  }
+
+  // 観察対象が変わったときの並べ替え。**席を作り直さない**のがポイントで、
+  // 位置と印だけを動かす -- 作り直すとスロットの中身(演出中のカード)が消え、
+  // キューが直接書き込んでいる途中の描画(1枚ずつのオープンなど)を壊す。
+  // 位置だけなら演出と衝突しないので、キューが動いている最中でも即座に効く。
+  function refocus(state) {
+    if (!seatEls.size) return;
+    placed = { order: seatOrder(state) };
+    for (const [pid, el] of seatEls) el.classList.toggle("is-watched", pid === state.watchSeat);
+    placeSeats();
+  }
+
   function buildSeats(state) {
     seatLayer.innerHTML = "";
     seatEls.clear();
     const seats = state.table?.seats ?? [];
     placed = null;
     if (!seats.length) return;
-    const myIdx = Math.max(0, seats.findIndex((s) => s.player_id === state.playerId));
     seats.forEach((s) => {
       const el = document.createElement("div");
       el.className = "player-seat";
@@ -148,7 +167,7 @@ export function createTableScene(root) {
       seatEls.set(s.player_id, el);
     });
     // Own seat first: it goes at the bottom, everyone else clockwise from there.
-    placed = { order: seats.map((_, i) => seats[(myIdx + i) % seats.length].player_id) };
+    placed = { order: seatOrder(state) };
     placeSeats();
   }
 
@@ -216,7 +235,8 @@ export function createTableScene(root) {
   function sync(state) {
     const t = state.table;
     if (!t) return;
-    const roster = (t.seats ?? []).map((s) => s.player_id).join(",");
+    // 観察中の席は座席の並びを決めるので、変わったら並べ直す必要がある。
+    const roster = (t.seats ?? []).map((s) => s.player_id).join(",") + `|${state.watchSeat ?? ""}`;
     if (roster !== sync._roster) {
       buildSeats(state);
       sync._roster = roster;
@@ -252,6 +272,7 @@ export function createTableScene(root) {
       el.classList.toggle("is-out", s.in_current_pot === false);
       el.classList.toggle("is-disqualified", faces.dq.has(s.player_id));
       el.classList.toggle("is-disconnected", s.connected === false);
+      el.classList.toggle("is-watched", s.player_id === state.watchSeat);
 
       const badges = [];
       if (faces.dq.has(s.player_id)) {
@@ -369,6 +390,7 @@ export function createTableScene(root) {
 
   return {
     sync,
+    refocus,
     seatEls,
     root,
     slotEl: (pid) => seatEls.get(pid)?.querySelector(".card-slot") ?? null,

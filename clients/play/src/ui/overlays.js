@@ -48,10 +48,17 @@ export function renderStatus(el, state, seatName) {
 // card-effect panel just to recall their own hand's implication (spectators
 // have no hand; between deals yourHand is null, so it's simply empty then).
 export function renderHandInfo(el, state) {
+  // 観戦者には手札が無いので、代わりに「観察中」の人の公開情報を出す。
+  // 出せるのは全員に配信されている情報だけ(チップ・失格・公開された札・手番)
+  // で、手札は観戦者には届かないため出しようがない。
+  if (state.playerType === "spectator") {
+    el.innerHTML = watchedSeatInfoHTML(state);
+    return;
+  }
   // shownHand, not yourHand: track what my seat currently DISPLAYS so the
   // effect line never gets ahead of the card reveal animation.
   const hand = state.shownHand;
-  if (state.playerType === "spectator" || !hand) {
+  if (!hand) {
     el.innerHTML = "";
     return;
   }
@@ -59,6 +66,28 @@ export function renderHandInfo(el, state) {
   el.innerHTML = info
     ? `<div class="hand-info"><strong>${esc(hand)}</strong>: ${esc(info.gist)}</div>`
     : "";
+}
+
+// 観察中の席の一行。読むのは shownFaces / shownOpened / shownTurnSeat -- 演出の
+// 遅れるミラー側で、権威ある状態ではない(gameState.js の規則)。ここが先走ると
+// 「まだ配っている札」を先に書いてしまう。
+function watchedSeatInfoHTML(state) {
+  const pid = state.watchSeat;
+  const seat = (state.table?.seats ?? []).find((s) => s.player_id === pid);
+  if (!seat) return "";
+  const faces = state.shownFaces ?? { revealed: {}, dq: new Set(), dqInfo: {} };
+  const dq = faces.dqInfo?.[pid];
+  const card = state.shownOpened?.hands?.[pid] ?? faces.revealed?.[pid] ?? dq?.card ?? null;
+  const bits = [`${seat.chips}枚`];
+  if (faces.dq?.has(pid)) bits.push(`失格(${CAUSE_LABELS[dq?.cause] ?? dq?.cause ?? "?"})`);
+  else if (seat.in_current_pot === false) bits.push("脱落中");
+  else if (state.shownTurnSeat === pid) bits.push("この人の手番");
+  if (seat.connected === false) bits.push("切断中");
+  if (card) bits.push(`公開札 ${card}`);
+  const effect = card ? cardEffectFor(card) : null;
+  return `<div class="hand-info watched">👁 <strong>${esc(seat.name)}</strong> — ${esc(bits.join(" / "))}${
+    effect ? `<span class="watched-effect">${esc(card)}: ${esc(effect.gist)}</span>` : ""
+  }</div>`;
 }
 
 // `pending` = the presentation queue is still catching up, so what is on

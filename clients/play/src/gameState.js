@@ -97,6 +97,12 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
     // いる。権威状態を直接描くと「処理中の席」ではなく「次の席」が先に光って
     // しまうので、演出が終わったステップだけがこちらを進める。
     shownTurnSeat: null,
+    // 観戦者が「観察しているプレイヤー」。その席が手前(自分の席の位置)に来て、
+    // 情報行がその人の公開情報を出す。観戦者は誰の手札も受け取らないので、
+    // これは視点の選択であって、見える情報が増えるわけではない。
+    // null のあいだは先頭の席が手前に来る(従来どおり)。プレイヤーとして
+    // 参加している場合は使わない(手前は常に自分)。
+    watchSeat: null,
     // Presentation mirror of the OTHER two things a seat draws: the cards an
     // effect has made public mid-deal (revealedCards) and who is out with what
     // card still in front of them (disqualifiedIdsThisDeal / disqualifiedInfo).

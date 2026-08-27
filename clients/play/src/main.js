@@ -776,6 +776,82 @@ function mountInviteButton(cluster) {
   return btn;
 }
 
+// 観察するプレイヤーの選択(観戦者のみ)。卓の席を直接タップしても選べるが、
+// 席は小さく、混んだ卓では狙いにくいので一覧からも選べるようにしておく。
+let watchOpen = false;
+
+function mountWatchButton(cluster) {
+  const btn = document.createElement("button");
+  btn.id = "watch-toggle";
+  btn.type = "button";
+  btn.innerHTML = '👁<span class="tool-label"> 観察</span>';
+  btn.title = "観察するプレイヤーを選ぶ(卓の席を直接押しても選べます)";
+  btn.addEventListener("click", () => {
+    watchOpen = !watchOpen;
+    renderWatchOverlay();
+  });
+  cluster.appendChild(btn);
+  return btn;
+}
+
+// 観戦者が卓にいて、席がある間だけ意味がある。
+function renderWatchButton() {
+  const btn = document.getElementById("watch-toggle");
+  if (!btn) return;
+  const usable = state.playerType === "spectator" && !!state.roomId && (state.table?.seats?.length ?? 0) > 0;
+  btn.hidden = !usable;
+  btn.classList.toggle("active", usable && !!state.watchSeat);
+  if (!usable && watchOpen) {
+    watchOpen = false;
+    renderWatchOverlay();
+  }
+}
+
+function renderWatchOverlay() {
+  let holder = document.getElementById("watch-holder");
+  if (!holder) {
+    holder = document.createElement("div");
+    holder.id = "watch-holder";
+    document.body.appendChild(holder);
+  }
+  if (!watchOpen) {
+    holder.innerHTML = "";
+    return;
+  }
+  const seats = state.table?.seats ?? [];
+  holder.innerHTML = `
+    <div class="modal-overlay"><div class="modal">
+      <h2>観察するプレイヤー</h2>
+      <p class="muted">選んだ人が手前の席に来ます。対局中でもいつでも変えられます
+        (手札は誰の分も表示されません — 観戦者には配信されないためです)。</p>
+      <ul class="watch-list">
+        ${seats
+          .map(
+            (s) => `<li><button type="button" class="watch-pick ${s.player_id === state.watchSeat ? "current" : ""}"
+              data-player-id="${esc(s.player_id)}">${esc(s.name)}${s.player_type === "ai" ? "(AI)" : ""}
+              <span class="muted">${s.chips}枚${s.connected === false ? "・切断中" : ""}</span></button></li>`
+          )
+          .join("")}
+      </ul>
+      <button type="button" id="watch-clear" class="secondary">選択を解除する</button>
+      <button type="button" id="watch-close" class="secondary">閉じる</button>
+    </div></div>`;
+  holder.querySelectorAll(".watch-pick").forEach((b) =>
+    b.addEventListener("click", () => actions.setWatchSeat(b.dataset.playerId))
+  );
+  holder.querySelector("#watch-clear").addEventListener("click", () => {
+    state.watchSeat = null;
+    watchOpen = false;
+    renderWatchOverlay();
+    sceneRefs?.scene?.refocus(state);
+    render();
+  });
+  holder.querySelector("#watch-close").addEventListener("click", () => {
+    watchOpen = false;
+    renderWatchOverlay();
+  });
+}
+
 // Leaving mid-table. The result screen has always offered 部屋を出る, but that
 // is only reachable once a game ENDS -- a spectator who wanted to stop watching
 // (or a player who has to go) had no way out but closing the tab, which also
@@ -991,6 +1067,7 @@ function render() {
     // way out.
     renderInviteOverlay();
     renderExitButton();
+    renderWatchButton();
     return;
   }
 
@@ -1026,6 +1103,13 @@ function render() {
       logEl: screenEl.querySelector("#log-holder"),
       headerEl: screenEl.querySelector(".play-header"),
     };
+    // 観戦者は席を直接押しても観察対象を選べる。委譲しているので、席が並び
+    // 替わっても(観察対象を変えると並び替わる)貼り直す必要はない。
+    sceneRefs.scene.root.addEventListener("click", (ev) => {
+      if (state.playerType !== "spectator") return;
+      const seat = ev.target.closest?.(".player-seat");
+      if (seat?.dataset.playerId) actions.setWatchSeat(seat.dataset.playerId);
+    });
     justCreated = true;
   }
   const t = state.table;
@@ -1065,6 +1149,7 @@ function render() {
   prependConnBanner();
   renderInviteOverlay();
   renderExitButton();
+  renderWatchButton();
 }
 
 function prependConnBanner() {
@@ -1355,6 +1440,22 @@ const actions = {
     render();
   },
 
+  // 観戦者が観察するプレイヤーを選ぶ(対局中もいつでも変更できる)。手前の席が
+  // その人になり、情報行がその人の公開情報を出す。手札は元々送られてこないので、
+  // これで見える情報が増えることはない -- 視点の選択にすぎない。
+  setWatchSeat(playerId) {
+    if (state.playerType !== "spectator") return;
+    state.watchSeat = state.watchSeat === playerId ? null : playerId;
+    watchOpen = false;
+    renderWatchOverlay();
+    // 席の位置と印はここで直接動かす。render() は演出キューが動いている間
+    // シーンに触らない(キューの持ち物なので)ため、待っていると押しても
+    // しばらく何も起きないように見える -- refocus は位置だけを動かすので
+    // 演出とぶつからない。
+    sceneRefs?.scene?.refocus(state);
+    render();
+  },
+
   leaveRoom() {
     // Tell the server, don't just walk away: the socket stays open (this page
     // goes back to the lobby, it does not close), so without this the table
@@ -1443,8 +1544,10 @@ mountCardReference(toolCluster);
 mountSoundToggle(toolCluster);
 mountInviteButton(toolCluster);
 mountExitButton(toolCluster);
+mountWatchButton(toolCluster);
 renderInviteOverlay(); // hides the button until a table is joined
 renderExitButton();
+renderWatchButton();
 
 const saved = loadSession();
 if (saved && saved.sessionToken && saved.roomId) {

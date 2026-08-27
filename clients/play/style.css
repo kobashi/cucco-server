@@ -507,3 +507,28 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 
   .panel { margin: 2vh auto; width: 94%; }
 }
+
+/* -- 観戦者の「観察中」表示 -- */
+/* 自分の席(is-me)とは別の見た目にする: 観戦者は誰の手札も見られないので、
+   「大きく見えている自分の札」と同じ強調にすると意味を取り違える。 */
+.player-seat.is-watched .name-plate {
+  background: rgba(255, 215, 94, 0.92);
+  color: #1c1c1e;
+  font-weight: 700;
+  box-shadow: 0 0 10px rgba(255, 215, 94, 0.55);
+}
+.player-seat.is-watched .card-slot::after {
+  content: "観察中";
+  position: absolute; transform: translateY(-1.15rem);
+  font-size: 0.68rem; color: #ffd75e; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+.player-seat.is-watched .card-slot { position: relative; }
+#tool-cluster button.active { border-color: #ffd75e; }
+.hand-info.watched .watched-effect { display: block; margin-top: 0.15rem; color: var(--muted); }
+.watch-list { list-style: none; padding: 0; margin: 0.4rem 0 0.6rem; max-height: 45vh; overflow-y: auto; }
+.watch-list li { margin: 0.2rem 0; }
+.watch-list .watch-pick {
+  width: 100%; text-align: left; display: flex; justify-content: space-between; gap: 0.6rem;
+}
+.watch-list .watch-pick.current { outline: 2px solid #ffd75e; }
