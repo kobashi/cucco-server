@@ -364,6 +364,14 @@ function renderCreate(el, state, actions) {
           <legend>AIプレイヤーを追加(サーバー内蔵、合計${MAX_AI_TOTAL}人まで)</legend>
           ${AI_POLICIES.map(aiStepperHTML).join("")}
           <p class="ai-total muted">追加するAI: <span id="ai-total">0</span> 人</p>
+          <label class="disclose-row">
+            <input type="checkbox" id="ai-disclose-hands">
+            AIの手札を観戦者に公開する
+          </label>
+          <p class="muted disclose-note">
+            AIは自分で選べないので、卓を作る人が決めます。公開先は観戦者だけで、
+            対戦相手には見えません。AIの手の内を見ながら解説する用です。
+          </p>
         </fieldset>
         <button type="submit">作成する</button>
         <button type="button" id="back-btn" class="secondary">戻る</button>
@@ -409,6 +417,7 @@ function renderCreate(el, state, actions) {
       _creatorRole: el.querySelector("#creator-role").value,
       // 手札を観戦者に公開するか。プレイヤーとして参加するときだけ意味がある。
       _discloseHand: roleSel.value !== "spectator" && el.querySelector("#disclose-hand").checked,
+      ai_disclose_hands: el.querySelector("#ai-disclose-hands").checked,
       mode: "normal",
       end_condition: endCondition.value,
       round_limit: endCondition.value === "round_limit" ? Math.round(Number(el.querySelector("#round-limit").value)) : null,

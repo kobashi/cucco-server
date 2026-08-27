@@ -77,21 +77,18 @@ function watchedSeatInfoHTML(state) {
   if (!seat) return "";
   const faces = state.shownFaces ?? { revealed: {}, dq: new Set(), dqInfo: {}, disclosed: {} };
   const dq = faces.dqInfo?.[pid];
-  // 本人が観戦者への公開を選んでいれば、その手札まで見える(サーバーが観戦者
-  // にだけ配信している)。開示済みの札・効果で公開された札のほうが優先。
-  const disclosed = faces.disclosed?.[pid] ?? null;
-  const card = state.shownOpened?.hands?.[pid] ?? faces.revealed?.[pid] ?? dq?.card ?? disclosed;
+  // 本人が観戦者への公開を選んでいるか。札そのものは卓の上に出るので、ここで
+  // 使うのは「公開中かどうか」だけ。
+  const disclosed = faces.disclosed?.[pid];
   const bits = [`${seat.chips}枚`];
   if (faces.dq?.has(pid)) bits.push(`失格(${CAUSE_LABELS[dq?.cause] ?? dq?.cause ?? "?"})`);
   else if (seat.in_current_pot === false) bits.push("脱落中");
   else if (state.shownTurnSeat === pid) bits.push("この人の手番");
   if (seat.connected === false) bits.push("切断中");
-  const fromOwner = card && card === disclosed && !faces.revealed?.[pid] && !state.shownOpened?.hands?.[pid];
-  if (card) bits.push(fromOwner ? "手札を公開中" : `公開札 ${card}`);
-  const effect = card ? cardEffectFor(card) : null;
-  return `<div class="hand-info watched">👁 <strong>${esc(seat.name)}</strong> — ${esc(bits.join(" / "))}${
-    card ? `<span class="watched-card">${cardHTML(card)}</span>` : ""
-  }${effect ? `<span class="watched-effect">${esc(card)}: ${esc(effect.gist)}</span>` : ""}</div>`;
+  // 札そのものは**卓の上**に出す(観察中の席が表向きになる)。ここは状況を
+  // 一行で添えるだけ -- 同じ札を2箇所に出すと目移りするので出さない。
+  if (disclosed !== undefined) bits.push("手札を公開中");
+  return `<div class="hand-info watched">👁 <strong>${esc(seat.name)}</strong> — ${esc(bits.join(" / "))}</div>`;
 }
 
 // `pending` = the presentation queue is still catching up, so what is on

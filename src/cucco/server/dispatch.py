@@ -321,6 +321,7 @@ class ConnectionHandler:
             results_store=self.results_store,
             action_log_dir=self.action_log_dir,
             pending_ai_players=action.ai_players,
+            ai_disclose_hands=action.ai_disclose_hands,
             discard_display=action.discard_display,
         )
         room_id = self.registry.register(table)
@@ -391,7 +392,9 @@ class ConnectionHandler:
         )
         for name, policy in bot_names(table, list(table.pending_ai_players)):
             try:
-                task = await spawn_bot(make_handler, table.room_id, name, policy, table.config.mode)
+                task = await spawn_bot(
+                    make_handler, table.room_id, name, policy, table.config.mode, table.ai_disclose_hands
+                )
                 table.bot_tasks.append(task)
             except Exception:
                 logger.exception("failed to spawn embedded bot %s (policy=%s) for table %s", name, policy, table.room_id)

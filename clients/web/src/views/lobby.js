@@ -162,6 +162,7 @@ function renderCreate(el, state, actions) {
           <label>always_no_change(常にノーチェンジ) <input class="ai-count" data-policy="always_no_change" type="number" min="0" max="14" step="1" value="0"></label>
           <label>counting_aggressive(カウンティング・積極型) <input class="ai-count" data-policy="counting_aggressive" type="number" min="0" max="14" step="1" value="0"></label>
           <label>counting_conservative(カウンティング・堅実型) <input class="ai-count" data-policy="counting_conservative" type="number" min="0" max="14" step="1" value="0"></label>
+          <label><input type="checkbox" id="ai-disclose-hands"> AIの手札を観戦者に公開する(観戦者にのみ)</label>
         </fieldset>
         <button type="submit">作成する</button>
         <button type="button" id="back-btn" class="secondary">戻る</button>
@@ -216,6 +217,8 @@ function renderCreate(el, state, actions) {
       ai_players: [...el.querySelectorAll(".ai-count")]
         .map((input) => ({ policy: input.dataset.policy, count: Math.round(Number(input.value)) || 0 }))
         .filter((spec) => spec.count > 0),
+      // AIは自分で選べないので、卓を作る人が代わりに決める(観戦者にのみ公開)。
+      ai_disclose_hands: el.querySelector("#ai-disclose-hands").checked,
     });
   });
 }

@@ -71,6 +71,10 @@ class CreateTable:
     # Policy-name validity and the total-seats cap are checked in the server
     # layer (dispatch), where the policy registry and seat limits live.
     ai_players: tuple = ()
+    # 内蔵AIの手札を観戦者に公開するか(docs/protocol/design.md 「手札の公開」)。
+    # 卓を作る人が決める -- AIは自分では選べないので、席を用意する側が代わりに
+    # 決める形にしている。人間のプレイヤーは各自 identify で選ぶ。
+    ai_disclose_hands: bool = False
 
 
 @dataclass(frozen=True)
@@ -308,6 +312,7 @@ def _parse_create_table(payload: dict) -> CreateTable:
         effect_declaration=_require_choice(payload, "effect_declaration", VALID_EFFECT_DECLARATIONS, default="auto"),
         discard_display=_require_choice(payload, "discard_display", VALID_DISCARD_DISPLAYS, default="grouped"),
         ai_players=ai_players,
+        ai_disclose_hands=_optional_bool(payload, "ai_disclose_hands"),
     )
 
 

@@ -296,6 +296,11 @@ export function createTableScene(root) {
         badges.push(cause ? `失格(${CAUSE_LABELS[cause] ?? cause})` : "失格");
       }
       else if (s.in_current_pot === false) badges.push("脱落中");
+      // 観察中の席の札が「本人が観戦者に公開しているから見えている」ことを
+      // はっきりさせる -- 卓の他の人には見えていない札なので。
+      else if (s.player_id === state.watchSeat && faces.disclosed?.[s.player_id] !== undefined) {
+        badges.push("手札を公開中");
+      }
       if (s.connected === false) badges.push("切断");
       el.querySelector(".seat-badges").textContent = badges.join("・");
 
@@ -332,6 +337,12 @@ export function createTableScene(root) {
         slot.innerHTML = state.shownHand ? cardFaceHTML(state.shownHand) : "";
       } else if (revealed !== undefined) {
         slot.innerHTML = cardFaceHTML(revealed);
+      } else if (s.player_id === state.watchSeat && faces.disclosed?.[s.player_id] !== undefined) {
+        // 観察中の席が手札を公開している: 卓の上で表向きに見せる。観戦者に
+        // しか届かない情報なので、他の人の画面にこの札が出ることはない
+        // (サーバーが観戦者宛にしか送らない)。ここも faces 経由 = 遅れる
+        // ミラーなので、交換の演出中に交換後の札が先に出ることはない。
+        slot.innerHTML = cardFaceHTML(faces.disclosed[s.player_id]);
       } else {
         slot.innerHTML = dealInProgress || (t.deal_number > 0 && !state.lastDealResult) ? '<div class="card card-back"></div>' : "";
       }

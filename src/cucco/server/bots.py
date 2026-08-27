@@ -120,7 +120,9 @@ def bot_names(table, specs: list[tuple[str, int]]) -> list[tuple[str, str]]:
     return out
 
 
-async def spawn_bot(make_handler, room_id: str, name: str, policy_name: str, mode: str) -> asyncio.Task:
+async def spawn_bot(
+    make_handler, room_id: str, name: str, policy_name: str, mode: str, disclose_hand: bool = False
+) -> asyncio.Task:
     """Join one embedded bot to `room_id` and start its brain task.
 
     `make_handler` is a callable(connection) -> ConnectionHandler, supplied
@@ -131,7 +133,11 @@ async def spawn_bot(make_handler, room_id: str, name: str, policy_name: str, mod
     """
     loopback = _LoopbackConnection()
     loopback.handler = make_handler(loopback)
-    await loopback.send_action("identify", {"name": name, "player_type": "ai"})
+    # 手札の公開は卓を作る人の選択(内蔵AIは自分では選べない)。ここも外部AI
+    # クライアントとまったく同じ経路 -- identify に載せるだけ。
+    await loopback.send_action(
+        "identify", {"name": name, "player_type": "ai", "disclose_hand": disclose_hand}
+    )
     identified = await loopback.expect("identified")
     loopback.player_id = identified.payload["player_id"]
     await loopback.send_action("join_table", {"room_id": room_id})

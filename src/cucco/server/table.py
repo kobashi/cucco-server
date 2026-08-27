@@ -57,6 +57,9 @@ class Table:
     # the game before the creator has even taken their seat (the all-ready
     # auto-start only counts joined players).
     pending_ai_players: tuple = ()
+    # 内蔵AIの手札を観戦者に公開するか(create_table の ai_disclose_hands)。
+    # spawn_bot が identify に渡す。
+    ai_disclose_hands: bool = False
     bots_spawned: bool = False
     # Whether this room has ever started a game. Only the FIRST start waits for
     # the creator's start_pot -- rematches (連戦) auto-start as before, so a

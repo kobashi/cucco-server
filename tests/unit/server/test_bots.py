@@ -235,3 +235,63 @@ async def test_bot_name_avoids_collision_with_a_seated_player():
     await _settle()
     names = sorted(s.name for s in table.players())
     assert names == ["AI-matrix-1", "AI-matrix-2"]
+
+
+@pytest.mark.asyncio
+async def test_ai_hands_are_disclosed_to_spectators_when_the_table_asks(unpaced):
+    """AIは自分で公開を選べないので、卓を作る人が決める。決めたときだけ、
+    観戦者にだけ届く -- 対戦相手の見え方は変わらない。"""
+    from cucco.server.runner import disclosed_hands_for
+
+    conn = FakeConnection()
+    registry = TableRegistry()
+    handler = ConnectionHandler(conn, registry)
+    await handler.handle_message(build_envelope("identify", {"name": "Watcher", "player_type": "spectator"}))
+    room_id = await _create_table_with_bots(
+        handler,
+        [{"policy": "always_no_change", "count": 2}],
+        config={"starting_chips": 25, "ai_disclose_hands": True},
+    )
+    table = registry.get(room_id)
+    await handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    await _settle()
+    await handler.handle_message(build_envelope("start_pot", {}))
+
+    async def dealt():
+        while True:
+            pot = table.game.current_pot if table.game else None
+            if pot is not None and pot.current_deal is not None:
+                return
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(dealt(), timeout=10)
+    bots = [s.player_id for s in table.players()]
+    seen = disclosed_hands_for(table, handler.session.player_id)
+    assert set(seen) == set(bots), "観戦者には全AIの手札が届く"
+    # 一方のAIから見たもう一方は見えない(AI同士でも覗けない)。
+    assert disclosed_hands_for(table, bots[0]) == {}
+
+
+@pytest.mark.asyncio
+async def test_ai_hands_stay_hidden_unless_the_table_asks(unpaced):
+    from cucco.server.runner import disclosed_hands_for
+
+    conn = FakeConnection()
+    registry = TableRegistry()
+    handler = ConnectionHandler(conn, registry)
+    await handler.handle_message(build_envelope("identify", {"name": "Watcher", "player_type": "spectator"}))
+    room_id = await _create_table_with_bots(handler, [{"policy": "always_no_change", "count": 2}])
+    table = registry.get(room_id)
+    await handler.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    await _settle()
+    await handler.handle_message(build_envelope("start_pot", {}))
+
+    async def dealt():
+        while True:
+            pot = table.game.current_pot if table.game else None
+            if pot is not None and pot.current_deal is not None:
+                return
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(dealt(), timeout=10)
+    assert disclosed_hands_for(table, handler.session.player_id) == {}
