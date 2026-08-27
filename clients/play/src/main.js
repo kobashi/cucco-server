@@ -1154,12 +1154,18 @@ function render() {
 
 function prependConnBanner() {
   document.querySelector(".conn-banner")?.remove();
+  let height = 0;
   if (connectionStatus === "reconnecting") {
     const banner = document.createElement("div");
     banner.className = "conn-banner";
     banner.textContent = "サーバーとの接続が切れました — 再接続しています…";
     document.body.prepend(banner);
+    height = banner.offsetHeight; // 折り返せば2行になるので実測する
   }
+  // 上端に固定配置しているもの(ツールボタン・トースト)はこの高さぶん下がり、
+  // 対局画面はこの高さぶん縮む。バナーは本文の流れに入るので、差し引かないと
+  // ボタンの上に重なり、画面の下端がはみ出す。
+  document.documentElement.style.setProperty("--conn-banner-h", `${height}px`);
 }
 
 function showToast(text) {
