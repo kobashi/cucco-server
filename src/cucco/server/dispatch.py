@@ -106,6 +106,13 @@ async def _start_game(table: Table, registry: TableRegistry) -> None:
         table.ready_deadline_task = None
         return
 
+    # 自分から出ていった席は、ここで名簿から外す。次のゲームの参加者ではない
+    # (readyを送れないので上の participants に入らない)のに残しておくと、
+    # 「退出」の札を提げた席が卓に居座り続けることになる。通信が切れただけの
+    # 人は外さない -- 戻ってくるかもしれないし、戻れば席がある。
+    for pid in [s.player_id for s in table.players() if s.left and s.player_id not in participants]:
+        table.sessions.pop(pid, None)
+
     # Past the point of no return -- set only here, never on the aborted path
     # above, or a failed start would count as "this room has played" and the
     # first real start would lose its wait-for-the-creator gate.
@@ -342,6 +349,8 @@ class ConnectionHandler:
                 raise ProtocolError("invalid session_token")
             existing.connection = self.connection
             existing.connected = True
+            # 退出の印はここで消す。戻ってきた以上「もう戻らない」ではない。
+            existing.left = False
             self.session = existing
             await self._send_raw("state_snapshot", build_state_snapshot(table, existing.player_id))
             await self._resend_outstanding_prompt(existing)
@@ -520,6 +529,7 @@ class ConnectionHandler:
             raise ProtocolError("must join_table before leave_table")
         table, session = self.table, self.session
         session.connected = False
+        session.left = True
         seated_in_running_game = _game_running(table) and session.player_id in (table.game.seats if table.game else ())
         if not seated_in_running_game:
             table.sessions.pop(session.player_id, None)

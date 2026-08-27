@@ -285,7 +285,8 @@ export function createTableScene(root) {
       el.classList.toggle("is-turn", s.player_id === state.shownTurnSeat && dealInProgress);
       el.classList.toggle("is-out", s.in_current_pot === false);
       el.classList.toggle("is-disqualified", faces.dq.has(s.player_id));
-      el.classList.toggle("is-disconnected", s.connected === false);
+      el.classList.toggle("is-disconnected", s.connected === false && !s.left);
+      el.classList.toggle("is-left", s.left === true);
       el.classList.toggle("is-watched", s.player_id === state.watchSeat);
 
       const badges = [];
@@ -301,7 +302,10 @@ export function createTableScene(root) {
       else if (s.player_id === state.watchSeat && faces.disclosed?.[s.player_id] !== undefined) {
         badges.push("手札を公開中");
       }
-      if (s.connected === false) badges.push("切断");
+      // 「退出」と「切断」は同じ connected=false だが意味が違う。戻ってくる
+      // かもしれない人と、もう戻らない人を同じ札で表すと待つ理由が分からない。
+      if (s.left) badges.push("退出");
+      else if (s.connected === false) badges.push("切断");
       el.querySelector(".seat-badges").textContent = badges.join("・");
 
       // Card slot: face-up for my own card, cards an effect made public

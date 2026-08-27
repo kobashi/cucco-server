@@ -933,3 +933,87 @@ async def test_a_spectator_cannot_disclose_a_hand_they_do_not_have():
         build_envelope("identify", {"name": "Eve", "player_type": "spectator", "disclose_hand": True})
     )
     assert handler.session.disclose_hand is False
+
+
+@pytest.mark.asyncio
+async def test_leaving_is_marked_apart_from_a_dropped_connection():
+    """退出と切断はどちらも connected=False だが、意味が違う -- 戻ってくるかも
+    しれない人と、もう戻らない人。席の表示を分けられるように印で区別する。"""
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    leaver = ConnectionHandler(FakeConnection(), registry)
+    await leaver.handle_message(build_envelope("identify", {"name": "Bob", "player_type": "human"}))
+    await leaver.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    await leaver.handle_message(build_envelope("ready", {}))
+
+    dropper = ConnectionHandler(FakeConnection(), registry)
+    await dropper.handle_message(build_envelope("identify", {"name": "Carol", "player_type": "human"}))
+    await dropper.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    await dropper.handle_message(build_envelope("ready", {}))
+
+    await creator.handle_message(build_envelope("start_pot", {}))
+    table = registry.get(room_id)
+    assert table.game is not None
+
+    await leaver.handle_message(build_envelope("leave_table", {}))   # 自分から出る
+    await dropper.on_disconnect()                                    # 通信が切れただけ
+
+    seats = {s["name"]: s for s in build_state_snapshot(table, creator.session.player_id)["seats"]}
+    assert seats["Bob"] == {**seats["Bob"], "connected": False, "left": True}
+    assert seats["Carol"] == {**seats["Carol"], "connected": False, "left": False}
+
+    # 戻ってきたら印は消える -- 「もう戻らない」ではなかったのだから。
+    back = ConnectionHandler(FakeConnection(), registry)
+    await back.handle_message(
+        build_envelope("join_table", {"room_id": room_id, "session_token": leaver.session.session_token})
+    )
+    assert table.get(leaver.session.player_id).left is False
+    assert table.get(leaver.session.player_id).connected is True
+
+
+@pytest.mark.asyncio
+async def test_a_departed_seat_is_dropped_from_the_roster_at_the_next_game():
+    """退出した席は次のゲームの参加者ではない(readyを送れない)。名簿に残すと
+    「退出」の札を提げた席が居座り続けるので、次のゲームが始まるときに外す。
+    切断しただけの席は残す -- 戻れば席がある。"""
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    for name, handler in [("Bob", None), ("Carol", None)]:
+        h = ConnectionHandler(FakeConnection(), registry)
+        await h.handle_message(build_envelope("identify", {"name": name, "player_type": "human"}))
+        await h.handle_message(build_envelope("join_table", {"room_id": room_id}))
+        await h.handle_message(build_envelope("ready", {}))
+        if name == "Bob":
+            bob = h
+        else:
+            carol = h
+
+    table = registry.get(room_id)
+    await bob.handle_message(build_envelope("leave_table", {}))   # 待機中の退出は即座に外れる
+    assert bob.session.player_id not in table.sessions
+
+    # 対局中に退出した席は、そのゲームのあいだは残る。
+    await creator.handle_message(build_envelope("start_pot", {}))
+    assert table.game is not None
+    await carol.handle_message(build_envelope("leave_table", {}))
+    assert carol.session.player_id in table.sessions
+    assert table.get(carol.session.player_id).left is True
+
+    # 次のゲームが始まるところで外れる。
+    table.game = None
+    newcomer = ConnectionHandler(FakeConnection(), registry)
+    await newcomer.handle_message(build_envelope("identify", {"name": "Dave", "player_type": "human"}))
+    await newcomer.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    await newcomer.handle_message(build_envelope("ready", {}))
+    await creator.handle_message(build_envelope("start_pot", {}))
+    assert carol.session.player_id not in table.sessions

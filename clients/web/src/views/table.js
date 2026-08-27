@@ -101,7 +101,8 @@ function renderSeats(t, state) {
           if (isDealer) classes.push("dealer");
           if (isTurn) classes.push("current-turn");
           if (!s.in_current_pot) classes.push("out");
-          if (!s.connected) classes.push("disconnected");
+          if (s.left) classes.push("left");
+          else if (!s.connected) classes.push("disconnected");
           // 持ち主が観戦者への公開を選んだ手札。観戦者にしか届かないので、
           // ここが埋まるのは自分が観戦者のときだけ(docs/protocol/design.md
           // 「手札の公開」)。
@@ -113,7 +114,7 @@ function renderSeats(t, state) {
               ${disclosed ? `<div class="seat-flag">手札(公開中): ${esc(disclosed)}</div>` : ""}
               ${isTurn ? '<div class="seat-turn-flag">⏳ 手番</div>' : ""}
               ${!s.in_current_pot ? '<div class="seat-flag">脱落中</div>' : ""}
-              ${!s.connected ? '<div class="seat-flag">切断中</div>' : ""}
+              ${s.left ? '<div class="seat-flag">退出</div>' : !s.connected ? '<div class="seat-flag">切断中</div>' : ""}
             </div>
           `;
         })

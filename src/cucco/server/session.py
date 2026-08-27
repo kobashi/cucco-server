@@ -51,6 +51,11 @@ class PlayerSession:
     # 手札を観戦者に公開する(identify で本人が選ぶ)。真のとき、この席の
     # 手札は**観戦者にだけ**配信される。対戦相手に送ることは決してない。
     disclose_hand: bool = False
+    # 自分から卓を出たか(leave_table)。通信が切れただけの人と区別するための印。
+    # どちらも connected=False になるが、意味はまったく違う -- 切断は「戻って
+    # くるかもしれない」、退出は「もう戻らない」。画面の表示を分けるために持つ。
+    # session_token で戻ってきたら False に戻す(実際に戻ってきたのだから)。
+    left: bool = False
 
     async def send(self, message: str) -> None:
         if self.connection is not None and self.connected:

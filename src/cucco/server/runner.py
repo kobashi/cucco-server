@@ -177,6 +177,9 @@ def _seat_view(session: PlayerSession, game: Game | None, active_ids: set[str] |
         "chips": game.chips.get(session.player_id, 0) if game is not None else 0,
         "in_current_pot": active_ids is not None and session.player_id in active_ids,
         "connected": session.connected,
+        # 切断(connected=False)のうち、自分から出ていった分。表示を分けるため
+        # だけの情報で、進行には影響しない(退出者の手番は切断と同じ扱い)。
+        "left": session.left,
     }
 
 

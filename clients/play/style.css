@@ -590,3 +590,8 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
 .join-role legend { font-size: 0.85rem; color: var(--muted); padding: 0 0.3rem; }
 .disclose-row { margin-top: 0.5rem; }
 .disclose-note { font-size: 0.8rem; margin: 0.2rem 0 0; }
+
+/* 退出した席。切断(点線の枠 = 戻るかもしれない)とは別の見た目にする --
+   もう戻らない席を同じ表示にすると、待つ理由があるように見えてしまう。 */
+.player-seat.is-left { opacity: 0.45; }
+.player-seat.is-left .name-plate { text-decoration: line-through; border: 1px solid var(--border); }

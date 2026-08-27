@@ -29,7 +29,8 @@ export function render(el, state, actions) {
             const tags = [];
             if (s.player_id === creatorId) tags.push("(主催)");
             if (s.player_type === "ai") tags.push("(AI)");
-            if (!s.connected) tags.push("(切断中)");
+            if (s.left) tags.push("(退出)");
+            else if (!s.connected) tags.push("(切断中)");
             return `<li>${marks.join("")}${esc(s.name)} ${tags.join(" ")}</li>`;
           })
           .join("")}
