@@ -611,3 +611,25 @@ fieldset { border: none; padding: 0; margin: 0.6rem 0; }
   .empty-seat { width: 44px; height: 62px; }
   .player-seat.is-me .empty-seat { width: 48px; height: 67px; }
 }
+
+/* 捨て札が枠に入り切らないときの代わりの表示。一覧を諦めて、押せば全部見えると
+   だけ伝える(scene/table.js の sync 参照)。 */
+.discard-more {
+  width: 100%; text-align: center; font-size: 0.72rem; color: #cfe3d6;
+  padding: 0.15rem 0; text-decoration: underline; text-underline-offset: 2px;
+}
+
+/* 狭い画面では捨て札を卓の外(下)に出す。中央は山札とポットでほぼ埋まり、
+   5人卓のスマホでは捨て札に29pxしか残らない -- 幅のある画面下なら1〜2行で
+   収まる。要素は移し替えるだけなので、飛んでいくカードの着地点は変わらない。 */
+.discard-outside { padding: 0 0.6rem; }
+.discard-outside:empty { display: none; }
+.discard-outside .discard {
+  width: 100%; max-height: 22vh;
+  background: rgba(0, 0, 0, 0.12); border-color: var(--border);
+}
+.discard-outside .discard-title { color: var(--muted); background: transparent; }
+.discard-outside .discard-chip { color: var(--fg); }
+@media (prefers-color-scheme: dark) {
+  .discard-outside .discard { background: rgba(255, 255, 255, 0.06); }
+}

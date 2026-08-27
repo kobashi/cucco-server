@@ -54,6 +54,24 @@ export function createTableScene(root) {
   const seatLayer = root.querySelector("#seat-layer");
   const seatEls = new Map(); // player_id -> element
 
+  // 狭い画面用の捨て札の置き場(felt の外、卓の下)。中央は山札とポットで
+  // 埋まっていて、5人卓のスマホでは捨て札に29pxしか残らない -- そこに一覧を
+  // 置くのは無理がある。画面下なら幅が使えるので、1〜2行で全部入る。
+  // 要素は**移し替えるだけ**で作り直さない(飛んでいくカードの着地点として
+  // 参照され続けるため)。
+  const outside = document.createElement("div");
+  outside.className = "discard-outside";
+  root.parentElement?.appendChild(outside);
+  const centerEl = root.querySelector(".center");
+  const discardEl = root.querySelector("#scene-discard");
+  const NARROW_PX = 560;
+
+  function placeDiscard(boxWidth) {
+    const wantOutside = boxWidth > 0 && boxWidth < NARROW_PX;
+    const parent = wantOutside ? outside : centerEl;
+    if (discardEl.parentElement !== parent) parent.appendChild(discardEl);
+  }
+
   function seatAngle(index, count) {
     // Own seat sits at the bottom (90° in screen coords where +y is down);
     // everyone else is spread clockwise around the remaining arc. Evenly --
@@ -133,6 +151,7 @@ export function createTableScene(root) {
       el.style.left = `${50 + ringXPct * Math.cos(theta)}%`;
       el.style.top = `${50 + ringYPct * Math.sin(theta)}%`;
     });
+    placeDiscard(box.width);
     if (measurable) fitCenter();
   }
 
@@ -371,7 +390,8 @@ export function createTableScene(root) {
     // physical pile -- only the most recent card is visible, face-up on top.
     // Display-only; the underlying data is the same either way.
     const pile = t.discard_pile ?? [];
-    const discardEl = root.querySelector("#scene-discard");
+    // root.querySelector ではなく保持した参照。狭い画面では卓の外へ移して
+    // あるので、root の中を探しても見つからない(placeDiscard 参照)。
     // 枠に収まりきらない分は中でスクロールするが、スマホの狭い枠だと最初の
     // 1〜2行しか見えず「消えた」ように見える。押せば全部出せることを、枠の
     // 見た目と説明で分かるようにしておく(開くのは main.js 側)。
@@ -391,6 +411,15 @@ export function createTableScene(root) {
         ? `<div class="discard-title">捨て札 ${pile.length}枚</div>` +
           sorted.map(([card, n]) => `<span class="discard-chip">${esc(card)}${n > 1 ? `×${n}` : ""}</span>`).join("")
         : "";
+      // 入り切らないなら、一覧はやめて枚数だけにする。狭い画面では枠の中で
+      // スクロールするだけになり、**最初の1〜2行しか見えない**まま「これで
+      // 全部」と読まれてしまう。出せないものを出しかけるより、全部は押して
+      // 見てもらうほうがいい。画面幅ではなく実際に溢れたかで決める。
+      if (sorted.length && discardEl.scrollHeight > discardEl.clientHeight + 1) {
+        discardEl.innerHTML =
+          `<div class="discard-title">捨て札 ${pile.length}枚</div>` +
+          `<div class="discard-more">押すと全部表示 ▸</div>`;
+      }
     }
   }
 
@@ -442,6 +471,6 @@ export function createTableScene(root) {
     seatEl: (pid) => seatEls.get(pid) ?? null,
     deckEl: () => root.querySelector("#scene-deck"),
     potEl: () => root.querySelector("#scene-pot"),
-    discardEl: () => root.querySelector("#scene-discard") ?? root.querySelector(".center"),
+    discardEl: () => discardEl ?? root.querySelector(".center"),
   };
 }
