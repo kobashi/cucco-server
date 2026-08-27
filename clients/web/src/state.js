@@ -7,7 +7,9 @@
 export function createStore() {
   const state = {
     screen: "name", // name | lobby | create | join | waiting | table | result | ended
-    connectionStatus: "connecting", // connecting | open | reconnecting | disconnected
+    connectionStatus: "connecting",
+    // 持ち主が観戦者への公開を選んだ手札(観戦者にだけ配信される)。
+    disclosedHands: {}, // connecting | open | reconnecting | disconnected
     error: null,
 
     // session identity (persisted to localStorage, see persistence.js)

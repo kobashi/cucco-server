@@ -33,6 +33,7 @@ function renderName(el, state, actions) {
         <fieldset>
           <label><input type="radio" name="ptype" value="human" checked> プレイヤーとして参加</label>
           <label><input type="radio" name="ptype" value="spectator"> 観戦者として参加</label>
+          <label><input type="checkbox" id="disclose-hand"> 自分の手札を観戦者に公開する(観戦者にのみ・対戦相手には見えません)</label>
         </fieldset>
         <button type="submit">つづける</button>
       </form>
@@ -53,7 +54,8 @@ function renderName(el, state, actions) {
     e.preventDefault();
     const name = el.querySelector("#name-input").value.trim();
     const ptype = el.querySelector('input[name="ptype"]:checked').value;
-    if (name) actions.identify(name, ptype);
+    const discloseHand = el.querySelector("#disclose-hand").checked;
+    if (name) actions.identify(name, ptype, discloseHand);
   });
   const wsHostDetails = el.querySelector(".ws-host-details");
   wsHostDetails.addEventListener("toggle", () => (wsHostOpen = wsHostDetails.open));

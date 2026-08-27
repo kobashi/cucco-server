@@ -178,9 +178,9 @@ const actions = {
     update(() => (state.connectionStatus = "connecting"));
   },
 
-  async identify(name, playerType) {
+  async identify(name, playerType, discloseHand = false) {
     try {
-      await conn.identify(name, playerType);
+      await conn.identify(name, playerType, discloseHand);
       update(() => {
         state.name = name;
         state.playerId = conn.playerId;
@@ -462,6 +462,9 @@ function wireConnection() {
 }
 
 function handleEvent(type, p) {
+  // サーバーは観戦者宛のイベントに、そのとき公開されている手札を毎回載せて
+  // くる。種類ごとに拾うと取りこぼすので、届いたものを一律で取り込む。
+  if (p && p.disclosed_hands) state.disclosedHands = p.disclosed_hands;
   switch (type) {
     case "state_snapshot":
       if (state.gameEnded) return; // the ranking screen is final; don't let a trailing snapshot bounce us off it

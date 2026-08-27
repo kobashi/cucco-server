@@ -113,9 +113,11 @@ export class CuccoConnection extends EventTarget {
     });
   }
 
-  async identify(name, playerType) {
+  // `discloseHand` は「自分の手札を観戦者に見せる」選択(既定は false)。
+  // サーバーはこれを観戦者宛の配信にだけ使い、対戦相手には決して送らない。
+  async identify(name, playerType, discloseHand = false) {
     const waiter = this._waitFor("identified");
-    this.send("identify", { name, player_type: playerType });
+    this.send("identify", { name, player_type: playerType, disclose_hand: !!discloseHand });
     const payload = await waiter;
     this.playerId = payload.player_id;
     this.sessionToken = payload.session_token;

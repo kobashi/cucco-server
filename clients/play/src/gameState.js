@@ -103,6 +103,12 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
     // null のあいだは先頭の席が手前に来る(従来どおり)。プレイヤーとして
     // 参加している場合は使わない(手前は常に自分)。
     watchSeat: null,
+    // 持ち主が「観戦者に公開する」を選んだ手札。**観戦者にしか届かない**
+    // (サーバーが観戦者宛の配信にだけ載せる)ので、ここが埋まるのは自分が
+    // 観戦者のときだけ。対戦相手の画面には決して現れない。
+    disclosedHands: {},
+    // この卓での自分が手札を公開しているか(参加画面での選択。表示用)。
+    discloseHand: false,
     // Presentation mirror of the OTHER two things a seat draws: the cards an
     // effect has made public mid-deal (revealedCards) and who is out with what
     // card still in front of them (disqualifiedIdsThisDeal / disqualifiedInfo).
@@ -206,8 +212,18 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
     }
   }
 
+  // サーバーは観戦者宛のあらゆるイベントに最新の公開手札を載せてくる。
+  // イベントの種類ごとに拾うと一つ漏れただけで古い札が残るので、届いたものを
+  // 一律で取り込む。
+  function absorbDisclosedHands(payload) {
+    if (payload && typeof payload === "object" && payload.disclosed_hands) {
+      state.disclosedHands = payload.disclosed_hands;
+    }
+  }
+
   function applySnapshot(snapshot) {
     state.table = snapshot;
+    absorbDisclosedHands(snapshot);
     state.yourHand = snapshot.your_hand;
     state.currentTurnSeat = snapshot.current_turn_seat;
     state.potChips = snapshot.pot_chips ?? 0;
@@ -225,6 +241,8 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
   }
 
   function handleEvent(type, p) {
+    // 種類を問わず先に取り込む(absorbDisclosedHands の注記を参照)。
+    absorbDisclosedHands(p);
     switch (type) {
       case "state_snapshot":
         if (state.gameEnded) return;

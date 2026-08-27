@@ -48,6 +48,9 @@ class PlayerSession:
     # bot (cucco.server.bots). None for humans, spectators, and external AI
     # clients. Recorded into the results store for per-policy statistics.
     ai_policy: str | None = None
+    # 手札を観戦者に公開する(identify で本人が選ぶ)。真のとき、この席の
+    # 手札は**観戦者にだけ**配信される。対戦相手に送ることは決してない。
+    disclose_hand: bool = False
 
     async def send(self, message: str) -> None:
         if self.connection is not None and self.connected:

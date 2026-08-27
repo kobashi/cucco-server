@@ -18,6 +18,20 @@ export function cardHTML(rank, elevated = false) {
   </div>`;
 }
 
+// 捨て札の全量。卓の中央の枠にも、押して開く一覧にも同じものを使う --
+// 別々に組み立てると、片方だけ集計の仕方が変わって食い違う。
+export function discardSummaryHTML(pile) {
+  if (!pile?.length) return `<p class="muted">まだ捨て札はありません。</p>`;
+  const counts = new Map();
+  for (const d of pile) counts.set(d.card, (counts.get(d.card) ?? 0) + 1);
+  const sorted = [...counts.entries()].sort(([a], [b]) => RANK_ORDER.indexOf(a) - RANK_ORDER.indexOf(b));
+  return (
+    `<p class="muted">合計 ${pile.length}枚</p><div class="discard-all">` +
+    sorted.map(([card, n]) => `<span class="discard-chip">${esc(card)}${n > 1 ? `×${n}` : ""}</span>`).join("") +
+    `</div>`
+  );
+}
+
 export function createTableScene(root) {
   root.innerHTML = `
     <div class="felt">
@@ -332,6 +346,11 @@ export function createTableScene(root) {
     // Display-only; the underlying data is the same either way.
     const pile = t.discard_pile ?? [];
     const discardEl = root.querySelector("#scene-discard");
+    // 枠に収まりきらない分は中でスクロールするが、スマホの狭い枠だと最初の
+    // 1〜2行しか見えず「消えた」ように見える。押せば全部出せることを、枠の
+    // 見た目と説明で分かるようにしておく(開くのは main.js 側)。
+    discardEl.classList.toggle("has-cards", pile.length > 0);
+    discardEl.title = pile.length ? "押すと捨て札をすべて表示します" : "";
     if (t.discard_display === "pile") {
       const top = pile[pile.length - 1];
       discardEl.innerHTML = pile.length

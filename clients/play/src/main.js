@@ -7,7 +7,7 @@ import { loadSession, saveSession, clearSession } from "../../web-common/persist
 import { sanitizeWsHost, esc, isTypingIn, preserveFormState, trackUserEdits } from "../../web-common/utils.js";
 import { tableInviteUrl } from "../../web-common/invite.js";
 import { createGameState } from "./gameState.js";
-import { createTableScene, cardHTML } from "./scene/table.js";
+import { createTableScene, cardHTML, discardSummaryHTML } from "./scene/table.js";
 import { createQueue, fly, pause } from "./anim/queue.js";
 import { banner, shake, flipReveal, effectMotion, confirmPulse, setConfirmModeGetter } from "./anim/effects.js";
 import { createSound } from "./anim/sound.js";
@@ -177,6 +177,9 @@ const captureFaces = (s) => ({
   revealed: { ...s.revealedCards },
   dq: new Set(s.disqualifiedIdsThisDeal),
   dqInfo: Object.fromEntries(Object.entries(s.disqualifiedInfo ?? {}).map(([pid, info]) => [pid, { ...info }])),
+  // 公開された手札も同じ扱い。権威ある値をそのまま出すと、交換の演出が流れて
+  // いる最中に「交換後の札」が先に出てしまう。
+  disclosed: { ...s.disclosedHands },
 });
 
 // The deal-out gate (gameState.js, shownDealing): while it is up the scene
@@ -748,11 +751,40 @@ function handleOp(op) {
 // reference, sound toggle) so they never collide with the header's pot
 // counter and read as a single toolbar. The header reserves space for it.
 
+// ボタンは7個まで増えた(確認・子の時間・カード効果・効果音・招待・退出・観察)。
+// 常時ぜんぶ出しているとスマホでは画面幅を使い切り、ヘッダにも帯にも被る。
+// 畳んで、☰ を押したときだけ開く。
+let toolMenuOpen = false;
+
 function mountToolCluster() {
+  const bar = document.createElement("div");
+  bar.id = "tool-bar";
+  const toggle = document.createElement("button");
+  toggle.id = "tool-menu-toggle";
+  toggle.type = "button";
+  toggle.innerHTML = '☰<span class="tool-label"> メニュー</span>';
+  toggle.title = "設定と操作(確認モード・音・カード効果・招待・退出・観察)";
+  toggle.setAttribute("aria-expanded", "false");
   const cluster = document.createElement("div");
   cluster.id = "tool-cluster";
-  document.body.appendChild(cluster);
+  toggle.addEventListener("click", () => setToolMenu(!toolMenuOpen));
+  bar.append(toggle, cluster);
+  document.body.appendChild(bar);
+  // 卓の上を押したら閉じる。開いたままだと卓の右上が隠れ続ける。
+  document.addEventListener("click", (ev) => {
+    if (!toolMenuOpen) return;
+    if (!bar.contains(ev.target)) setToolMenu(false);
+  });
+  setToolMenu(false);
   return cluster;
+}
+
+function setToolMenu(open) {
+  toolMenuOpen = open;
+  document.getElementById("tool-cluster")?.toggleAttribute("hidden", !open);
+  const toggle = document.getElementById("tool-menu-toggle");
+  toggle?.classList.toggle("open", open);
+  toggle?.setAttribute("aria-expanded", String(open));
 }
 
 // The invite link is otherwise only reachable from the waiting room, which a
@@ -770,6 +802,7 @@ function mountInviteButton(cluster) {
   btn.title = "この卓の招待リンクを表示(他の人を呼ぶ)";
   btn.addEventListener("click", () => {
     inviteOpen = !inviteOpen;
+    setToolMenu(false);
     renderInviteOverlay();
   });
   cluster.appendChild(btn);
@@ -788,6 +821,7 @@ function mountWatchButton(cluster) {
   btn.title = "観察するプレイヤーを選ぶ(卓の席を直接押しても選べます)";
   btn.addEventListener("click", () => {
     watchOpen = !watchOpen;
+    setToolMenu(false);
     renderWatchOverlay();
   });
   cluster.appendChild(btn);
@@ -805,6 +839,34 @@ function renderWatchButton() {
     watchOpen = false;
     renderWatchOverlay();
   }
+}
+
+// 捨て札の一覧。卓の中央の枠は場所が限られていて、枚数が増えると中で
+// スクロールするだけになる -- スマホでは最初の1〜2行しか見えないので、
+// 全部を読める場所を別に用意する。
+let discardOpen = false;
+
+function renderDiscardOverlay() {
+  let holder = document.getElementById("discard-holder");
+  if (!holder) {
+    holder = document.createElement("div");
+    holder.id = "discard-holder";
+    document.body.appendChild(holder);
+  }
+  if (!discardOpen) {
+    holder.innerHTML = "";
+    return;
+  }
+  holder.innerHTML = `
+    <div class="modal-overlay"><div class="modal wide">
+      <h2>捨て札</h2>
+      ${discardSummaryHTML(state.table?.discard_pile ?? [])}
+      <button type="button" id="discard-close" class="secondary">閉じる</button>
+    </div></div>`;
+  holder.querySelector("#discard-close").addEventListener("click", () => {
+    discardOpen = false;
+    renderDiscardOverlay();
+  });
 }
 
 function renderWatchOverlay() {
@@ -871,6 +933,7 @@ function mountExitButton(cluster) {
     const message = inGame
       ? "対局中です。退出すると席は残りますが、あなたの手番は自動で処理されます。退出しますか?"
       : "この卓から退出してロビーに戻ります。よろしいですか?";
+    setToolMenu(false);
     if (!confirm(message)) return;
     actions.leaveRoom();
   });
@@ -1105,7 +1168,13 @@ function render() {
     };
     // 観戦者は席を直接押しても観察対象を選べる。委譲しているので、席が並び
     // 替わっても(観察対象を変えると並び替わる)貼り直す必要はない。
+    // 捨て札は誰でも押せる: 狭い枠に入りきらない分を全部見るための入り口。
     sceneRefs.scene.root.addEventListener("click", (ev) => {
+      if (ev.target.closest?.("#scene-discard")) {
+        discardOpen = true;
+        renderDiscardOverlay();
+        return;
+      }
       if (state.playerType !== "spectator") return;
       const seat = ev.target.closest?.(".player-seat");
       if (seat?.dataset.playerId) actions.setWatchSeat(seat.dataset.playerId);
@@ -1150,6 +1219,7 @@ function render() {
   renderInviteOverlay();
   renderExitButton();
   renderWatchButton();
+  if (discardOpen) renderDiscardOverlay(); // 開いている間も増えた分を反映する
 }
 
 function prependConnBanner() {
@@ -1261,13 +1331,19 @@ const actions = {
     render();
   },
 
-  async identify(name, playerType) {
+  // 名前だけを聞く画面から呼ばれる。役割(プレイヤー/観戦)と手札公開は卓に
+  // 入るときに選ぶので、ここでは仮に「プレイヤー」で名乗り、卓に入る直前に
+  // ensureIdentity が選ばれた内容で名乗り直す。招待リンクで来た場合はこの
+  // 画面が参加操作そのものなので、そこで選ばれた値が渡ってくる。
+  async identify(name, { role, discloseHand } = {}) {
+    const playerType = role ?? "human";
     try {
-      await conn.identify(name, playerType);
+      await conn.identify(name, playerType, discloseHand ?? false);
       state.name = name;
       state.playerId = conn.playerId;
       state.sessionToken = conn.sessionToken;
       state.playerType = playerType;
+      state.discloseHand = !!discloseHand;
       state.error = null;
       uiPhase = "lobby";
       // Came in through a table invite link: go straight to that table
@@ -1285,21 +1361,25 @@ const actions = {
     render();
   },
 
+  // 卓に入る直前に、選ばれた役割と手札公開で名乗り直す。まだ何にも参加して
+  // いない段階なので、新しいセッションが発行されるだけで実害はない -- そして
+  // これが、名前画面に戻らずに観戦者になれる唯一の道でもある。
+  async ensureIdentity(role, discloseHand) {
+    const wanted = role ?? state.playerType ?? "human";
+    const wantedDisclose = wanted === "spectator" ? false : !!discloseHand;
+    if (wanted === state.playerType && wantedDisclose === !!state.discloseHand) return;
+    await conn.identify(state.name, wanted, wantedDisclose);
+    state.playerId = conn.playerId;
+    state.sessionToken = conn.sessionToken;
+    state.playerType = wanted;
+    state.discloseHand = wantedDisclose;
+  },
+
   async createTable(config) {
-    // `_creatorRole` is UI-only -- strip it before it reaches the wire.
-    const { _creatorRole, ...tableConfig } = config;
+    // `_creatorRole` / `_discloseHand` are UI-only -- strip before the wire.
+    const { _creatorRole, _discloseHand, ...tableConfig } = config;
     try {
-      // Role is fixed at identify time, but the choice that matters is made
-      // here, on the create form ("am I playing at the table I'm making?").
-      // Re-identify when they differ: nothing is joined yet, so this just
-      // mints a fresh session -- and it is the only way to become a spectator
-      // without sending the creator back to the name screen.
-      if (_creatorRole && _creatorRole !== state.playerType) {
-        await conn.identify(state.name, _creatorRole);
-        state.playerId = conn.playerId;
-        state.sessionToken = conn.sessionToken;
-        state.playerType = _creatorRole;
-      }
+      await actions.ensureIdentity(_creatorRole, _discloseHand);
       const payload = await conn.createTable(tableConfig);
       state.error = null;
       await actions.joinTable(payload.room_id);
@@ -1309,8 +1389,12 @@ const actions = {
     }
   },
 
-  async joinTable(roomId, { invited = false } = {}) {
+  async joinTable(roomId, { invited = false, role, discloseHand } = {}) {
     try {
+      // 参加画面で選ばれた「この卓での自分」を、卓に入る直前に反映する。
+      if (role !== undefined || discloseHand !== undefined) {
+        await actions.ensureIdentity(role, discloseHand);
+      }
       const snapshot = await conn.joinTable(roomId, null);
       state.roomId = roomId;
       state.error = null;

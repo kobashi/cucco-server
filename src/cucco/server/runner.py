@@ -139,8 +139,34 @@ def build_state_snapshot(table: Table, recipient_id: str | None) -> dict:
             if deal is not None and recipient_id in deal.hands
             else None
         ),
+        # 観戦者向けのみ。それ以外の受信者には空で、鍵は disclosed_hands_for
+        # が持っている(観戦者以外には何も返さない)。
+        disclosed_hands=disclosed_hands_for(table, recipient_id),
     )
     return base
+
+
+def disclosed_hands_for(table: Table, recipient_id: str | None) -> dict:
+    """手札のうち、この受信者に見せてよいもの(本人の手札は別扱い)。
+
+    観戦者にだけ、しかも**持ち主が自分で公開を選んだ席**だけを返す
+    (docs/protocol/design.md 「手札の公開」)。対戦相手には決して返さない --
+    ここが緩むと、観戦席から手札を覗く共犯者を作れてしまう。持ち主が公開を
+    選んでいても、他のプレイヤーから見える情報は何も変わらない。
+    """
+    recipient = table.get(recipient_id) if recipient_id else None
+    if recipient is None or recipient.player_type != "spectator":
+        return {}
+    game = table.game
+    pot = game.current_pot if game is not None else None
+    deal = pot.current_deal if pot is not None else None
+    if deal is None:
+        return {}
+    return {
+        pid: card.value
+        for pid, card in deal.hands.items()
+        if (owner := table.get(pid)) is not None and owner.disclose_hand
+    }
 
 
 def _seat_view(session: PlayerSession, game: Game | None, active_ids: set[str] | None) -> dict:
@@ -185,8 +211,17 @@ class TableRunner:
         # would otherwise mutate table.sessions while this loop iterates
         # it and raise RuntimeError, aborting the broadcast (and, in
         # evaluation mode, the whole game_count run) for everyone.
+        #
+        # 公開された手札は**イベントの種類を問わず**観戦者の分に足す。
+        # 手札が変わる経路(配布・交換・山札引き)ごとに足して回るより、
+        # 毎回いまの値を載せるほうが取りこぼしが無い -- 一つでも漏れると
+        # 観戦者の画面に古い札が残り続ける。載るのは観戦者宛だけ。
         for session in list(self.table.sessions.values()):
-            await self._send_to(session, type_, payload_for(session.player_id))
+            payload = payload_for(session.player_id)
+            disclosed = disclosed_hands_for(self.table, session.player_id)
+            if disclosed:
+                payload = {**payload, "disclosed_hands": disclosed}
+            await self._send_to(session, type_, payload)
 
     async def _send_event(self, event) -> None:
         # Every domain event is a "result" worth recording for replay

@@ -109,6 +109,42 @@ export function renderLobby(el, state, actions, phase) {
   return renderChoice(el, state, actions);
 }
 
+// 「この卓にどう参加するか」。卓を作るとき・IDで参加するとき・招待リンクで
+// 入るときに同じ形で聞く。名前やサーバー接続先のような**接続の設定**ではなく、
+// **その卓ごとの選択**なので、卓に入る操作と同じ画面に置いている。
+function joinRoleFieldsetHTML(role = "human", disclose = false) {
+  return `
+    <fieldset class="join-role">
+      <legend>この卓での自分</legend>
+      <label><input type="radio" name="jrole" value="human" ${role === "spectator" ? "" : "checked"}> プレイヤーとして参加する</label>
+      <label><input type="radio" name="jrole" value="spectator" ${role === "spectator" ? "checked" : ""}> 観戦のみ(自分は参加しない)</label>
+      <label class="disclose-row" ${role === "spectator" ? "hidden" : ""}>
+        <input type="checkbox" id="disclose-hand" ${disclose ? "checked" : ""}>
+        自分の手札を観戦者に公開する
+      </label>
+      <p class="muted disclose-note" ${role === "spectator" ? "hidden" : ""}>
+        公開先は**観戦者だけ**です。対戦相手には見えません(見え方は何も変わりません)。
+        解説しながら見てもらうときに使います。
+      </p>
+    </fieldset>`;
+}
+
+// 役割を切り替えたら手札公開の行を出し入れする + 選択値を読む口。
+function wireJoinRoleFieldset(el) {
+  const radios = [...el.querySelectorAll('input[name="jrole"]')];
+  const sync = () => {
+    const playing = el.querySelector('input[name="jrole"]:checked')?.value !== "spectator";
+    el.querySelector(".disclose-row")?.toggleAttribute("hidden", !playing);
+    el.querySelector(".disclose-note")?.toggleAttribute("hidden", !playing);
+  };
+  radios.forEach((r) => r.addEventListener("change", sync));
+  sync();
+  return () => {
+    const role = el.querySelector('input[name="jrole"]:checked')?.value ?? "human";
+    return { role, discloseHand: role !== "spectator" && !!el.querySelector("#disclose-hand")?.checked };
+  };
+}
+
 function renderName(el, state, actions) {
   el.innerHTML = `
     <div class="panel">
@@ -132,10 +168,11 @@ function renderName(el, state, actions) {
       }
       <form id="name-form">
         <label>名前 <input id="name-input" required maxlength="24" autofocus></label>
-        <fieldset>
-          <label><input type="radio" name="ptype" value="human" checked> プレイヤーとして参加</label>
-          <label><input type="radio" name="ptype" value="spectator"> 観戦者として参加</label>
-        </fieldset>
+        ${
+          // 参加のしかたは「卓を作る」「IDで参加」のときに聞く。ただし招待
+          // リンクで来た人はこの画面がそのまま参加操作なので、ここで聞く。
+          state.invitedRoomId ? joinRoleFieldsetHTML() : ""
+        }
         <button type="submit">つづける</button>
       </form>
       ${state.error ? `<p class="error">${esc(state.error)}</p>` : ""}
@@ -151,11 +188,12 @@ function renderName(el, state, actions) {
   `;
   el.querySelector("#resume-btn")?.addEventListener("click", () => actions.reconnect(state.savedSession));
   el.querySelector("#forget-btn")?.addEventListener("click", () => actions.forgetSession());
+  const readJoinRole = el.querySelector(".join-role") ? wireJoinRoleFieldset(el) : null;
   el.querySelector("#name-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const name = el.querySelector("#name-input").value.trim();
-    const ptype = el.querySelector('input[name="ptype"]:checked').value;
-    if (name) actions.identify(name, ptype);
+    // 招待リンク以外では役割をまだ決めない -- 卓に入る画面で聞く。
+    if (name) actions.identify(name, readJoinRole ? readJoinRole() : {});
   });
   const wsHostDetails = el.querySelector(".ws-host-details");
   wsHostDetails.addEventListener("toggle", () => (wsHostOpen = wsHostDetails.open));
@@ -315,6 +353,13 @@ function renderCreate(el, state, actions) {
         <p id="spectator-note" class="ai-total muted" hidden>
           観戦のみの場合、卓に必要な人数はAIだけで揃える必要があります(2人以上)。
         </p>
+        <label class="disclose-row" id="creator-disclose-row">
+          <input type="checkbox" id="disclose-hand" ${state.discloseHand ? "checked" : ""}>
+          自分の手札を観戦者に公開する
+        </label>
+        <p class="muted disclose-note" id="creator-disclose-note">
+          公開先は観戦者だけです。対戦相手には見えません。
+        </p>
         <fieldset class="ai-players">
           <legend>AIプレイヤーを追加(サーバー内蔵、合計${MAX_AI_TOTAL}人まで)</legend>
           ${AI_POLICIES.map(aiStepperHTML).join("")}
@@ -333,9 +378,15 @@ function renderCreate(el, state, actions) {
   el.querySelector("#back-btn").addEventListener("click", () => actions.setPhase("lobby"));
   const roleSel = el.querySelector("#creator-role");
   const note = el.querySelector("#spectator-note");
+  const discloseRow = el.querySelector("#creator-disclose-row");
+  const discloseNote = el.querySelector("#creator-disclose-note");
   const syncRoleNote = () => {
     state.creatorRole = roleSel.value;
-    note.hidden = roleSel.value !== "spectator";
+    const spectating = roleSel.value === "spectator";
+    note.hidden = !spectating;
+    // 観戦のみなら手札を持たないので、公開の選択肢そのものが意味を持たない。
+    discloseRow.hidden = spectating;
+    discloseNote.hidden = spectating;
   };
   roleSel.addEventListener("change", syncRoleNote);
   syncRoleNote();
@@ -356,6 +407,8 @@ function renderCreate(el, state, actions) {
       // 卓を作る。初回の開始は作成者の操作を待つ(サーバー側のゲート)ので、
       // 観戦者が作った卓でも人を待つ間がある。
       _creatorRole: el.querySelector("#creator-role").value,
+      // 手札を観戦者に公開するか。プレイヤーとして参加するときだけ意味がある。
+      _discloseHand: roleSel.value !== "spectator" && el.querySelector("#disclose-hand").checked,
       mode: "normal",
       end_condition: endCondition.value,
       round_limit: endCondition.value === "round_limit" ? Math.round(Number(el.querySelector("#round-limit").value)) : null,
@@ -379,6 +432,7 @@ function renderJoin(el, state, actions) {
       <h1>卓に参加する</h1>
       <form id="join-form">
         <label>プレイルームID <input id="room-input" required maxlength="6" style="text-transform:uppercase" autofocus></label>
+        ${joinRoleFieldsetHTML(state.playerType ?? "human", state.discloseHand)}
         <button type="submit">参加する</button>
         <button type="button" id="back-btn" class="secondary">戻る</button>
       </form>
@@ -386,10 +440,11 @@ function renderJoin(el, state, actions) {
     </div>
   `;
   el.querySelector("#back-btn").addEventListener("click", () => actions.setPhase("lobby"));
+  const readJoinRole = wireJoinRoleFieldset(el);
   el.querySelector("#join-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const roomId = el.querySelector("#room-input").value.trim().toUpperCase();
-    if (roomId) actions.joinTable(roomId);
+    if (roomId) actions.joinTable(roomId, readJoinRole());
   });
 }
 

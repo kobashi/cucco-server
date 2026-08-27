@@ -36,6 +36,11 @@ MAX_NAME_LENGTH = 24
 class Identify:
     name: str
     player_type: str  # "human" | "ai" | "spectator"
+    # 手札を観戦者に公開するか(docs/protocol/design.md 「手札の公開」)。
+    # 本人が選んだときだけ真。**他のプレイヤーには決して送られない** --
+    # 公開先は観戦者だけで、対戦相手から見た情報量は何も変わらない。
+    # 既定は False: 黙って公開されることがあってはならない。
+    disclose_hand: bool = False
 
 
 @dataclass(frozen=True)
@@ -213,6 +218,15 @@ def _require_bool(payload: dict, key: str) -> bool:
     return value
 
 
+def _optional_bool(payload: dict, key: str, default: bool = False) -> bool:
+    if key not in payload or payload[key] is None:
+        return default
+    value = payload[key]
+    if not isinstance(value, bool):
+        raise ProtocolError(f"'{key}' must be a boolean")
+    return value
+
+
 def _require_choice(payload: dict, key: str, choices: tuple[str, ...], default: str | None = None) -> str:
     value = payload.get(key, default)
     if value not in choices:
@@ -244,7 +258,7 @@ def _optional_number(payload: dict, key: str, default: float) -> float:
 def _parse_identify(payload: dict) -> Identify:
     name = _require_name(payload)
     player_type = _require_choice(payload, "player_type", VALID_PLAYER_TYPES)
-    return Identify(name=name, player_type=player_type)
+    return Identify(name=name, player_type=player_type, disclose_hand=_optional_bool(payload, "disclose_hand"))
 
 
 def _parse_create_table(payload: dict) -> CreateTable:

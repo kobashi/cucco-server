@@ -288,6 +288,9 @@ class ConnectionHandler:
             player_type=action.player_type,
             session_token=session_token,
             connection=self.connection,
+            # 観戦者に手札を見せるかは本人の選択。観戦者自身が立てても意味が
+            # ないので、席を持つ側だけが持てるフラグとして扱う。
+            disclose_hand=action.disclose_hand and action.player_type != "spectator",
         )
         await self._send_raw("identified", {"player_id": player_id, "session_token": session_token})
 

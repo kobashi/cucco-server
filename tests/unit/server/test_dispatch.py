@@ -873,3 +873,63 @@ async def test_a_watching_human_inherits_the_start_right_over_the_bots():
 
     creator.session.connected = False
     assert table.effective_creator_id() == watcher.session.player_id
+
+
+@pytest.mark.asyncio
+async def test_disclosed_hand_reaches_spectators_and_never_opponents():
+    """手札の公開は観戦者だけに届く。持ち主が自分で選んだときだけで、対戦相手の
+    見え方は何も変わらない -- ここが緩むと観戦席が手札を覗く経路になる。"""
+    from cucco.server.runner import disclosed_hands_for
+
+    registry = TableRegistry()
+    opener = ConnectionHandler(FakeConnection(), registry)
+    await opener.handle_message(
+        build_envelope("identify", {"name": "Alice", "player_type": "human", "disclose_hand": True})
+    )
+    await opener.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in opener.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await opener.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    hidden = ConnectionHandler(FakeConnection(), registry)
+    await hidden.handle_message(build_envelope("identify", {"name": "Bob", "player_type": "human"}))
+    await hidden.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    await hidden.handle_message(build_envelope("ready", {}))
+
+    watcher = ConnectionHandler(FakeConnection(), registry)
+    await watcher.handle_message(build_envelope("identify", {"name": "Eve", "player_type": "spectator"}))
+    await watcher.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    await opener.handle_message(build_envelope("start_pot", {}))
+    table = registry.get(room_id)
+    assert table.game is not None
+
+    async def dealt():
+        while True:
+            pot = table.game.current_pot
+            if pot is not None and pot.current_deal is not None:
+                return
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(dealt(), timeout=5)
+    alice, bob = opener.session.player_id, hidden.session.player_id
+    # The spectator sees Alice's hand -- and only Alice's.
+    seen = disclosed_hands_for(table, watcher.session.player_id)
+    assert set(seen) == {alice}
+    assert seen[alice] == table.game.current_pot.current_deal.hands[alice].value
+    # Her opponent sees nothing, and neither does she (her own hand comes
+    # through `your_hand`, not this).
+    assert disclosed_hands_for(table, bob) == {}
+    assert disclosed_hands_for(table, alice) == {}
+    # It rides along on the snapshot the spectator gets, too.
+    assert build_state_snapshot(table, watcher.session.player_id)["disclosed_hands"] == seen
+    assert build_state_snapshot(table, bob)["disclosed_hands"] == {}
+
+
+@pytest.mark.asyncio
+async def test_a_spectator_cannot_disclose_a_hand_they_do_not_have():
+    registry = TableRegistry()
+    handler = ConnectionHandler(FakeConnection(), registry)
+    await handler.handle_message(
+        build_envelope("identify", {"name": "Eve", "player_type": "spectator", "disclose_hand": True})
+    )
+    assert handler.session.disclose_hand is False
