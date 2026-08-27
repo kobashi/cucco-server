@@ -384,6 +384,15 @@ class TableRunner:
             await self._broadcast_state_snapshot()
             return
         while True:
+            # 卓を出ていった席は、ここで外す。次のディールの配布対象から消えるので
+            # 札が配られない。ディールの切れ目ごとに見るので、ポットが変わって
+            # 参加者が復活したあとでも同じように外れる。
+            await self._withdraw_departed(pot)
+            if len(pot.active_participants()) < 2:
+                # 残りが1人になった: このゲームはもう成立しない。
+                await self._send_events(game.force_end())
+                await self._broadcast_state_snapshot()
+                return
             discard_before = len(pot.deck.discard_pile)
             reshuffle_count_before = pot.deck.reshuffle_count
             deal = await self._run_deal(pot, game)
@@ -437,6 +446,16 @@ class TableRunner:
                     await self._send_pot_result(game.chips, instant_win)
                 await self._broadcast_state_snapshot()
                 return  # this pot is done; run() will start the next one (or stop)
+
+    async def _withdraw_departed(self, pot: Pot) -> None:
+        """leave_table で出ていった席をポットから外す(Pot.withdraw)。
+
+        切断しただけの席は外さない -- 戻ってくるかもしれないし、戻れば席がある。
+        外すのは「もう戻らない」と本人が言った席だけ。"""
+        for pid in list(pot.active_participants()):
+            session = self.table.get(pid)
+            if session is not None and session.left:
+                await self._send_events(pot.withdraw(pid))
 
     async def _handle_continue_prompt(self, pot: Pot, player_id: str) -> list:
         session = self.table.get(player_id)

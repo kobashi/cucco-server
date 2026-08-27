@@ -361,6 +361,16 @@ class ConnectionHandler:
 
         if self.session is None:
             raise ProtocolError("must identify before join_table (unless reconnecting with session_token)")
+        # 対局中の卓に、あとから席を取ることはできない。入れるのは観戦者と、
+        # session_token で戻ってくる人(上で処理済み)だけ。
+        #
+        # 以前は着席だけして次のゲームから参加する扱いだったが、進行中の卓の
+        # 名簿に、そのゲームには関係のない人が並ぶことになっていた。観戦して
+        # 待ってもらい、次のゲームで改めて参加してもらうほうが分かりやすい。
+        if _game_running(table) and self.session.player_type != "spectator":
+            raise ProtocolError(
+                "この卓は対局中です。観戦者として参加するか、ゲームが終わってから参加してください"
+            )
         if self.session.player_type != "spectator" and len(table.players()) >= MAX_PLAYERS_PER_TABLE:
             raise ProtocolError("table is full")
         if self.session.player_type == "spectator" and len(table.spectators()) >= MAX_SPECTATORS_PER_TABLE:

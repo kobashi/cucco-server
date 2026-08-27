@@ -969,7 +969,7 @@ function renderInviteOverlay() {
       ${inviteBlockHTML(
         "live-invite",
         "この卓の招待リンク",
-        "受け取った人は名前を入れるだけで参加できます。対局中に入った人は、今のゲームが終わってから次のゲームで着席します。",
+        "受け取った人は名前を入れるだけで参加できます。対局中はプレイヤーとしては入れないので、観戦して待つか、ゲームが終わってから参加してもらってください。",
         (host) => tableInviteUrl(host, state.roomId)
       )}
       <button type="button" id="invite-close" class="secondary">閉じる</button>

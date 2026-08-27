@@ -1017,3 +1017,93 @@ async def test_a_departed_seat_is_dropped_from_the_roster_at_the_next_game():
     await newcomer.handle_message(build_envelope("ready", {}))
     await creator.handle_message(build_envelope("start_pot", {}))
     assert carol.session.player_id not in table.sessions
+
+
+@pytest.mark.asyncio
+async def test_a_seat_that_left_stops_being_dealt_into():
+    """退出が確定した席には札を配らない。誰も見ていない席に配り続け、毎回自動で
+    ノーチェンジを答えさせるのは不自然 -- 脱落として扱う。"""
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    others = []
+    for name in ("Bob", "Carol"):
+        h = ConnectionHandler(FakeConnection(), registry)
+        await h.handle_message(build_envelope("identify", {"name": name, "player_type": "human"}))
+        await h.handle_message(build_envelope("join_table", {"room_id": room_id}))
+        await h.handle_message(build_envelope("ready", {}))
+        others.append(h)
+    bob, carol = others
+
+    await creator.handle_message(build_envelope("start_pot", {}))
+    table = registry.get(room_id)
+
+    async def dealt():
+        while table.game is None or table.game.current_pot is None or table.game.current_pot.current_deal is None:
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(dealt(), timeout=5)
+    pot = table.game.current_pot
+    assert bob.session.player_id in pot.active_participants()
+
+    await bob.handle_message(build_envelope("leave_table", {}))
+    # 進行中のディールには手を出さない(配った札を取り上げると場が合わなくなる)。
+    assert bob.session.player_id in pot.active_participants()
+
+    # ディールの切れ目で外れる(以後は配布対象に入らない -- 配られないことは
+    # tests/unit/domain/test_pot_withdraw.py が押さえている)。
+    runner = TableRunner(table)
+    await runner._withdraw_departed(pot)
+    assert bob.session.player_id not in pot.active_participants()
+    # 切断しただけの席は外さない。
+    await carol.on_disconnect()
+    await runner._withdraw_departed(pot)
+    assert carol.session.player_id in pot.active_participants()
+
+
+@pytest.mark.asyncio
+async def test_a_running_table_takes_spectators_and_returners_but_not_new_players():
+    """対局中の卓に、あとから席は取れない。観戦して待つか、次のゲームから。"""
+    registry = TableRegistry()
+    creator = ConnectionHandler(FakeConnection(), registry)
+    await creator.handle_message(build_envelope("identify", {"name": "Alice", "player_type": "human"}))
+    await creator.handle_message(build_envelope("create_table", {}))
+    room_id = next(m for m in creator.connection.sent if m["type"] == "table_created")["payload"]["room_id"]
+    await creator.handle_message(build_envelope("join_table", {"room_id": room_id}))
+
+    p2 = ConnectionHandler(FakeConnection(), registry)
+    await p2.handle_message(build_envelope("identify", {"name": "Bob", "player_type": "human"}))
+    await p2.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    await p2.handle_message(build_envelope("ready", {}))
+    await creator.handle_message(build_envelope("start_pot", {}))
+    table = registry.get(room_id)
+    assert table.game is not None
+    seats_before = len(table.players())
+
+    # 新規のプレイヤーは断られる。
+    latecomer = ConnectionHandler(FakeConnection(), registry)
+    await latecomer.handle_message(build_envelope("identify", {"name": "Dave", "player_type": "human"}))
+    await latecomer.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    rejected = latecomer.connection.sent[-1]
+    assert rejected["type"] == "action_rejected"
+    assert "対局中" in rejected["payload"]["reason"]
+    assert len(table.players()) == seats_before
+
+    # 観戦者は入れる。
+    watcher = ConnectionHandler(FakeConnection(), registry)
+    await watcher.handle_message(build_envelope("identify", {"name": "Eve", "player_type": "spectator"}))
+    await watcher.handle_message(build_envelope("join_table", {"room_id": room_id}))
+    assert watcher.connection.sent[-1]["type"] == "state_snapshot"
+
+    # 席を持っていた人は session_token で戻れる。
+    await p2.on_disconnect()
+    back = ConnectionHandler(FakeConnection(), registry)
+    await back.handle_message(
+        build_envelope("join_table", {"room_id": room_id, "session_token": p2.session.session_token})
+    )
+    assert back.connection.sent[-1]["type"] == "state_snapshot"
+    assert table.get(p2.session.player_id).connected is True

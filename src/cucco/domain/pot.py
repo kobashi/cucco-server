@@ -135,6 +135,24 @@ class Pot:
     def awaiting_continue_declare(self) -> frozenset[str]:
         return frozenset(self._pending_losers)
 
+    def withdraw(self, player_id: str) -> list[PotEvent]:
+        """卓を去った参加者をこのポットから外す。
+
+        ゲームのルールではなく、席にもう誰もいないという現実の反映
+        (docs/protocol/design.md 「退出と切断」)。以後のディールでは
+        `active_participants` に入らないので**札が配られない** -- 誰も見ていない
+        席に配り続け、毎回自動でノーチェンジを答えさせるほうが不自然だった。
+
+        進行中のディールには手を出さない。配ってしまった札を取り上げると場の
+        枚数が合わなくなるので、効くのは次のディールから。返答待ちの敗者だった
+        場合はその待ちも畳む(待ったままだと次のディールを始められない)。
+        """
+        if player_id not in self.participants or player_id in self.eliminated:
+            return []
+        self._pending_losers.pop(player_id, None)
+        self.eliminated.add(player_id)
+        return [PlayerLeftPot(player_id=player_id, reason="left")]
+
     def submit_continue_declare(self, player_id: str, continue_playing: bool) -> list[PotEvent]:
         if player_id not in self._pending_losers:
             raise IllegalAction(f"{player_id} has no pending continue decision")

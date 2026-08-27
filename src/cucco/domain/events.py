@@ -122,7 +122,7 @@ class ChipsPaid:
 @dataclass(frozen=True)
 class PlayerLeftPot:
     player_id: str
-    reason: str  # "adult_time" | "insolvent" | "declined"
+    reason: str  # "adult_time" | "insolvent" | "declined" | "left"(卓から退出)
 
 
 @dataclass(frozen=True)
