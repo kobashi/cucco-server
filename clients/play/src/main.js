@@ -1348,6 +1348,7 @@ const actions = {
       state.sessionToken = conn.sessionToken;
       state.playerType = playerType;
       state.discloseHand = !!discloseHand;
+      state.aiPolicies = conn.aiPolicies;
       state.error = null;
       uiPhase = "lobby";
       // Came in through a table invite link: go straight to that table
@@ -1373,6 +1374,7 @@ const actions = {
     const wantedDisclose = wanted === "spectator" ? false : !!discloseHand;
     if (wanted === state.playerType && wantedDisclose === !!state.discloseHand) return;
     await conn.identify(state.name, wanted, wantedDisclose);
+    state.aiPolicies = conn.aiPolicies;
     state.playerId = conn.playerId;
     state.sessionToken = conn.sessionToken;
     state.playerType = wanted;

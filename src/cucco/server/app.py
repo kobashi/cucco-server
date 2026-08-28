@@ -12,6 +12,7 @@ from pathlib import Path
 
 import websockets
 
+from cucco.ai.plugins import load_policy_dir, log_report
 from cucco.persistence.results_store import ResultsStore
 from cucco.server.admin import GC_INTERVAL_SEC, run_gc_loop, serve_admin
 from cucco.server.dispatch import ConnectionHandler
@@ -111,7 +112,16 @@ def main() -> None:
         default=GC_INTERVAL_SEC,
         help="放置卓の自動掃除の間隔(秒)。0で無効化",
     )
+    parser.add_argument(
+        "--policy-dir",
+        type=Path,
+        default=Path("policies"),
+        help="追加AI方策の置き場所(既定 policies)。ここの .py を起動時に読み込む",
+    )
     args = parser.parse_args()
+    # 追加方策の読み込みは**起動を止めない**。ゼミ生の書きかけが1つあるだけで
+    # その日の対局が全部できなくなる、という事態を避ける(cucco.ai.plugins)。
+    log_report(load_policy_dir(args.policy_dir), args.policy_dir)
     asyncio.run(
         serve(
             host=args.host,

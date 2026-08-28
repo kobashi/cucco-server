@@ -20,10 +20,13 @@ the server-embedded `ai_players` bots.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from cucco.ai.context import CountingTracker, PolicyContext
 from cucco.ai.policies import BasePolicy
+
+logger = logging.getLogger("cucco.ai.bot")
 
 
 @dataclass
@@ -63,6 +66,25 @@ class MockAI:
     async def _declare_cucco(self) -> None:
         self._cucco_declared_this_deal = True
         await self.conn.send("cucco_declare", {})
+
+    def _ask(self, method: str, fallback, *args):
+        """方策に一つ判断を仰ぐ。例外は握って既定の答えを返す。
+
+        方策は**ゼミ生が書いたコード**で、書きかけや想定外の入力で落ちること
+        がある。そのたびに卓が止まると、同じ卓の他の人まで巻き添えになる。
+        落ちた方策は「何もしない側」(交換しない・そのまま続ける)に倒して
+        対局を進め、原因はログに残す。
+        """
+        try:
+            return getattr(self.policy, method)(*args)
+        except Exception:
+            logger.exception(
+                "policy %s failed in %s; falling back to %r",
+                getattr(self.policy, "name", type(self.policy).__name__),
+                method,
+                fallback,
+            )
+            return fallback
 
     def _context(self, required_chips: int = 1) -> PolicyContext:
         me = self.conn.player_id
@@ -126,7 +148,7 @@ class MockAI:
 
         elif event.type == "dealer_ready":
             # A クク-holding dealer may declare it together with "dōzo".
-            if self.my_hand == "クク" and self.policy.decide_cucco_declare_ctx(self._context()):
+            if self.my_hand == "クク" and self._ask("decide_cucco_declare_ctx", True, self._context()):
                 await self._declare_cucco()
                 self._info("dealer_ready: declaring クク")
             else:
@@ -134,11 +156,11 @@ class MockAI:
         elif event.type == "turn_prompt":
             ctx = self._context()
             # クク is offered as a third turn choice to a holder.
-            if self.my_hand == "クク" and self.policy.decide_cucco_declare_ctx(ctx):
+            if self.my_hand == "クク" and self._ask("decide_cucco_declare_ctx", True, ctx):
                 await self._declare_cucco()
                 self._info(f"turn: hand={self.my_hand} alive={self.alive_count} -> cucco")
             else:
-                change = self.policy.decide_change_ctx(ctx)
+                change = self._ask("decide_change_ctx", False, ctx)
                 await self.conn.send("cambio_declare" if change else "no_change_declare", {})
                 self._info(f"turn: hand={self.my_hand} alive={self.alive_count} -> {'change' if change else 'no_change'}")
         elif event.type == "effect_window":
@@ -152,7 +174,7 @@ class MockAI:
             else:
                 await self.conn.send("effect_pass", {})
         elif event.type == "continue_prompt":
-            stay = self.policy.decide_continue_ctx(self._context(required_chips=p.get("required_chips", 1)))
+            stay = self._ask("decide_continue_ctx", True, self._context(required_chips=p.get("required_chips", 1)))
             await self.conn.send("continue_declare", {"continue": stay})
 
         elif event.type == "pot_result" and self.mode == "normal":
@@ -179,7 +201,7 @@ class MockAI:
             self.my_hand == "クク"
             and not self._cucco_declared_this_deal
             and event.type in ("deal_started", "exchange_result")
-            and self.policy.declare_cucco_eagerly(self._context())
+            and self._ask("declare_cucco_eagerly", False, self._context())
         ):
             await self._declare_cucco()
             self._info(f"eager クク declaration on {event.type}")

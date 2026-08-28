@@ -109,6 +109,9 @@ export function createGameState({ onChange, onOp, onLog, onToast }) {
     disclosedHands: {},
     // この卓での自分が手札を公開しているか(参加画面での選択。表示用)。
     discloseHand: false,
+    // サーバーが使えるAI方策の一覧(identify の応答)。ゼミ生が置いた方策も
+    // ここに載るので、卓を作る画面はこれを見て並べる。
+    aiPolicies: null,
     // Presentation mirror of the OTHER two things a seat draws: the cards an
     // effect has made public mid-deal (revealedCards) and who is out with what
     // card still in front of them (disqualifiedIdsThisDeal / disqualifiedInfo).

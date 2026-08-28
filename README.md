@@ -24,6 +24,9 @@ Cambio)のネット対戦サーバー。ゲーム研究ゼミ内での運用を�
   方策実装は外部Mock AIクライアントと共通(`src/cucco/ai/`)。基本3方策に加え、
   捨て札・公開札のカウンティングで判断する強化版2種
   (`counting_aggressive`積極型 / `counting_conservative`堅実型)を同梱
+- **AI方策の持ち込み**: `policies/`に`.py`を置いてサーバーを再起動するだけで、
+  ゼミ生の書いたAIを卓に座らせられる(サーバーのコードは変更しない。
+  壊れたファイルがあっても起動は止まらない)
 - **サンプルクライアント**: すぐ動かせるMock AI(3方策)と対話式Stubクライアント
   ([`clients/`](clients/))
 - **人間向けブラウザクライアント(2種)**: ビルドツール不要の素のHTML/CSS/
@@ -51,15 +54,22 @@ Cambio)のネット対戦サーバー。ゲーム研究ゼミ内での運用を�
   (サーバー側に行動ログが残っており、対局を再現できる)
 - 既知の制約は[CHANGELOG](CHANGELOG.md)の「v1.0.0 — リリース版」を参照
 
+### ゼミ生のAIを追加する
+
+`policies/` に `.py` を1つ置いてサーバーを再起動すると、そのAIで卓に座らせられる
+(サーバーのコードは変更しない)。書き方・置き方・強さの測り方は
+[`docs/ai-player-guide.md`](docs/ai-player-guide.md)、見本は
+[`docs/examples/policy_example.py`](docs/examples/policy_example.py)。
+
 ### メンテナンスの方針
 
 - **不具合の修正が主で、機能追加は原則行わない。** ルール・プロトコル・画面の
   作りは v1.0.0 のものを維持する
-- **バージョンは `v1.0.<パッチ>`**。修正を1つ入れるたびにリリースを切るのでは
-  なく、**溜まってからまとめて**切る(配る版が頻繁に変わるとゼミ生が混乱する
-  ため)。緊急の不具合はその限りではない
+- **バージョンは `v1.<機能>.<パッチ>`**。修正を1つ入れるたびにリリースを切るので
+  はなく、**溜まってからまとめて**切る(配る版が頻繁に変わるとゼミ生が混乱する
+  ため)。緊急の不具合はその限りではない。依頼があった機能追加はマイナーを上げる
 - リリースごとに `pyproject.toml` の `version`、[CHANGELOG](CHANGELOG.md)の
-  項目、注釈付きタグ `v1.0.<パッチ>` を揃える
+  項目、注釈付きタグを揃える
 - **サーバー側を直した版は、サーバーを再起動するまで反映されない**
   (クライアントはpushでPagesに自動反映)。CHANGELOGの各項目に再起動の要否を
   明記する。手順は[`docs/server-operations.md`](docs/server-operations.md) §7
@@ -68,7 +78,7 @@ Cambio)のネット対戦サーバー。ゲーム研究ゼミ内での運用を�
 
 ドメイン層・プロトコル層・サーバー層・永続化層・評価モード・サンプル
 クライアント・人間向けブラウザクライアント2種(リファレンス+効果音・
-カード演出付きプレイ用)まで実装済み、テスト404件全てパス。複数回のレビュー(Fable5)と
+カード演出付きプレイ用)まで実装済み、テスト430件全てパス。複数回のレビュー(Fable5)と
 ゼミ内試用(v1.0.0b1〜b30)を経て主要な不具合は修正済み。GitHub Pages + Cloudflare Tunnelでの学外公開運用まで
 実績あり。成績確認(`cucco.tools.stats`)・サーバー管理(卓一覧・停止卓の
 強制中止・成績確認・データ掃除ができるブラウザ管理コンソール+`cucco.tools.admin`、ローカル専用リスナー)・放置卓の自動GC
@@ -148,7 +158,8 @@ docs/           # 要求仕様・ルール・プロトコル設計・実装ガ�
 - [`docs/rules/final_rules.md`](docs/rules/final_rules.md) — 確定したゲームルール
 - [`docs/protocol/design.md`](docs/protocol/design.md) — 通信プロトコル設計
 - [`docs/protocol/decisions.md`](docs/protocol/decisions.md) — プロトコル設計の決定事項・変更履歴
-- [`docs/ai-client-guide.md`](docs/ai-client-guide.md) — AIプレイヤー実装ガイド
+- [`docs/ai-player-guide.md`](docs/ai-player-guide.md) — **ゼミ生AIの作り方と追加のしかた**(手順書)
+- [`docs/ai-client-guide.md`](docs/ai-client-guide.md) — AIプレイヤー実装ガイド(外部クライアント)
 - [`docs/ai-advanced-policies.md`](docs/ai-advanced-policies.md) — 上位AI実装案集(教材)
 - [`docs/human-client-guide.md`](docs/human-client-guide.md) — 人間向けUI実装ガイド
 - [`docs/server-operations.md`](docs/server-operations.md) — ゲームサーバー運用マニュアル(起動・停止・管理・データ)

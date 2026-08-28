@@ -121,6 +121,9 @@ export class CuccoConnection extends EventTarget {
     const payload = await waiter;
     this.playerId = payload.player_id;
     this.sessionToken = payload.session_token;
+    // サーバーが使えるAI方策の一覧(ゼミ生が置いた分を含む)。卓を作る画面が
+    // これを見て並べるので、方策が増えてもクライアントは直さなくてよい。
+    this.aiPolicies = Array.isArray(payload.ai_policies) ? payload.ai_policies : null;
     return payload;
   }
 

@@ -243,13 +243,29 @@ function renderChoice(el, state, actions) {
 // time. The authoritative count still lives in a hidden `.ai-count` input per
 // policy, so the create payload below is built exactly as before.
 const MAX_AI_TOTAL = 14;
-const AI_POLICIES = [
-  ["matrix", "matrix(人数×手札で判断)"],
-  ["always_change", "always_change(常にチェンジ)"],
-  ["always_no_change", "always_no_change(常にノーチェンジ)"],
-  ["counting_aggressive", "counting_aggressive(カウンティング・積極型)"],
-  ["counting_conservative", "counting_conservative(カウンティング・堅実型)"],
-];
+// 内蔵AIの説明。サーバーが方策の一覧を送ってくる(identify の応答)ので、
+// **並べるのはそちら**を使う。ここにあるのは説明文の対訳表で、知らない方策
+// (ゼミ生が置いたもの)はサーバーが付けた説明をそのまま出す。
+const AI_POLICY_LABELS = {
+  matrix: "人数×手札で判断",
+  always_change: "常にチェンジ",
+  always_no_change: "常にノーチェンジ",
+  counting_aggressive: "カウンティング・積極型",
+  counting_conservative: "カウンティング・堅実型",
+};
+
+// 一覧が届いていない場合(古いサーバー)は内蔵分だけで組み立てる。
+const BUILT_IN_POLICIES = Object.keys(AI_POLICY_LABELS);
+
+function aiPolicyRows(state) {
+  const fromServer = state.aiPolicies;
+  const names = fromServer?.length ? fromServer.map((p) => p.name) : BUILT_IN_POLICIES;
+  return names.map((name) => {
+    const described = fromServer?.find((p) => p.name === name)?.description;
+    const label = AI_POLICY_LABELS[name] ?? described ?? "";
+    return [name, label ? `${name}(${label})` : name];
+  });
+}
 
 function aiStepperHTML([policy, label]) {
   return `
@@ -362,7 +378,7 @@ function renderCreate(el, state, actions) {
         </p>
         <fieldset class="ai-players">
           <legend>AIプレイヤーを追加(サーバー内蔵、合計${MAX_AI_TOTAL}人まで)</legend>
-          ${AI_POLICIES.map(aiStepperHTML).join("")}
+          ${aiPolicyRows(state).map(aiStepperHTML).join("")}
           <p class="ai-total muted">追加するAI: <span id="ai-total">0</span> 人</p>
           <label class="disclose-row">
             <input type="checkbox" id="ai-disclose-hands">

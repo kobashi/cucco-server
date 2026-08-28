@@ -299,7 +299,20 @@ class ConnectionHandler:
             # ないので、席を持つ側だけが持てるフラグとして扱う。
             disclose_hand=action.disclose_hand and action.player_type != "spectator",
         )
-        await self._send_raw("identified", {"player_id": player_id, "session_token": session_token})
+        # 使えるAI方策を一緒に返す。ゼミ生が置いた方策はサーバー起動時に
+        # 読み込まれるので、クライアントに一覧を焼き込んでおくと追加のたびに
+        # クライアントも直す羽目になる(docs/ai-player-guide.md)。
+        await self._send_raw(
+            "identified",
+            {
+                "player_id": player_id,
+                "session_token": session_token,
+                "ai_policies": [
+                    {"name": name, "description": (cls.__doc__ or "").strip().splitlines()[0] if cls.__doc__ else ""}
+                    for name, cls in sorted(POLICIES.items())
+                ],
+            },
+        )
 
     async def _handle_create_table(self, action: CreateTable) -> None:
         if self.session is None:

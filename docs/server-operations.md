@@ -55,6 +55,7 @@ python -m cucco.server.app
 | `--admin-port` | `8766` | 管理リスナー。**アドレスは127.0.0.1固定**。`0`で無効化 |
 | `--admin-token` | 毎回自動生成 | 管理トークン。省略すると起動ログにのみ出力される |
 | `--gc-interval` | `60`(秒) | 放置卓の自動掃除の間隔。`0`で無効化 |
+| `--policy-dir` | `policies` | 追加AI方策の置き場所。ここの`.py`を**起動時に**読み込む([ai-player-guide.md](ai-player-guide.md)) |
 
 ### 3.3 推奨する起動コマンド(仮運用)
 
@@ -94,6 +95,17 @@ INFO:cucco.server:admin token (this run only): 3f2a...      ← --admin-token �
 INFO:cucco.server:table GC sweeping every 60s
 INFO:cucco.server:cucco-server listening on ws://0.0.0.0:8765
 ```
+
+追加AI方策(ゼミ生の提出物)を置いている場合は、その読み込み結果も出る:
+
+```
+INFO:cucco.ai.plugins:loaded policy zemi_yamada from yamada.py      ← 使える
+WARNING:cucco.ai.plugins:skipped yamada.py: 読み込み中にエラー: ...  ← 飛ばした
+```
+
+**壊れたファイルがあってもサーバーは起動する**(読めなかったものを飛ばすだけ)。
+「自分のAIが一覧に出ない」と言われたら、まずこの行を見る。読み込みは起動時だけ
+なので、ファイルを置いたら再起動が要る。
 
 運用中に出る主なログ: `GC removed abandoned table <卓ID>`、
 `admin aborted table <卓ID>`、`received SIGTERM, shutting down`、
