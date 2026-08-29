@@ -3,7 +3,8 @@
 自分のAIをCuccoの卓に座らせるための手順書。**サーバーのコードには一切手を
 入れない**。ファイルを1つ置くか、自分のプログラムを外から繋ぐかのどちらか。
 
-関連: [ルール](rules/final_rules.md) / [AIの考え方](ai-advanced-policies.md) /
+関連: **[方策リファレンス](ai-policy-reference.md)**(書いている最中に引く一覧) /
+[ルール](rules/final_rules.md) / [AIの考え方](ai-advanced-policies.md) /
 [プロトコル](protocol/design.md) / [外部クライアントの作り方](ai-client-guide.md)
 
 ## 1. 2つの道

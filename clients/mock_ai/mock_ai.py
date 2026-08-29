@@ -16,9 +16,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from pathlib import Path
 
 from clients.common.ws_client import CuccoConnection
 from clients.mock_ai.policies import make_policy
+from cucco.ai.plugins import load_policy_dir, log_report
 from cucco.ai.bot import MockAI  # noqa: F401  (re-export for existing importers)
 
 
@@ -36,7 +38,17 @@ async def main() -> None:
     parser.add_argument("--mode", default="normal", choices=["normal", "evaluation"])
     parser.add_argument("--game-count", type=int, default=10, help="evaluation mode only")
     parser.add_argument("--starting-chips", type=int, default=25)
+    parser.add_argument(
+        "--policy-dir",
+        type=Path,
+        default=Path("policies"),
+        help="追加AI方策の置き場所(既定 policies)。自分で書いた方策をここから読む",
+    )
     args = parser.parse_args()
+    # 自分で書いた方策をこのプロセスにも読み込む。サーバー内蔵AIは
+    # サーバー側で読み込まれるが、この外部クライアントは別プロセスなので
+    # ここでも読む必要がある(docs/ai-policy-reference.md「手元で測る」)。
+    log_report(load_policy_dir(args.policy_dir), args.policy_dir)
 
     if not args.create and not args.room:
         parser.error("either --create or --room is required")

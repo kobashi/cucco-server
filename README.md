@@ -58,7 +58,8 @@ Cambio)のネット対戦サーバー。ゲーム研究ゼミ内での運用を�
 
 `policies/` に `.py` を1つ置いてサーバーを再起動すると、そのAIで卓に座らせられる
 (サーバーのコードは変更しない)。書き方・置き方・強さの測り方は
-[`docs/ai-player-guide.md`](docs/ai-player-guide.md)、見本は
+[`docs/ai-player-guide.md`](docs/ai-player-guide.md)(手順書)と
+[`docs/ai-policy-reference.md`](docs/ai-policy-reference.md)(リファレンス)、見本は
 [`docs/examples/policy_example.py`](docs/examples/policy_example.py)。
 
 ### メンテナンスの方針
@@ -159,6 +160,7 @@ docs/           # 要求仕様・ルール・プロトコル設計・実装ガ�
 - [`docs/protocol/design.md`](docs/protocol/design.md) — 通信プロトコル設計
 - [`docs/protocol/decisions.md`](docs/protocol/decisions.md) — プロトコル設計の決定事項・変更履歴
 - [`docs/ai-player-guide.md`](docs/ai-player-guide.md) — **ゼミ生AIの作り方と追加のしかた**(手順書)
+- [`docs/ai-policy-reference.md`](docs/ai-policy-reference.md) — **AI方策リファレンス**(判断材料・札の早見表・測り方)
 - [`docs/ai-client-guide.md`](docs/ai-client-guide.md) — AIプレイヤー実装ガイド(外部クライアント)
 - [`docs/ai-advanced-policies.md`](docs/ai-advanced-policies.md) — 上位AI実装案集(教材)
 - [`docs/human-client-guide.md`](docs/human-client-guide.md) — 人間向けUI実装ガイド
