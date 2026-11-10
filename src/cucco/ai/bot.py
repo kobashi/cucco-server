@@ -174,7 +174,14 @@ class MockAI:
             else:
                 await self.conn.send("effect_pass", {})
         elif event.type == "continue_prompt":
-            stay = self._ask("decide_continue_ctx", True, self._context(required_chips=p.get("required_chips", 1)))
+            # 支払い枚数はディール番号と同じ(1〜3枚)。当人宛のこのプロンプトには
+            # 入っていないので、直前に届く `continue_prompted` ブロードキャストで
+            # トラッカーが覚えた値を使う。拾い忘れると常に1枚と誤認し、3回に2回は
+            # 1〜2枚安く見積もったまま継続判断をすることになる。
+            required = p.get("required_chips")
+            if required is None:
+                required = self.tracker.continue_required.get(me, self.tracker.deal_number or 1)
+            stay = self._ask("decide_continue_ctx", True, self._context(required_chips=required))
             await self.conn.send("continue_declare", {"continue": stay})
 
         elif event.type == "pot_result" and self.mode == "normal":

@@ -88,7 +88,7 @@ async def test_evaluation_runner_plays_game_count_games_and_sends_a_summary():
 
 
 @pytest.mark.asyncio
-async def test_evaluation_runner_rotates_seats_and_resets_chips_each_game():
+async def test_evaluation_runner_reshuffles_seats_and_resets_chips_each_game():
     table, conns = make_table(game_count=3, starting_chips=25)
 
     await EvaluationRunner(table, ["A", "B", "C"]).run()
@@ -96,10 +96,11 @@ async def test_evaluation_runner_rotates_seats_and_resets_chips_each_game():
     payload = next(m for m in conns["A"].sent if m["type"] == "evaluation_summary")["payload"]
     rotations = payload["seat_rotations"]
     assert [r["game_number"] for r in rotations] == [1, 2, 3]
-    assert rotations[0]["seats"] == ["A", "B", "C"]
-    assert rotations[1]["seats"] == ["B", "C", "A"]
-    assert rotations[2]["seats"] == ["C", "A", "B"]
+    # 着席順はゲームごとにシャッフルされる。巡回ローテーションだと円環の
+    # 順序が保存されるので「誰の隣が誰か」が走行中ずっと固定され、交換相手
+    # の組み合わせだけ均等化されない(交換は自分と次の席との間で起きる)。
     for r in rotations:
+        assert sorted(r["seats"]) == ["A", "B", "C"]
         assert r["dealer_id"] in {"A", "B", "C"}
 
     # Every game_result / deal_result broadcast in between shows chips

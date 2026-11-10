@@ -149,6 +149,14 @@ class CountingPolicy(BasePolicy):
     - decide_continue is where 積極/消極 diverge: aggressive pays whenever
       it can keep at least 1 chip; conservative also wants a buffer for the
       next loss and a pot actually worth the price.
+    - 継続判断はこのまま据え置いている。tools/continue_oracle.py でポット
+      終了時の期待チップを後退帰納法で解くと conservative の形は0.543チップ
+      /判断の損で「払えるなら払う」(0.061)より悪いが、実際に差し替えて
+      7,000ゲーム対戦させると勝率は -0.73pt(SE 1.04pt)で、改善は検出
+      できなかった。厳密解の目的関数(期待チップ)がこのゲームの勝敗(順位と
+      生存。既定の終了条件は chips_zero)と一致していないためで、目的関数を
+      直すまでこの数字で方策を動かさない。強さの差は交換判断の側
+      (cutoff_base / danger_weight)から来ている。
     """
 
     name = "counting"

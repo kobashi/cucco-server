@@ -78,6 +78,10 @@ class CountingTracker:
     # `revealed_this_deal` survives it (see the deck_reshuffled branch).
     revealed_disqualified: dict[str, str] = field(default_factory=dict)
     known_held: dict[str, str] = field(default_factory=dict)
+    # 継続確認の支払い枚数。当人宛の `continue_prompt` には入らず、全員向けの
+    # `continue_prompted` にだけ乗る(docs/protocol/design.md「イベント」)。
+    # ブラウザクライアントと同じようにブロードキャストから拾っておく。
+    continue_required: dict[str, int] = field(default_factory=dict)
     deal_number: int = 0
     pot_chips: int = 0
     dealer_id: str | None = None
@@ -88,6 +92,7 @@ class CountingTracker:
         t = event.type
         if t == "pot_started":
             self.discard_counts.clear()
+            self.continue_required.clear()
             self.pot_chips = p.get("pot_chips", 0)
             self.dealer_id = p.get("dealer_id")
             self.deal_number = 0
@@ -113,6 +118,10 @@ class CountingTracker:
             self._observe_exchange(p)
         elif t == "no_change_declared" or t == "turn_timeout_consumed":
             self.turn_actions_this_deal += 1
+        elif t == "continue_prompted":
+            pid = p.get("player_id")
+            if pid is not None:
+                self.continue_required[pid] = p.get("required_chips", 1)
         elif t == "player_disqualified":
             if p.get("card"):  # immediate disclosure only; deferred sends null
                 self.revealed_this_deal[p["card"]] += 1

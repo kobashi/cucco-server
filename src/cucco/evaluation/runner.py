@@ -1,7 +1,8 @@
 """AI専用高速評価モード (docs/protocol/design.md 「AI専用高速評価モード」).
 
-Runs `config.game_count` games back-to-back under one table, rotating seat
-order between games so a fixed seating position can't bias the results,
+Runs `config.game_count` games back-to-back under one table, reshuffling the
+seating order for every game so neither a fixed seat position nor a fixed
+neighbour pairing can bias the results,
 then reports aggregate per-player results via `evaluation_summary`.
 
 Stays out of the domain layer's vocabulary entirely: `Game`/`Pot`/`Deal`
@@ -90,20 +91,9 @@ class EvaluationRunner:
 
         totals = {pid: _PlayerTotals() for pid in self.participants}
         seat_rotations = []
-        seats = list(self.participants)
         games_played = 0
 
         for game_number in range(1, game_count + 1):
-            if game_number > 1:
-                # Rotate, don't reshuffle: every player visits every seat
-                # position across the run, in a predictable, reportable
-                # order (docs/protocol/design.md: 座席位置がCuccoの勝率に
-                # 大きく影響するため、固定座席のままだと評価結果に座席バイ
-                # アスがかかる). The first dealer per game is separately
-                # randomized -- Game._start_new_pot already draws it from
-                # this game's own freshly-seeded rng.
-                seats = seats[1:] + seats[:1]
-
             if self._connected_count() < MIN_CONNECTED_TO_CONTINUE:
                 # Not enough live AI connections left to actually play --
                 # stop here instead of burning through the remaining games
@@ -113,7 +103,17 @@ class EvaluationRunner:
                 break
 
             seed = self._next_seed()
-            game = Game(seats, config, random.Random(seed))
+            rng = random.Random(seed)
+            # 着席順はゲームごとにシャッフルする(通常モードの
+            # dispatch._start_game と同じ扱い)。以前は巡回ローテーション
+            # だったが、巡回は円環の順序を保存するので「誰の隣が誰か」が
+            # 走行中ずっと固定され、交換相手の組み合わせだけ均等化されない。
+            # 交換は自分と次の席との間で起きるので、ここは勝率に効く。
+            # Game と同じシード付き rng を使うので、記録したシードから
+            # 座席もディールも決定論的に再現できる。
+            seats = list(self.participants)
+            rng.shuffle(seats)
+            game = Game(seats, config, rng)
             self.table.game = game
 
             real_log = open_for_game(self.table.action_log_dir, self.table.room_id) if self.table.action_log_dir else None
