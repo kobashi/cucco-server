@@ -23,7 +23,9 @@ Cambio)のネット対戦サーバー。ゲーム研究ゼミ内での運用を�
   だけで、別プロセスなしにAI対戦相手を同席させられる(AI vs AI、AI vs 人間)。
   方策実装は外部Mock AIクライアントと共通(`src/cucco/ai/`)。基本3方策に加え、
   捨て札・公開札のカウンティングで判断する強化版2種
-  (`counting_aggressive`積極型 / `counting_conservative`堅実型)を同梱
+  (`counting_aggressive`積極型 / `counting_conservative`堅実型)と、
+  クク宣言のタイミングを狙う`counting_sniper`、交換判断を厳密解にした
+  `counting_exact`(**検証用。弱い**)を同梱
 - **AI方策の持ち込み**: `policies/`に`.py`を置いてサーバーを再起動するだけで、
   ゼミ生の書いたAIを卓に座らせられる(サーバーのコードは変更しない。
   壊れたファイルがあっても起動は止まらない)
@@ -60,7 +62,8 @@ Cambio)のネット対戦サーバー。ゲーム研究ゼミ内での運用を�
 (サーバーのコードは変更しない)。書き方・置き方・強さの測り方は
 [`docs/ai-player-guide.md`](docs/ai-player-guide.md)(手順書)と
 [`docs/ai-policy-reference.md`](docs/ai-policy-reference.md)(リファレンス)、見本は
-[`docs/examples/policy_example.py`](docs/examples/policy_example.py)。
+[`docs/examples/`](docs/examples/)(最小の形と、クク宣言のタイミングだけを
+書き換える狙い撃ちの例)。
 
 ### メンテナンスの方針
 
@@ -79,7 +82,7 @@ Cambio)のネット対戦サーバー。ゲーム研究ゼミ内での運用を�
 
 ドメイン層・プロトコル層・サーバー層・永続化層・評価モード・サンプル
 クライアント・人間向けブラウザクライアント2種(リファレンス+効果音・
-カード演出付きプレイ用)まで実装済み、テスト436件全てパス。複数回のレビュー(Fable5)と
+カード演出付きプレイ用)まで実装済み、テスト465件全てパス。複数回のレビュー(Fable5)と
 ゼミ内試用(v1.0.0b1〜b30)を経て主要な不具合は修正済み。GitHub Pages + Cloudflare Tunnelでの学外公開運用まで
 実績あり。成績確認(`cucco.tools.stats`)・サーバー管理(卓一覧・停止卓の
 強制中止・成績確認・データ掃除ができるブラウザ管理コンソール+`cucco.tools.admin`、ローカル専用リスナー)・放置卓の自動GC

@@ -62,6 +62,9 @@ class MockAI:
         # One eager/prompt クク declaration per deal is plenty -- the server
         # ignores duplicates anyway, this just keeps the wire quiet.
         self._cucco_declared_this_deal = False
+        # 手札の provenance(deal.py)を自分側で追う。配られたままなら True。
+        # 一度でも交換すれば、今の札の元の持ち主は自分ではない。
+        self._own_card_original = False
 
     async def _declare_cucco(self) -> None:
         self._cucco_declared_this_deal = True
@@ -99,6 +102,15 @@ class MockAI:
             known_held=self.tracker.known_held_alive(self.deal_alive, exclude=me),
             turn_actions_this_deal=self.tracker.turn_actions_this_deal,
             required_chips=required_chips,
+            # 席・チップ・交換履歴。方策が書き換えてもトラッカーに波及しない
+            # ように、どれもスナップショットで渡す。
+            my_id=me,
+            chips=dict(self.tracker.chips),
+            turn_order=self.tracker.turn_order(),
+            disqualified=frozenset(self.tracker.disqualified),
+            acted_this_deal=frozenset(self.tracker.acted_this_deal),
+            exchanges_this_deal=tuple(self.tracker.exchanges_this_deal),
+            own_card_original=self._own_card_original,
         )
 
     def _info(self, message: str) -> None:
@@ -133,6 +145,7 @@ class MockAI:
             self.my_hand = p.get("your_hand")
             self.deal_alive = set(self.pot_active)
             self._cucco_declared_this_deal = False
+            self._own_card_original = True  # 配られた札はまだ自分が元の持ち主
         elif event.type == "player_disqualified":
             self.deal_alive.discard(p["player_id"])
             if p["player_id"] == me:
@@ -141,8 +154,10 @@ class MockAI:
             # Private fields are merged in only for the involved parties.
             if "your_new_card" in p:
                 self.my_hand = p["your_new_card"]
+                self._own_card_original = False  # 相手から来た札
             elif p.get("actor") == me and "new_card" in p:
                 self.my_hand = p["new_card"]
+                self._own_card_original = False  # 山札から来た札(provenance は None)
         elif event.type == "deal_result":
             self.my_chips = p["chips_now"].get(me, self.my_chips)
 

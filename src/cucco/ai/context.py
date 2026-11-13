@@ -34,6 +34,21 @@ from cucco.domain.cards import RANK_ORDER, strength
 FULL_DECK_COUNTS: dict[str, int] = {rank.value: 2 for rank in RANK_ORDER}
 
 
+@dataclass(frozen=True)
+class ExchangeRecord:
+    """このディールで起きた交換1件の公開記録。
+
+    カンビオ宣言そのものには専用のイベントがない(wire_events の
+    「"cambio" / "cucco_declare" declarations carry no info of their own」)。
+    交換の結果イベントに載る `requester` が、その手番に動いた席である。
+    """
+
+    requester: str
+    target: str | None  # None = 山札と交換した
+    result: str  # accepted / refused / deck_exchange_accepted / deck_draw_refused
+    revealed_rank: str | None = None  # 拒否で公開された札(人間・馬・猫・家)
+
+
 @dataclass
 class PolicyContext:
     """Everything an enhanced policy may look at for one decision."""
@@ -49,6 +64,23 @@ class PolicyContext:
     turn_actions_this_deal: int  # turn declarations observed so far this deal
     required_chips: int = 1  # continue_prompt only
 
+    # -- 席・相手・チップ(docs/ai-policy-reference.md「手番の順と交換相手」)--
+    # どれも公開情報。狙い撃ちのように席を名指しする方策のために出している。
+    # 既定値があるので、これらを渡さない呼び出し側(古い方策のテストや
+    # tools/oracle_check.py)はそのまま動く。
+    my_id: str = ""  # 自分の player_id(turn_order の中で自分を見つけるため)
+    chips: dict[str, int] = field(default_factory=dict)  # 全員の持ちチップ
+    turn_order: tuple[str, ...] = ()  # このディールの手番順。**親が最後**、循環しない
+    disqualified: frozenset[str] = frozenset()  # このディールで失格した席
+    acted_this_deal: frozenset[str] = frozenset()  # 手番宣言を済ませた席
+    exchanges_this_deal: tuple[ExchangeRecord, ...] = ()  # 起きた順
+
+    # 今持っている札の**元の持ち主が自分**か(deal.py の provenance)。配られた
+    # ままなら True、一度でも交換すると False。猫がらみの失格は「要求者の札の
+    # 元の持ち主」に落ちるので、True のまま交換を仕掛けると自爆の危険がある。
+    # 既定が False なのは、席情報と同じく渡さない呼び出し側を壊さないため。
+    own_card_original: bool = False
+
     @property
     def is_child_time(self) -> bool:
         return self.deal_number <= 3
@@ -60,6 +92,69 @@ class PolicyContext:
     def unseen_weaker_than_own(self) -> int:
         own = strength_of(self.own_rank)
         return sum(n for rank, n in self.unseen_counts.items() if strength_of(rank) < own)
+
+    # -- 席とチップの補助 -----------------------------------------------------
+
+    @property
+    def chip_leader(self) -> str | None:
+        """チップ単独首位の player_id。同点首位なら `None`(狙い先が決まらない)。
+
+        自分が首位なら自分の id が返る。狙い撃ちでは自分を除外すること。
+        """
+        if not self.chips:
+            return None
+        top = max(self.chips.values())
+        leaders = [pid for pid, n in self.chips.items() if n == top]
+        return leaders[0] if len(leaders) == 1 else None
+
+    @property
+    def exchange_target(self) -> str | None:
+        """自分がカンビオしたときの交換相手。`None` なら**山札**と交換になる。
+
+        手番順で自分より後ろにある、最初の失格していない席。末尾から溢れたら
+        山札(`turn_order` は循環しない)。`is_dealer` と違い、親が途中失格して
+        山札交換役を引き継いだ場合もこちらは正しい。
+
+        席情報がない文脈(`turn_order` が空)でも `None` を返すので、山札か
+        どうかを判定したいときは `turn_order` が空でないことを確かめること。
+        """
+        if self.my_id not in self.turn_order:
+            return None
+        idx = self.turn_order.index(self.my_id)
+        for pid in self.turn_order[idx + 1 :]:
+            if pid not in self.disqualified:
+                return pid
+        return None
+
+    def unacted_before_me(self) -> tuple[str, ...]:
+        """自分より前の手番で、まだ動いていない生存席。
+
+        **自分を狙えるのはこの席だけ。**空ならクク を温存しても誰にも奪われない
+        (交換の要求が自分に届かないまま開示を迎える)。空でないあいだ温存すると、
+        直前の席のカンビオでクク はそのまま渡る(クク は拒否できない)。
+        """
+        if self.my_id not in self.turn_order:
+            return ()
+        idx = self.turn_order.index(self.my_id)
+        return tuple(
+            pid
+            for pid in self.turn_order[:idx]
+            if pid not in self.disqualified and pid not in self.acted_this_deal
+        )
+
+    @property
+    def last_exchange(self) -> ExchangeRecord | None:
+        """直近の交換の記録。`declare_cucco_eagerly` が呼ばれた契機を見るのに使う。"""
+        return self.exchanges_this_deal[-1] if self.exchanges_this_deal else None
+
+    def was_taken_from(self, player_id: str) -> bool:
+        """その席が交換の**対象**になり、交換が成立したか。
+
+        要求した側は自分の札を弱いと判断して動いているので、対象にされた席が
+        受け取った札は弱い可能性が高い(docs/ai-advanced-policies.md 観点4)。
+        札の値そのものは当事者しか見られないので、これは推定の材料である。
+        """
+        return any(e.target == player_id and e.result == "accepted" for e in self.exchanges_this_deal)
 
 
 def strength_of(rank: str) -> int:
@@ -86,6 +181,13 @@ class CountingTracker:
     pot_chips: int = 0
     dealer_id: str | None = None
     turn_actions_this_deal: int = 0
+    # 席とチップ。どれも公開イベントから拾える情報で、席を名指しする方策
+    # (狙い撃ち・クク の温存)が必要とする。
+    chips: dict[str, int] = field(default_factory=dict)
+    pot_participants: tuple[str, ...] = ()
+    disqualified: set[str] = field(default_factory=set)
+    acted_this_deal: set[str] = field(default_factory=set)
+    exchanges_this_deal: list[ExchangeRecord] = field(default_factory=list)
 
     def observe(self, event) -> None:
         p = event.payload
@@ -95,6 +197,8 @@ class CountingTracker:
             self.continue_required.clear()
             self.pot_chips = p.get("pot_chips", 0)
             self.dealer_id = p.get("dealer_id")
+            self.pot_participants = tuple(p.get("participants") or ())
+            self._observe_chips(p)
             self.deal_number = 0
             self._reset_deal()
         elif t == "deal_started":
@@ -114,10 +218,18 @@ class CountingTracker:
             self.revealed_this_deal = Counter(self.revealed_disqualified.values())
         elif t == "dealer_changed":
             self.dealer_id = p.get("player_id")
+        elif t == "chips_paid" or t == "pot_won" or t == "pot_result":
+            self._observe_chips(p)
+        elif t == "player_left_pot":
+            # 次のディールの席順から外れる(ポットから降りた/大人の時間で脱落)。
+            pid = p.get("player_id")
+            self.pot_participants = tuple(x for x in self.pot_participants if x != pid)
         elif t == "exchange_result":
             self._observe_exchange(p)
         elif t == "no_change_declared" or t == "turn_timeout_consumed":
             self.turn_actions_this_deal += 1
+            if p.get("player_id"):
+                self.acted_this_deal.add(p["player_id"])
         elif t == "continue_prompted":
             pid = p.get("player_id")
             if pid is not None:
@@ -129,6 +241,8 @@ class CountingTracker:
                 # cards are still on the table and which it just swept away.
                 self.revealed_disqualified[p["player_id"]] = p["card"]
             self.known_held.pop(p.get("player_id"), None)
+            if p.get("player_id"):
+                self.disqualified.add(p["player_id"])
         elif t == "deal_opened":
             for rank in (p.get("hands") or {}).values():
                 if rank:
@@ -140,6 +254,7 @@ class CountingTracker:
             self.revealed_this_deal.clear()
             self.revealed_disqualified.clear()
             self.pot_chips = p.get("pot_chips", self.pot_chips)
+            self._observe_chips(p)
             if p.get("next_dealer"):
                 self.dealer_id = p["next_dealer"]
 
@@ -148,9 +263,26 @@ class CountingTracker:
         self.revealed_disqualified.clear()
         self.known_held.clear()
         self.turn_actions_this_deal = 0
+        self.disqualified.clear()
+        self.acted_this_deal.clear()
+        self.exchanges_this_deal.clear()
 
     def _observe_exchange(self, p: dict) -> None:
         result = p.get("result")
+        # 要求した席(山札交換は actor)。カンビオ宣言自体はイベントを持たない
+        # ので、動いた席が分かるのはここだけ。馬・家の拒否連鎖では同じ要求に
+        # 対して複数回届くが、requester は連鎖のあいだ変わらない。
+        actor = p.get("requester") or p.get("actor")
+        if actor:
+            self.acted_this_deal.add(actor)
+            self.exchanges_this_deal.append(
+                ExchangeRecord(
+                    requester=actor,
+                    target=p.get("target"),
+                    result=str(result),
+                    revealed_rank=p.get("revealed_rank"),
+                )
+            )
         if result == "accepted":
             self.turn_actions_this_deal += 1
             # Cards swapped: whatever we publicly knew about either hand
@@ -177,6 +309,26 @@ class CountingTracker:
             self.turn_actions_this_deal += 1
             if p.get("drawn_rank"):
                 self.revealed_this_deal[p["drawn_rank"]] += 1
+
+    def _observe_chips(self, p: dict) -> None:
+        """`chips_now` を取り込む。pot_started / chips_paid / pot_won /
+        pot_result / deal_result に載る公開情報(wire_events)。"""
+        now = p.get("chips_now")
+        if isinstance(now, dict):
+            self.chips.update(now)
+
+    def turn_order(self) -> tuple[str, ...]:
+        """このディールの手番順。**親が最後**で循環しない。
+
+        domain 側の `_rotate_order_dealer_last` と同じ並べ替え。失格した席も
+        並びには残る(交換相手を探すときに読み飛ばす — PolicyContext
+        .exchange_target)。
+        """
+        seats = list(self.pot_participants)
+        if self.dealer_id is None or self.dealer_id not in seats:
+            return tuple(seats)
+        idx = seats.index(self.dealer_id)
+        return tuple(seats[idx + 1 :] + seats[: idx + 1])
 
     def unseen_counts(self, own_rank: str | None, alive_ids: set[str] | None = None) -> dict[str, int]:
         counts = dict(FULL_DECK_COUNTS)

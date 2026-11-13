@@ -25,7 +25,9 @@
 ### 最小の形
 
 見本が [`docs/examples/policy_example.py`](examples/policy_example.py) にある。
-コピーして名前と中身を変えるのが早い。
+コピーして名前と中身を変えるのが早い。もう1つ
+[`docs/examples/policy_sniper.py`](examples/policy_sniper.py) は、内蔵の強い方策を
+継承して**クク宣言のタイミングだけ**を書き換える例(チップ首位を狙い撃ちする)。
 
 ```python
 """弱い数字だけ交換する(サンプル)"""

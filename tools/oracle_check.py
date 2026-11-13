@@ -23,106 +23,28 @@
 from __future__ import annotations
 
 import argparse
-import math
 import random
 from collections import Counter
 
 from cucco.ai.context import FULL_DECK_COUNTS, PolicyContext, strength_of
+from cucco.ai.exact import (
+    CAT,
+    CUCCO,
+    HOUSE,
+    HUMAN,
+    JOKER,
+    PASS_THROUGH,
+    p_all_at_least,
+    p_lose_deck,
+    p_lose_keep,
+    p_lose_swap,
+)
 from cucco.ai.plugins import load_policy_dir
 from cucco.ai.policies import POLICIES
 
-JOKER, HUMAN, HORSE, CAT, HOUSE, CUCCO = "道化", "人間", "馬", "猫", "家", "クク"
-PASS_THROUGH = (HORSE, HOUSE)
-
-
-def _comb(n: int, k: int) -> int:
-    return math.comb(n, k) if 0 <= k <= n else 0
-
-
-def p_all_at_least(unseen: Counter, threshold: int, k: int) -> float:
-    """k人が未見札から引いたとき、全員の強さが threshold 以上になる確率。"""
-    if k <= 0:
-        return 1.0
-    n = sum(unseen.values())
-    if k > n:
-        return 0.0
-    strong = sum(c for r, c in unseen.items() if strength_of(r) >= threshold)
-    return _comb(strong, k) / _comb(n, k)
-
-
-def _without(unseen: Counter, rank: str) -> Counter:
-    rest = Counter(unseen)
-    rest[rank] -= 1
-    if rest[rank] <= 0:
-        del rest[rank]
-    return rest
-
-
-def p_lose_keep(own: str, unseen: Counter, k: int) -> float:
-    """そのまま持ち続けた場合に自分が敗者になる確率。"""
-    return p_all_at_least(unseen, strength_of(own), k)
-
-
-def p_lose_deck(own: str, unseen: Counter, k: int, own_original: bool, depth: int = 0) -> float:
-    """親が山札と交換した場合(docs/rules/final_rules.md の山札欄)。"""
-    n = sum(unseen.values())
-    if n == 0:
-        return p_lose_keep(own, unseen, k)
-    acc = 0.0
-    for rank, count in unseen.items():
-        p = count / n
-        rest = _without(unseen, rank)
-        if rank == JOKER:
-            outcome = 0.0                      # 山札の道化は例外的に最強
-        elif rank == HUMAN:
-            outcome = 1.0                      # 引いた本人が即失格
-        elif rank == CAT:
-            outcome = 1.0 if own_original else p_lose_keep(own, rest, k)
-        elif rank in PASS_THROUGH:
-            outcome = (p_lose_keep(own, rest, k) if depth >= 3
-                       else p_lose_deck(own, rest, k, own_original, depth + 1))
-        elif rank == CUCCO:
-            outcome = p_lose_keep(own, rest, k)  # 交換不成立=現状維持
-        else:
-            outcome = p_all_at_least(rest, strength_of(rank), k)
-        acc += p * outcome
-    return acc
-
-
-def p_lose_swap(own: str, unseen: Counter, k: int, own_original: bool) -> float:
-    """非親がプレイヤーと交換した場合。相手は未見札からの一様な引きとみなす。"""
-    n = sum(unseen.values())
-    if n == 0 or k <= 0:
-        return p_lose_keep(own, unseen, k)
-    own_s = strength_of(own)
-    acc = 0.0
-    for rank, count in unseen.items():
-        p = count / n
-        rest = _without(unseen, rank)
-        if rank == HUMAN:
-            outcome = 1.0                      # 要求者が即失格
-        elif rank == JOKER:
-            outcome = 1.0                      # 道化を受け取った側が即失格
-        elif rank == CUCCO:
-            outcome = 0.0                      # 最強札を受け取る
-        elif rank == CAT:
-            # 拒否される。自爆しなければ手札はそのままで、相手は猫を持ったまま残る。
-            if own_original:
-                outcome = 1.0
-            else:
-                outcome = (p_all_at_least(rest, own_s, k - 1)
-                           if strength_of(CAT) >= own_s else 0.0)
-        elif rank in PASS_THROUGH:
-            # 拒否され手札は変わらない。相手は馬/家を持ったまま残るので、
-            # それが自分より弱ければ自分は敗者にならない。
-            outcome = (p_all_at_least(rest, own_s, k - 1)
-                       if strength_of(rank) >= own_s else 0.0)
-        else:
-            new_s = strength_of(rank)
-            # 交換後、相手は自分の元の札を持つ。それが新しい札より弱ければ自分は敗者にならない。
-            outcome = 0.0 if own_s < new_s else p_all_at_least(rest, new_s, k - 1)
-        acc += p * outcome
-    return acc
+# 厳密解そのものは src/cucco/ai/exact.py にある。方策(counting_exact)が
+# 採点側とまったく同じ式を使えるようにするため、計算はそちらへ出した。
+# ここに残っているのは「局面を作って方策を採点する」側だけ。
 
 
 def make_state(rng: random.Random, seen: int) -> tuple[str, Counter, bool]:

@@ -119,5 +119,7 @@ def test_the_example_in_the_docs_actually_loads():
     from pathlib import Path
 
     report = load_policy_dir(Path("docs/examples"))
-    assert [p.name for p in report.loaded] == ["example_weak_change"]
+    assert sorted(p.name for p in report.loaded) == ["example_cucco_sniper", "example_weak_change"]
+    assert report.failures == []
     assert issubclass(POLICIES["example_weak_change"], BasePolicy)
+    assert issubclass(POLICIES["example_cucco_sniper"], BasePolicy)
