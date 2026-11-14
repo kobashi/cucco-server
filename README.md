@@ -25,7 +25,8 @@ Cambio)のネット対戦サーバー。ゲーム研究ゼミ内での運用を�
   捨て札・公開札のカウンティングで判断する強化版2種
   (`counting_aggressive`積極型 / `counting_conservative`堅実型)と、
   クク宣言のタイミングを狙う`counting_sniper`、交換判断を厳密解にした
-  `counting_exact`(**検証用。弱い**)を同梱
+  `counting_exact`(**検証用。弱い**)、目的別の2型
+  (`counting_win`勝率優先・**内蔵で最強** / `counting_rank`平均順位優先)を同梱
 - **AI方策の持ち込み**: `policies/`に`.py`を置いてサーバーを再起動するだけで、
   ゼミ生の書いたAIを卓に座らせられる(サーバーのコードは変更しない。
   壊れたファイルがあっても起動は止まらない)

@@ -161,7 +161,12 @@ def strength_of(rank: str) -> int:
     """Wire-string wrapper over the domain's strength order (道化 weakest --
     the elevated-joker exception only exists after a deck draw, which the
     holder knows about separately)."""
-    return strength(next(r for r in RANK_ORDER if r.value == rank))
+    return _STRENGTH_BY_VALUE[rank]
+
+
+# 方策は1判断のたびに何十回も強さを引く。毎回 RANK_ORDER を頭から探すと
+# 対局時間の約3割がここに消えていたので、表にしてある(値は同じ)。
+_STRENGTH_BY_VALUE: dict[str, int] = {r.value: strength(r) for r in RANK_ORDER}
 
 
 @dataclass

@@ -189,7 +189,11 @@ class CountingPolicy(BasePolicy):
         cutoff = self.cutoff_base - self.cutoff_slope * ctx.alive_count - self.danger_weight * danger
         if ctx.is_child_time:
             cutoff -= self.child_time_extra
-        return p_weaker < cutoff
+        return p_weaker < cutoff + self.cutoff_adjust(ctx)
+
+    def cutoff_adjust(self, ctx) -> float:
+        """しきい値への追加補正。既定は 0(従来の counting_* はここを通っても同じ)。"""
+        return 0.0
 
     def decide_cucco_declare_ctx(self, ctx) -> bool:
         # At a prompt an immediate declaration dominates: holding クク we
@@ -362,6 +366,106 @@ class CountingSniper(CountingConservative):
         return self._declare_now(ctx)
 
 
+def _other_chips(ctx) -> list[int]:
+    return [n for pid, n in ctx.chips.items() if pid != ctx.my_id]
+
+
+class CountingWin(CountingSniper):
+    """**勝率(最終1位の回数)を最大にする型。**内蔵でいちばん勝つ。
+
+    counting_sniper に2つ足した。どちらも「判断を1つだけ反転して、そのポットの
+    決着まで打たせ、最終1位の確率がどう動くか」を80万判断ぶん測った地図
+    (docs/ai-policy-reference.md §6「どこで勝率を落としているかを測る」)から
+    出したもので、勘で置いた数字ではない。
+
+    1. **交換のしきい値を、手番位置と先に動いた席の様子で補正する**
+       (`CUTOFF_SHIFT`)。札別・人数別のしきい値はもともとほぼ最適で、穴は
+       ここだけだった。
+
+       - 先に動いた席が**全員ノーチェンジ**なら、もっと交換する(+0.05〜+0.13)。
+         ノーチェンジは「自分の札に満足している」という情報で、残った自分が
+         最弱である見込みが上がる
+       - **大人の時間の先頭手番**は交換を減らす(-0.05)。後ろの席が動く余地が
+         丸ごと残っている
+       - 大人の時間に**先に交換が起きていた**ら減らす(-0.06)。弱い札は
+         もう誰かに渡っている
+
+    2. **継続は、払えるなら払う。**残りが0枚になっても払うほうが1位の確率は
+       上がる(降りると、そのポットを取る目が消える)。例外は1つだけで、
+       **自分が大差の首位にいて、誰かが残り2枚以下**なら降りる。ゲームは誰かが
+       0枚になった時点で終わるので、首位のまま終わらせるほうがよい。
+
+    > [!NOTE]
+    > **実測(新しいシードでの確認走行、相手4卓 × 2万シードの対比較)**
+    > `counting_sniper` に対して勝率 **+2.83pt(SE 0.15pt)**、平均順位
+    > +0.037(SE 0.003)。4卓すべてで勝率が上がった(+2.3〜+3.1pt)。
+    > 内訳は、交換の補正だけで +1.02pt(SE 0.14pt)、残りが継続。
+    > 別のシードで `counting_conservative` と比べると勝率 **+3.37pt(SE 0.16pt)**、
+    > 平均順位 +0.049(SE 0.003)。
+    """
+
+    name = "counting_win"
+
+    # (子供の時間か, 先に動いた席の様子) -> しきい値に足す量。
+    # p0 = 自分が先頭 / kN = 先にN席が動いて全員ノーチェンジ / x = 先に交換があった
+    CUTOFF_SHIFT: dict[tuple[bool, str], float] = {
+        (False, "p0"): -0.05, (False, "k1"): +0.05, (False, "k2"): +0.10, (False, "k3"): +0.10, (False, "x"): -0.06,
+        (True, "p0"): +0.03, (True, "k1"): +0.06, (True, "k2"): +0.10, (True, "k3"): +0.13, (True, "x"): +0.025,
+    }  # fmt: skip
+
+    def cutoff_adjust(self, ctx) -> float:
+        moved = len(ctx.acted_this_deal) + len(ctx.disqualified & set(ctx.turn_order))
+        if moved == 0:
+            seen = "p0"
+        elif ctx.exchanges_this_deal:
+            seen = "x"
+        else:
+            seen = f"k{min(moved, 3)}"
+        return self.CUTOFF_SHIFT[(bool(ctx.is_child_time), seen)]
+
+    def decide_continue_ctx(self, ctx) -> bool:
+        if ctx.my_chips < ctx.required_chips:
+            return False
+        others = _other_chips(ctx)
+        runaway_leader = bool(others) and ctx.my_chips - max(others) >= 8 and min(others) <= 2
+        return not (runaway_leader and ctx.pot_chips < 9)
+
+
+class CountingRank(CountingWin):
+    """**平均順位を最大にする型。**1位は減るが、下位に沈まない。
+
+    交換とクク宣言は counting_win と同じ。違うのは**継続だけ**で、答えが逆になる。
+    継続の支払いは「チップを減らして、ポットを取る目を買う」取引である。1位しか
+    数えないならほぼ常に買い得だが、順位はゲーム終了時のチップで決まるので、
+    順位を数えるなら**払わずにチップを持ったまま終わるほうがよい**局面が多い。
+
+    - ポットが大きい(9枚以上)なら、払った後に8枚以上残るかぎり払う
+    - ポットが小さいなら、**払った後に18枚以上残り、かつ首位に6枚以上の差を
+      つけていない**ときだけ払う。貧しいときは守り、大差の首位も守る
+
+    > [!NOTE]
+    > **実測(新しいシードでの確認走行、相手4卓 × 2万シードの対比較)**
+    > `counting_sniper` に対して平均順位 **+0.047(SE 0.004)**、勝率は
+    > **-1.59pt(SE 0.18pt)**。勝率を捨てて順位を取る型で、どちらが「強い」かは
+    > 何を数えるかで決まる。matrix×3 の卓では順位の伸びが小さい(+0.007)。
+    >
+    > **順位でも counting_win との差は小さい。**直接比べると平均順位 +0.010
+    > (SE 0.004)、勝率 -4.47pt(SE 0.17pt)。conservative×3 と混成の卓では
+    > 上回る(+0.03)が、matrix×3 では逆に負ける(-0.018)。順位を数える場でも、
+    > 相手しだいでは counting_win のほうがよい。
+    """
+
+    name = "counting_rank"
+
+    def decide_continue_ctx(self, ctx) -> bool:
+        remaining = ctx.my_chips - ctx.required_chips
+        if ctx.pot_chips >= 9:
+            return remaining >= 8
+        others = _other_chips(ctx)
+        lead = ctx.my_chips - max(others) if others else 0
+        return remaining >= 18 and lead < 6
+
+
 POLICIES: dict[str, type[BasePolicy] | type[MatrixPolicy]] = {
     AlwaysChange.name: AlwaysChange,
     AlwaysNoChange.name: AlwaysNoChange,
@@ -370,6 +474,8 @@ POLICIES: dict[str, type[BasePolicy] | type[MatrixPolicy]] = {
     CountingConservative.name: CountingConservative,
     CountingExact.name: CountingExact,
     CountingSniper.name: CountingSniper,
+    CountingWin.name: CountingWin,
+    CountingRank.name: CountingRank,
 }
 
 
