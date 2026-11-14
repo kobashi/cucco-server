@@ -2,32 +2,38 @@
 
 方策の判断を**1つだけ反転**し、そのポットの決着まで打たせて、最終1位の確率と
 期待順位がどう動くかを測る道具。`counting_win` / `counting_rank` の数字は
-ここから出した(docs/ai-policy-reference.md §6)。
+ここから出した(docs/ai-policy-reference.md §6)。2〜10人卓で使える。
 
-研究用のスクリプトで、サーバーからは使われない。`fit.py` だけ numpy が要る。
+研究用のスクリプトで、サーバーからは使われない。`fit.py` と `fit_rule.py` は
+numpy が要る。`N` は卓の人数。
 
 ```bash
 cd tools/decision_map
-# 1) ポットの切れ目のチップ状況と最終順位を集める(相手は基準の4卓を巡回)
-python collect.py 120000 vdata.pkl counting_sniper
+# 0) 推論の較正: 「誰かが自分より弱い」の見積もりを、実際の手札と突き合わせる
+python calibrate.py 8 5000
+# 1) ポットの切れ目のチップ状況と最終順位を集める(相手は混成卓と conservative 卓)
+python collect.py 8 24000 vd8.pkl counting_win
 # 2) 価値関数を当てはめる: チップ状況 -> 最終1位の確率 / 期待順位
-uv run --with numpy python fit.py vdata.pkl v.json
-# 3) 判断を反転して差を測る(10万ゲームで約20分、80万判断)
-python rollout.py 100000 dv.pkl v.json counting_sniper
-# 4) 表にする
-python report.py dv.pkl
+uv run --with numpy python fit.py 8 vd8.pkl v8.json
+# 3) 判断を反転して差を測る(出力名は dv<N>.pkl にする。4) がこの名前で読む)
+python rollout.py 8 16000 dv8.pkl v8.json counting_win
+# 4) 交換ルール「持ち続けた負け確率 − β×交換した負け確率 > τ」の β, τ を探す
+uv run --with numpy python fit_rule.py W      # W = 勝率, R = 平均順位
 ```
+
+4) は 2,3,4,6,8,10 人のデータ(`dv2.pkl` … `dv10.pkl`)が揃っている前提。
 
 ## 読み方
 
 - 値はすべて **(する − しない)**。W は勝率(pt)、R は期待順位(正なら上位)
-- 「しきい値のずれ」は、交換のしきい値に足すべき量。0 に近ければ今の数字で合っている
-- 価値関数は「以後は全員が今の方策で打つ」前提の近似。出力の calibration の行で
-  予測と実際が合っているかを必ず見る
+- `fit.py` の calib の行は「予測/実際」。ここがずれていたら地図は信じない
+- `fit_rule.py` の「利得」は**1判断あたり**の見積もり。判断を1つだけ変えた
+  ときの差を足したもので、**多くの判断を同時に変えるルールでは外れる**
+  (継続を払わないルールは、見積もりでは得でも 3〜5人卓の実戦では損だった)
 
 ## 守ること
 
 - **地図は候補を作る道具で、採用の根拠ではない。**作った候補は
-  `tools/fast_eval.py --panel` で、**新しいシード**を使って確かめる
+  `tools/fast_eval.py` で、**新しいシード**を使って確かめる
 - 基準方策や相手を変えたら、1) から作り直す(価値関数も地図もその卓のもの)
 - 重い走行は1本ずつ。並べると遅くなるだけでなく、他の評価走行を落とす

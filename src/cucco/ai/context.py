@@ -156,6 +156,157 @@ class PolicyContext:
         """
         return any(e.target == player_id and e.result == "accepted" for e in self.exchanges_this_deal)
 
+    # -- 他席の札の推論 -------------------------------------------------------
+
+    def seat_roles(self) -> dict[str, str]:
+        """失格していない他席を、**このディールでの動きから**分類する。
+
+        札の見積もりは動きで変わる(docs/ai-policy-reference.md §3):
+
+        - `"known"`   札が分かっている(公開された、または自分との交換で渡した)
+        - `"kept"`    ノーチェンジした。**弱い札なら交換しているはず**なので強め
+        - `"stuck"`   交換を仕掛けたが拒否され、手放したかった札を持ったまま。弱め
+        - `"moved"`   交換が成立した。持っているのは相手が持っていた札で、手がかりなし
+        - `"unacted"` まだ動いていない。手がかりなし
+        """
+        last: dict[str, ExchangeRecord] = {}
+        for e in self.exchanges_this_deal:
+            last[e.requester] = e
+        roles: dict[str, str] = {}
+        for pid in self.turn_order:
+            if pid == self.my_id or pid in self.disqualified:
+                continue
+            if pid in self.known_held:
+                roles[pid] = "known"
+            elif pid in last:
+                roles[pid] = "moved" if last[pid].result in ("accepted", "deck_exchange_accepted") else "stuck"
+            elif pid in self.acted_this_deal:
+                roles[pid] = "kept"
+            else:
+                roles[pid] = "unacted"
+        return roles
+
+    def p_someone_weaker(self, keep_cutoff: float, leak: float = 0.0) -> float:
+        """失格していない他席の**誰かが自分より弱い札を持っている**確率の見積もり。
+
+        数え上げ(`unseen_counts`)に、各席の動きからの推論を重ねる。
+        `unseen_weaker_than_own() / unseen_total` は「見えていない札は全席に均等」
+        と置くが、実際には**ノーチェンジした席は弱い札を持っていない**。8人卓で
+        先の7席が全員ノーチェンジのとき、均等の仮定は 0.95 と言うが実際は 0.66
+        だった。ここではノーチェンジ席の札を「交換されなかったはずの札」に絞る。
+
+        `keep_cutoff` は相手の交換のしきい値(それより弱い札は交換される、という
+        想定。「自分より弱い札の割合」で測る)。`leak` は、想定どおりに打たない
+        相手のために、しきい値より弱い札も残す割合(0 = 完全に絞る)。
+
+        席どうしを独立とみなす近似で、同点は「弱い」に数えない。2〜10人卓で
+        実際の手札と突き合わせて、ずれは ±0.03 以内(leak=0)。
+        """
+        return 1.0 - self.loss_model(keep_cutoff, leak).none_weaker(strength_of(self.own_rank))
+
+    def loss_model(self, keep_cutoff: float, leak: float = 0.0) -> "LossModel":
+        """このディールの「誰が最弱か」の見積もりを、問い合わせられる形で返す。"""
+        return LossModel(self, keep_cutoff, leak)
+
+
+class LossModel:
+    """他席の札の見積もり(数え上げ + 動きからの推論)から、負ける確率を出す。
+
+    - `none_weaker(strength)`: その強さの札を持っていて、**他の誰もそれより
+      弱くない**確率。持ち続けたときに負ける確率は `none_weaker(自分の札)`
+    - `lose_if_keep()` / `lose_if_change()`: 持ち続けた/交換した場合に、この
+      ディールで最弱になる確率の見積もり
+
+    交換の側は粗い近似である: 相手(または山札)から来る札は見えていない札から
+    均等に引くとし、拒否・失格・その後の交換の連鎖は見ない。**この2つの差を
+    そのまましきい値にすると弱い**(ディールの負けは勝率そのものではない。
+    docs/ai-policy-reference.md §6)。判断材料の1つとして使うこと。
+    """
+
+    def __init__(self, ctx: PolicyContext, keep_cutoff: float, leak: float = 0.0) -> None:
+        self.ctx = ctx
+        counts = ctx.unseen_counts
+        total = ctx.unseen_total
+        self.total = total
+        # 弱い順に (強さ, 枚数, 持ち続けられる割合)。札が「持ち続けられる」かは、
+        # 弱いほうから積んだ割合がしきい値以上か。特殊札は性質で決まる。
+        self.cards: list[tuple[int, int, float]] = []
+        below = 0
+        for rank in _RANKS_WEAK_TO_STRONG:
+            n = counts.get(rank, 0)
+            if n:
+                if rank in _ALWAYS_KEPT:
+                    kept = 1.0
+                elif rank in _ALWAYS_DUMPED:
+                    kept = leak
+                else:
+                    kept = 1.0 if total and below / total >= keep_cutoff else leak
+                self.cards.append((_STRENGTH_BY_VALUE[rank], n, kept))
+            below += n
+        self.keep_w = sum(n * k for _, n, k in self.cards)
+        self.dump_w = sum(n * (1.0 - k) for _, n, k in self.cards)
+        roles = ctx.seat_roles()
+        self.known = [strength_of(ctx.known_held[p]) for p, r in roles.items() if r == "known"]
+        self.n_kept = sum(1 for r in roles.values() if r == "kept")
+        self.n_stuck = sum(1 for r in roles.values() if r == "stuck")
+        self.n_uniform = sum(1 for r in roles.values() if r in ("moved", "unacted"))
+        self.target_role = roles.get(ctx.exchange_target) if ctx.exchange_target else None
+
+    def none_weaker(self, strength: int, without_target: bool = False) -> float:
+        """その強さの札より弱い札を、他の誰も持っていない確率。
+
+        `without_target` は交換相手の席を勘定から外す(交換後、その席が持つのは
+        自分の元の札なので、別に扱う)。
+        """
+        if any(k < strength for k in self.known):
+            return 0.0
+        if self.total <= 0:
+            return 1.0
+        weaker = keep_weaker = dump_weaker = 0.0
+        for st, n, kept in self.cards:
+            if st >= strength:
+                break
+            weaker += n
+            keep_weaker += n * kept
+            dump_weaker += n * (1.0 - kept)
+        uniform = weaker / self.total
+        q_kept = keep_weaker / self.keep_w if self.keep_w > 0 else uniform
+        q_stuck = dump_weaker / self.dump_w if self.dump_w > 0 else uniform
+        n_kept, n_stuck, n_uniform = self.n_kept, self.n_stuck, self.n_uniform
+        if without_target:
+            if self.target_role == "kept":
+                n_kept -= 1
+            elif self.target_role == "stuck":
+                n_stuck -= 1
+            elif self.target_role in ("moved", "unacted"):
+                n_uniform -= 1
+        return (1.0 - q_kept) ** n_kept * (1.0 - q_stuck) ** n_stuck * (1.0 - uniform) ** n_uniform
+
+    def lose_if_keep(self) -> float:
+        return self.none_weaker(strength_of(self.ctx.own_rank))
+
+    def lose_if_change(self) -> float:
+        """交換したあと最弱になる確率。来る札は見えていない札から均等に引くと置く。
+
+        席と交換するなら、相手は自分の元の札を持つ。来た札がそれ以上なら自分は
+        最弱ではないので、負けるのは「元の札より弱い札が来て、しかも他の誰も
+        それより弱くない」ときだけ。山札と交換するなら元の札は捨て札になるので、
+        来た札がそのまま他の全席と比べられる。
+        """
+        if self.total <= 0:
+            return self.lose_if_keep()
+        own = strength_of(self.ctx.own_rank)
+        to_deck = self.ctx.exchange_target is None
+        if not to_deck and self.target_role == "known":
+            theirs = strength_of(self.ctx.known_held[self.ctx.exchange_target])
+            return 0.0 if theirs >= own else self.none_weaker(theirs, without_target=True)
+        lose = 0.0
+        for st, n, _ in self.cards:
+            if not to_deck and st >= own:
+                break
+            lose += n / self.total * self.none_weaker(st, without_target=not to_deck)
+        return lose
+
 
 def strength_of(rank: str) -> int:
     """Wire-string wrapper over the domain's strength order (道化 weakest --
@@ -167,6 +318,11 @@ def strength_of(rank: str) -> int:
 # 方策は1判断のたびに何十回も強さを引く。毎回 RANK_ORDER を頭から探すと
 # 対局時間の約3割がここに消えていたので、表にしてある(値は同じ)。
 _STRENGTH_BY_VALUE: dict[str, int] = {r.value: strength(r) for r in RANK_ORDER}
+_RANKS_WEAK_TO_STRONG: tuple[str, ...] = tuple(r.value for r in RANK_ORDER)
+# 性質で決まる札: 拒否・失格させる札と クク は持ち続け、道化〜桶は必ず手放す。
+# (policies.py の NEVER_CHANGE_RANKS / ALWAYS_CHANGE_RANKS と同じ集合。)
+_ALWAYS_KEPT = frozenset({"クク", "人間", "馬", "猫", "家"})
+_ALWAYS_DUMPED = frozenset({"道化", "獅子", "仮面", "桶"})
 
 
 @dataclass

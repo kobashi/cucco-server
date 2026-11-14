@@ -371,99 +371,109 @@ def _other_chips(ctx) -> list[int]:
 
 
 class CountingWin(CountingSniper):
-    """**勝率(最終1位の回数)を最大にする型。**内蔵でいちばん勝つ。
+    """**勝率(最終1位の回数)を最大にする型。**内蔵でいちばん勝つ。2〜10人卓に対応。
 
     counting_sniper に2つ足した。どちらも「判断を1つだけ反転して、そのポットの
-    決着まで打たせ、最終1位の確率がどう動くか」を80万判断ぶん測った地図
+    決着まで打たせ、最終1位の確率がどう動くか」を2〜10人卓で測った地図
     (docs/ai-policy-reference.md §6「どこで勝率を落としているかを測る」)から
     出したもので、勘で置いた数字ではない。
 
-    1. **交換のしきい値を、手番位置と先に動いた席の様子で補正する**
-       (`CUTOFF_SHIFT`)。札別・人数別のしきい値はもともとほぼ最適で、穴は
-       ここだけだった。
+    1. **交換は「負ける確率が下がるか」で決める。**数え上げに、他席の動きからの
+       推論を重ねる(`PolicyContext.loss_model`):
 
-       - 先に動いた席が**全員ノーチェンジ**なら、もっと交換する(+0.05〜+0.13)。
-         ノーチェンジは「自分の札に満足している」という情報で、残った自分が
-         最弱である見込みが上がる
-       - **大人の時間の先頭手番**は交換を減らす(-0.05)。後ろの席が動く余地が
-         丸ごと残っている
-       - 大人の時間に**先に交換が起きていた**ら減らす(-0.06)。弱い札は
-         もう誰かに渡っている
+       - **ノーチェンジした席は弱い札を持っていない**(弱ければ交換している)
+       - 交換を拒否された席は、手放したかった弱い札を持ったまま
+       - 交換で自分が渡した札は、相手が持っている(頭脳が覚えている)
+
+       そのうえで「持ち続けて最弱になる確率」と「交換して最弱になる確率」を
+       見積もり、**交換で `CHANGE_MARGIN` 以上下がるときだけ交換する**。
+       人数別の表は持たない。席が多いほどノーチェンジや捨て札の情報が増え、
+       見積もりが勝手に鋭くなる。
 
     2. **継続は、払えるなら払う。**残りが0枚になっても払うほうが1位の確率は
-       上がる(降りると、そのポットを取る目が消える)。例外は1つだけで、
-       **自分が大差の首位にいて、誰かが残り2枚以下**なら降りる。ゲームは誰かが
+       上がる(降りると、そのポットを取る目が消える)。降りるのは首位を守る
+       ときだけ: 大差の首位で誰かが残り2枚以下のとき、および4人以上の卓で
+       他席の平均の2倍以上を持っていてポットが小さいとき。ゲームは誰かが
        0枚になった時点で終わるので、首位のまま終わらせるほうがよい。
 
     > [!NOTE]
-    > **実測(新しいシードでの確認走行、相手4卓 × 2万シードの対比較)**
-    > `counting_sniper` に対して勝率 **+2.83pt(SE 0.15pt)**、平均順位
-    > +0.037(SE 0.003)。4卓すべてで勝率が上がった(+2.3〜+3.1pt)。
-    > 内訳は、交換の補正だけで +1.02pt(SE 0.14pt)、残りが継続。
-    > 別のシードで `counting_conservative` と比べると勝率 **+3.37pt(SE 0.16pt)**、
-    > 平均順位 +0.049(SE 0.003)。
+    > **実測(混成卓、6,000シードの対比較、新しいシード)**
+    > `counting_conservative` に対する勝率差は、2人 +6.1 / 3人 +4.1 / 4人 +2.5 /
+    > 5人 +2.6 / 6人 +3.1 / 7人 +1.0 / 8人 +1.9 / 9人 +1.3 / 10人 +2.2 pt
+    > (SE 0.5〜0.6pt)。平均順位は全人数で上がった(+0.06〜+0.18)。
+    > 比較相手の counting_conservative も「渡した札を覚える」修正を受けた後の
+    > ものなので、この差は推論と継続のぶんである。
     """
 
     name = "counting_win"
 
-    # (子供の時間か, 先に動いた席の様子) -> しきい値に足す量。
-    # p0 = 自分が先頭 / kN = 先にN席が動いて全員ノーチェンジ / x = 先に交換があった
-    CUTOFF_SHIFT: dict[tuple[bool, str], float] = {
-        (False, "p0"): -0.05, (False, "k1"): +0.05, (False, "k2"): +0.10, (False, "k3"): +0.10, (False, "x"): -0.06,
-        (True, "p0"): +0.03, (True, "k1"): +0.06, (True, "k2"): +0.10, (True, "k3"): +0.13, (True, "x"): +0.025,
-    }  # fmt: skip
+    # 交換で「最弱になる確率」がこれ以上下がるなら交換する。0 にしないのは、
+    # 交換の側の見積もりが拒否・失格・その後の連鎖を見ていない粗い近似だから。
+    CHANGE_MARGIN = 0.06
 
-    def cutoff_adjust(self, ctx) -> float:
-        moved = len(ctx.acted_this_deal) + len(ctx.disqualified & set(ctx.turn_order))
-        if moved == 0:
-            seen = "p0"
-        elif ctx.exchanges_this_deal:
-            seen = "x"
-        else:
-            seen = f"k{min(moved, 3)}"
-        return self.CUTOFF_SHIFT[(bool(ctx.is_child_time), seen)]
+    def opponent_keep_cutoff(self, ctx) -> float:
+        """相手が「これより弱ければ交換する」と置くしきい値(counting_conservative の式)。"""
+        total = ctx.unseen_total
+        danger = (ctx.unseen_counts.get(Rank.HUMAN.value, 0) + ctx.unseen_counts.get(Rank.CAT.value, 0)) / total
+        cutoff = CountingConservative.cutoff_base - self.cutoff_slope * ctx.alive_count - CountingConservative.danger_weight * danger
+        return cutoff - (self.child_time_extra if ctx.is_child_time else 0.0)
+
+    def decide_change_ctx(self, ctx) -> bool:
+        own = ctx.own_rank
+        if own in NEVER_CHANGE_RANKS or own not in FULL_DECK_COUNTS:
+            return False
+        if own in {r.value for r in ALWAYS_CHANGE_RANKS}:
+            return True
+        if ctx.unseen_total <= 0:
+            return False
+        model = ctx.loss_model(self.opponent_keep_cutoff(ctx))
+        return model.lose_if_keep() - model.lose_if_change() > self.CHANGE_MARGIN
 
     def decide_continue_ctx(self, ctx) -> bool:
         if ctx.my_chips < ctx.required_chips:
             return False
         others = _other_chips(ctx)
-        runaway_leader = bool(others) and ctx.my_chips - max(others) >= 8 and min(others) <= 2
-        return not (runaway_leader and ctx.pot_chips < 9)
+        if not others:
+            return True
+        if ctx.pot_chips < 9 and ctx.my_chips - max(others) >= 8 and min(others) <= 2:
+            return False  # 大差の首位で、誰かが飛びそう
+        table = len(others) + 1
+        remaining = ctx.my_chips - ctx.required_chips
+        if table >= 4 and ctx.pot_chips < 3 * table and remaining >= 2 * sum(others) / len(others):
+            return False  # 他席の平均の2倍を持っている。小さいポットに賭けない
+        return True
 
 
 class CountingRank(CountingWin):
-    """**平均順位を最大にする型。**1位は減るが、下位に沈まない。
+    """**平均順位を最大にする型。**1位は減るが、下位に沈まない。**7人以上の卓向け。**
 
-    交換とクク宣言は counting_win と同じ。違うのは**継続だけ**で、答えが逆になる。
-    継続の支払いは「チップを減らして、ポットを取る目を買う」取引である。1位しか
-    数えないならほぼ常に買い得だが、順位はゲーム終了時のチップで決まるので、
-    順位を数えるなら**払わずにチップを持ったまま終わるほうがよい**局面が多い。
+    交換とクク宣言は counting_win と同じ。違うのは**継続だけ**である。
+    継続の支払いは「チップを減らして、ポットを取る目を買う」取引で、1位しか
+    数えないならほぼ常に買い得だが、順位はゲーム終了時のチップで決まる。
+    人数が多いとポットを取れる見込みが下がり、抜かれる相手が増えるので、
+    **順位を数えるなら払わずにチップを持ったまま終わるほうがよい**。
 
-    - ポットが大きい(9枚以上)なら、払った後に8枚以上残るかぎり払う
-    - ポットが小さいなら、**払った後に18枚以上残り、かつ首位に6枚以上の差を
-      つけていない**ときだけ払う。貧しいときは守り、大差の首位も守る
+    - **7人以上: 継続を払わない。**8〜10人卓では、どのチップ状況でも払うと
+      期待順位が下がった(1回の支払いで -0.07〜-0.34 位)
+    - **6人以下: counting_win と同じ**(この人数では別の型にならない)。
+      3〜5人卓で「余裕があるときだけ払う」形を試したが、counting_win より
+      順位も勝率も下がった(3人卓で平均順位 -0.087、勝率 -7.9pt)。2人卓は
+      順位が勝ち負けそのものである
 
     > [!NOTE]
-    > **実測(新しいシードでの確認走行、相手4卓 × 2万シードの対比較)**
-    > `counting_sniper` に対して平均順位 **+0.047(SE 0.004)**、勝率は
-    > **-1.59pt(SE 0.18pt)**。勝率を捨てて順位を取る型で、どちらが「強い」かは
-    > 何を数えるかで決まる。matrix×3 の卓では順位の伸びが小さい(+0.007)。
-    >
-    > **順位でも counting_win との差は小さい。**直接比べると平均順位 +0.010
-    > (SE 0.004)、勝率 -4.47pt(SE 0.17pt)。conservative×3 と混成の卓では
-    > 上回る(+0.03)が、matrix×3 では逆に負ける(-0.018)。順位を数える場でも、
-    > 相手しだいでは counting_win のほうがよい。
+    > **実測(混成卓、6,000シードの対比較、counting_win との差)**
+    > 平均順位は 7人 +0.110 / 8人 +0.113 / 9人 +0.153 / 10人 **+0.262**
+    > (SE 0.03〜0.04)。勝率は -3.8〜-6.5pt。順位を取って1位を捨てる型である。
     """
 
     name = "counting_rank"
 
+    NEVER_PAY_FROM = 7  # この人数以上の卓では継続を払わない
+
     def decide_continue_ctx(self, ctx) -> bool:
-        remaining = ctx.my_chips - ctx.required_chips
-        if ctx.pot_chips >= 9:
-            return remaining >= 8
-        others = _other_chips(ctx)
-        lead = ctx.my_chips - max(others) if others else 0
-        return remaining >= 18 and lead < 6
+        if len(ctx.chips) >= self.NEVER_PAY_FROM:
+            return False
+        return super().decide_continue_ctx(ctx)
 
 
 POLICIES: dict[str, type[BasePolicy] | type[MatrixPolicy]] = {

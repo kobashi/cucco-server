@@ -153,6 +153,15 @@ class MockAI:
         elif event.type == "exchange_result":
             # Private fields are merged in only for the involved parties.
             if "your_new_card" in p:
+                # 交換の当事者は、相手がいま何を持っているかを知っている: 自分が
+                # 手放した札である。公開情報ではないので tracker(公開イベントだけ
+                # を見る)は拾わない。ここで足さないと、「渡してきた席のほうが
+                # 弱い札を持っている=自分は最弱ではない」と分かっている場面でも
+                # 交換してしまう(4人卓で流れてきた札の29%がこれに当たり、その86%
+                # で交換していた)。以後その札が動けば tracker が一緒に動かす。
+                other = p.get("target") if p.get("requester") == me else p.get("requester")
+                if other and other != me and self.my_hand:
+                    self.tracker.known_held[other] = self.my_hand
                 self.my_hand = p["your_new_card"]
                 self._own_card_original = False  # 相手から来た札
             elif p.get("actor") == me and "new_card" in p:
