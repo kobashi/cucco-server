@@ -17,6 +17,8 @@ python collect.py 8 24000 vd8.pkl counting_win
 uv run --with numpy python fit.py 8 vd8.pkl v8.json
 # 3) 判断を反転して差を測る(出力名は dv<N>.pkl にする。4) がこの名前で読む)
 python rollout.py 8 16000 dv8.pkl v8.json counting_win
+# 3') クク宣言の「いま宣言する/待つ」を反転して測る
+python rollout_cucco.py 8 30000 dc8.pkl v8.json
 # 4) 交換ルール「持ち続けた負け確率 − β×交換した負け確率 > τ」の β, τ を探す
 uv run --with numpy python fit_rule.py W      # W = 勝率, R = 平均順位
 ```

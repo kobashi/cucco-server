@@ -373,8 +373,8 @@ def _other_chips(ctx) -> list[int]:
 class CountingWin(CountingSniper):
     """**勝率(最終1位の回数)を最大にする型。**内蔵でいちばん勝つ。2〜10人卓に対応。
 
-    counting_sniper に2つ足した。どちらも「判断を1つだけ反転して、そのポットの
-    決着まで打たせ、最終1位の確率がどう動くか」を2〜10人卓で測った地図
+    counting_sniper の交換・継続・クク宣言を作り直した。どれも「判断を1つだけ反転して、
+    そのポットの決着まで打たせ、最終1位の確率がどう動くか」を2〜10人卓で測った地図
     (docs/ai-policy-reference.md §6「どこで勝率を落としているかを測る」)から
     出したもので、勘で置いた数字ではない。
 
@@ -389,6 +389,8 @@ class CountingWin(CountingSniper):
        見積もり、**交換で `CHANGE_MARGIN` 以上下がるときだけ交換する**。
        人数別の表は持たない。席が多いほどノーチェンジや捨て札の情報が増え、
        見積もりが勝手に鋭くなる。
+
+    クク宣言は、最弱の席がほぼ決まっているときだけ凍結する(`_declare_now`)。
 
     2. **継続は、払えるなら払う。**残りが0枚になっても払うほうが1位の確率は
        上がる(降りると、そのポットを取る目が消える)。降りるのは首位を守る
@@ -428,6 +430,32 @@ class CountingWin(CountingSniper):
             return False
         model = ctx.loss_model(self.opponent_keep_cutoff(ctx))
         return model.lose_if_keep() - model.lose_if_change() > self.CHANGE_MARGIN
+
+    # クク宣言: 「いま開示したら最弱」の席がこの確からしさで決まっていれば凍結する
+    FREEZE_CERTAINTY = 0.9
+
+    def _declare_now(self, ctx) -> bool:
+        """クク宣言のタイミング。**誰が最弱かが分かっているときだけ凍結する。**
+
+        counting_sniper は「自分以上にチップを持つ席が交換の対象にされた」ら
+        凍結するが、宣言の判断を1回ずつ反転して測ると(3〜10人卓、95万判断)
+        **狙う相手のチップは結果に関係がなかった**。効いたのは確からしさだけで、
+        最弱の席がほぼ決まっている(推論で 0.9 以上)ときの凍結は +0.43pt、
+        決まっていないときの凍結は大人の時間で -0.4〜-1.5pt だった。
+
+        > [!WARNING]
+        > **勝率には出ていない。**counting_sniper の条件のままの counting_win
+        > との対比較(混成卓、各2〜4万シード)で、勝率差は 4人 -0.08 / 6人 +0.16 /
+        > 8人 -0.16 / 10人 +0.01 pt(SE 0.10〜0.14pt)とすべて誤差の内。平均順位は
+        > 6人卓で +0.016(SE 0.005)、ほかは差なし。**クク宣言のタイミングは、
+        > どう決めても成績をほとんど動かさない。**根拠のない条件(相手のチップ)を
+        > 外し、測定と矛盾しない形にした、という以上の意味はない。
+        """
+        if ctx.unacted_before_me():
+            return True  # 取られる前に撃つ。待てない窓
+        cutoff = self.opponent_keep_cutoff(ctx) if ctx.unseen_total > 0 else 0.0
+        probs = ctx.loss_model(cutoff).weakest_probs()
+        return bool(probs) and max(probs.values()) >= self.FREEZE_CERTAINTY
 
     def decide_continue_ctx(self, ctx) -> bool:
         if ctx.my_chips < ctx.required_chips:

@@ -9,7 +9,7 @@
 - 順位型は7人以上の卓で継続を払わない。6人以下では勝率型と同じ
 """
 
-from cucco.ai.context import FULL_DECK_COUNTS, PolicyContext
+from cucco.ai.context import FULL_DECK_COUNTS, ExchangeRecord, PolicyContext
 from cucco.ai.policies import CountingRank, CountingWin
 
 WIN, RANK = CountingWin(), CountingRank()
@@ -78,3 +78,35 @@ def test_rank_type_never_pays_at_seven_or_more():
     assert cont(WIN, 40, (25,) * 6)
     assert not cont(RANK, 40, (25,) * 6)
     assert not cont(RANK, 40, (25,) * 9, pot=30)
+
+
+# -- クク宣言: 誰が最弱かが分かっているときだけ凍結する ------------------------
+
+
+def cucco(**kw) -> PolicyContext:
+    return ctx(own_rank="クク", **kw)
+
+
+def test_it_declares_while_a_seat_before_it_can_still_take_the_cucco():
+    assert WIN._declare_now(cucco(acted_this_deal=frozenset({"a", "b"})))  # c がまだ動いていない
+
+
+def test_it_waits_in_the_safe_window_when_nobody_is_known_to_be_weakest():
+    assert not WIN._declare_now(cucco(acted_this_deal=frozenset({"a", "b", "c"})))
+
+
+def test_it_does_not_fire_just_because_a_rich_seat_was_taken_from():
+    """counting_sniper の条件。相手のチップは測定では結果に関係がなかった。"""
+    c = cucco(
+        acted_this_deal=frozenset({"a", "b", "c", "me", "d"}),
+        exchanges_this_deal=(ExchangeRecord(requester="d", target="e", result="accepted"),),
+        chips={**{p: 25 for p in SEATS}, "e": 60},
+    )
+    assert not WIN._declare_now(c)
+
+
+def test_it_freezes_when_a_seat_is_known_to_hold_the_weakest_card():
+    # 道化より弱い札は無い。a がそれを持っていると分かっているなら、いま凍結すれば a が負ける。
+    c = cucco(acted_this_deal=frozenset({"a", "b", "c", "me"}), known_held={"a": "道化"})
+    assert WIN._declare_now(c)
+    assert RANK._declare_now(c)

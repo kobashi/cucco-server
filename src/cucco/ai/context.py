@@ -246,6 +246,7 @@ class LossModel:
         self.keep_w = sum(n * k for _, n, k in self.cards)
         self.dump_w = sum(n * (1.0 - k) for _, n, k in self.cards)
         roles = ctx.seat_roles()
+        self.roles = roles
         self.known = [strength_of(ctx.known_held[p]) for p, r in roles.items() if r == "known"]
         self.n_kept = sum(1 for r in roles.values() if r == "kept")
         self.n_stuck = sum(1 for r in roles.values() if r == "stuck")
@@ -281,6 +282,63 @@ class LossModel:
             elif self.target_role in ("moved", "unacted"):
                 n_uniform -= 1
         return (1.0 - q_kept) ** n_kept * (1.0 - q_stuck) ** n_stuck * (1.0 - uniform) ** n_uniform
+
+    def weakest_probs(self) -> dict[str, float]:
+        """**いま開示したら誰が最弱か**の見積もり(他席だけ。合計1)。
+
+        クク宣言はディールを凍結し、その瞬間の最弱者が敗者になる。宣言する側
+        (クク を持っている自分)は最弱にならないので、他席のあいだで配分する。
+        同点は見ない近似。
+        """
+        if not self.roles:
+            return {}
+        if self.total <= 0 and not self.known:
+            return {pid: 1.0 / len(self.roles) for pid in self.roles}
+        strengths = [st for st, _, _ in self.cards]
+        uniform = [n / self.total for _, n, _ in self.cards] if self.total else []
+        kept = [n * k / self.keep_w for _, n, k in self.cards] if self.keep_w > 0 else uniform
+        stuck = [n * (1.0 - k) / self.dump_w for _, n, k in self.cards] if self.dump_w > 0 else uniform
+        grid = sorted(set(strengths) | {strength_of(self.ctx.known_held[p]) for p, r in self.roles.items() if r == "known"})
+        index = {st: i for i, st in enumerate(grid)}
+
+        def on_grid(dist: list[float]) -> list[float]:
+            out = [0.0] * len(grid)
+            for st, w in zip(strengths, dist):
+                out[index[st]] = w
+            return out
+
+        by_role = {"kept": on_grid(kept), "stuck": on_grid(stuck), "moved": on_grid(uniform), "unacted": on_grid(uniform)}
+        dists: dict[str, list[float]] = {}
+        for pid, role in self.roles.items():
+            if role == "known":
+                point = [0.0] * len(grid)
+                point[index[strength_of(self.ctx.known_held[pid])]] = 1.0
+                dists[pid] = point
+            else:
+                dists[pid] = by_role[role]
+        # above[pid][i] = その席の札が grid[i] より強い確率
+        above = {}
+        for pid, dist in dists.items():
+            tail, acc = [0.0] * len(grid), 0.0
+            for i in range(len(grid) - 1, -1, -1):
+                tail[i] = acc
+                acc += dist[i]
+            above[pid] = tail
+        probs = {}
+        for pid, dist in dists.items():
+            total = 0.0
+            for i, w in enumerate(dist):
+                if w:
+                    rest = 1.0
+                    for other, tail in above.items():
+                        if other != pid:
+                            rest *= tail[i]
+                    total += w * rest
+            probs[pid] = total
+        norm = sum(probs.values())
+        if norm <= 0:
+            return {pid: 1.0 / len(probs) for pid in probs}
+        return {pid: v / norm for pid, v in probs.items()}
 
     def lose_if_keep(self) -> float:
         return self.none_weaker(strength_of(self.ctx.own_rank))
