@@ -366,6 +366,179 @@ class LossModel:
         return lose
 
 
+    # -- 判定時の見積もり(札の流れ) ------------------------------------------
+    #
+    # 上の lose_if_keep / lose_if_change は「いま全員が開いたら」の見積もりで、
+    # 自分より後ろの席がこれから何をするかを見ない。実際には判定までに札が動く:
+    #
+    # - 弱い札を持った席は次の席と交換し、渡された席もまた次へ流す。流れは親で
+    #   終わり、その札は**山札に抜ける**
+    # - 流れの途中の席は、次の席が持っていた札を受け取る。それが弱い札でも
+    #   もう動けない(**奪った札は手元に残る**)
+    # - 道化を受け取った席、人間に仕掛けた席、猫に仕掛けた札の元の持ち主は
+    #   **失格して比較から消える**(失格者は敗者だが、最弱の席を救わない)
+    #
+    # 後ろの席を手番順にたどって「判定時に、ある強さより弱い札が残っていない
+    # 確率」を出す。札は見えていない札から独立に引くと置き、後ろの席は
+    # 「しきい値より弱ければ交換、渡された札は必ず流す」と仮定する。
+
+    def _flow_setup(self) -> None:
+        if hasattr(self, "_p_house"):
+            return
+        counts, total = self.ctx.unseen_counts, self.total
+        share = (lambda r: counts.get(r, 0) / total) if total > 0 else (lambda r: 0.0)
+        self._p_house = share("馬") + share("家")
+        self._p_human = share("人間")
+        self._p_cat = share("猫")
+        self._p_cucco = share("クク")
+        self._p_joker = share("道化")
+        special = {_STRENGTH_BY_VALUE[r] for r in ("馬", "家", "人間", "猫", "クク", "道化")}
+        # 普通の札(獅子〜12): (強さ, 確率, 交換に出される割合)
+        self._ordinary = [(st, n / total, 1.0 - kept) for st, n, kept in self.cards if st not in special] if total > 0 else []
+        self._n_unacted = sum(1 for r in self.roles.values() if r == "unacted")
+        self._n_moved = sum(1 for r in self.roles.values() if r == "moved")
+        self._chains: dict[int, tuple[list[float], list[list[float]]]] = {}
+
+    def _classes(self, t: int) -> tuple[float, float, float, float]:
+        """普通の札を (流す・t より弱い, 流す・t 以上, 持つ・弱い, 持つ・以上) の確率に分ける。"""
+        dw = do = gw = go = 0.0
+        for st, pr, dump in self._ordinary:
+            if st < t:
+                dw += pr * dump
+                gw += pr * (1.0 - dump)
+            else:
+                do += pr * dump
+                go += pr * (1.0 - dump)
+        return dw, do, gw, go
+
+    def _acted_safe(self, t: int) -> float:
+        """もう動いた席(と札が分かっている席)に、t より弱い札が**ない**確率。"""
+        if any(k < t for k in self.known):
+            return 0.0
+        if self.total <= 0:
+            return 1.0
+        weaker = keep_weaker = dump_weaker = 0.0
+        for st, n, kept in self.cards:
+            if st >= t:
+                break
+            weaker += n
+            keep_weaker += n * kept
+            dump_weaker += n * (1.0 - kept)
+        uniform = weaker / self.total
+        q_kept = keep_weaker / self.keep_w if self.keep_w > 0 else uniform
+        q_stuck = dump_weaker / self.dump_w if self.dump_w > 0 else uniform
+        # 交換が成立した席が持つのは、受け取れる札(クク と普通の札)のどれか
+        dw, do, gw, go = self._classes(t)
+        takeable = self._p_cucco + dw + do + gw + go
+        q_moved = (dw + gw) / takeable if takeable > 0 else uniform
+        return (1.0 - q_kept) ** self.n_kept * (1.0 - q_stuck) ** self.n_stuck * (1.0 - q_moved) ** self._n_moved
+
+    # 交換を仕掛ける席が持っている札の状態: (t より弱い/以上/道化) × (配られた札か)
+    _W_OWN, _O_OWN, _J_OWN, _W_PUSHED, _O_PUSHED = range(5)
+
+    def _chain(self, t: int) -> tuple[list[float], list[list[float]]]:
+        """後ろの未行動の席 1..k について、判定時に t より弱い札が残らない確率。
+
+        `free[j]`  = 席 j 以降が配られた札のまま手番を迎えるとき
+        `push[j][m]` = 状態 m の札を持った席が、席 j に交換を仕掛けるとき
+                       (仕掛けた席自身の結末も含む。j = k+1 は山札)
+        """
+        hit = self._chains.get(t)
+        if hit is not None:
+            return hit
+        k = self._n_unacted
+        ph, pn, pc, pk, pj = self._p_house, self._p_human, self._p_cat, self._p_cucco, self._p_joker
+        dw, do, gw, go = self._classes(t)
+        stuck_ok = (0.0, 1.0, 0.0, 0.0, 1.0)  # その札を持ったまま残ったとき、t 以上か
+        own = (True, True, True, False, False)
+        pushed_as = (self._W_PUSHED, self._O_PUSHED, None, self._W_PUSHED, self._O_PUSHED)
+        free = [1.0] * (k + 2)
+        push = [[0.0] * 5 for _ in range(k + 2)]
+        rest = 1.0 - ph
+        for m in range(5):
+            # 山札: 馬・家は引き直し、クク は拒否、人間は自分が失格、猫は札の元の
+            # 持ち主が失格、道化は最強になる
+            cat = 1.0 if own[m] else stuck_ok[m]
+            push[k + 1][m] = (pk * stuck_ok[m] + pn + pc * cat + pj + do + go) / rest if rest > 0 else stuck_ok[m]
+        for j in range(k, 0, -1):
+            after = free[j + 1]
+            for m in range(5):
+                # 席 j が札を受け取ったあと: 道化なら失格、それ以外は次へ流す
+                received = after if pushed_as[m] is None else push[j + 1][pushed_as[m]]
+                cat = 1.0 if own[m] else stuck_ok[m]
+                push[j][m] = (
+                    ph * push[j + 1][m]  # 馬・家: 飛ばして次の席へ
+                    + pn * after  # 人間: 仕掛けた席が失格
+                    + pc * cat * after  # 猫: 札の元の持ち主が失格
+                    + (pk + pj + do + go) * received  # 成立(道化を受け取れば自分が失格して消える)
+                )
+            free[j] = (
+                (ph + pn + pc + pk + go) * after
+                + pj * push[j + 1][self._J_OWN]
+                + dw * push[j + 1][self._W_OWN]
+                + do * push[j + 1][self._O_OWN]
+            )
+        self._chains[t] = (free, push)
+        return free, push
+
+    def final_lose_if_keep(self) -> float:
+        """持ち続けたとき、**判定時に**最弱(同点を含む)になる確率の見積もり。"""
+        self._flow_setup()
+        own = strength_of(self.ctx.own_rank)
+        if self.total <= 0:
+            return self._acted_safe(own)
+        return self._acted_safe(own) * self._chain(own)[0][1]
+
+    def final_lose_if_change(self) -> float:
+        """交換を仕掛けたとき、判定時に負ける(失格を含む)確率の見積もり。
+
+        仕掛けた結果ごとに分ける: 人間に当たる・道化を受け取る・配られた札で猫に
+        当たると失格。クク を受け取れば負けない。普通の札を受け取ったら、その札を
+        基準に「他の誰も弱くない」確率を出す。渡した札は相手がさらに流す。
+        """
+        self._flow_setup()
+        own_rank = self.ctx.own_rank
+        own = strength_of(own_rank)
+        if self.total <= 0:
+            return self._acted_safe(own)
+        if self.ctx.exchange_target is not None and self.target_role == "known":
+            return self.lose_if_change()
+        k = self._n_unacted
+        ph, pn, pc, pk, pj = self._p_house, self._p_human, self._p_cat, self._p_cucco, self._p_joker
+        original = self.ctx.own_card_original
+        mine_joker = own_rank == "道化"
+        mine_dumped = True
+        for st, _, kept in self.cards:
+            if st == own:
+                mine_dumped = kept < 0.5
+        mine_dumped = mine_dumped or own_rank in _ALWAYS_DUMPED
+        stuck_free = self._chain(own)[0]  # 拒否されて元の札のまま残るとき
+        stuck_acted = self._acted_safe(own)
+        # 受け取る札 y ごとの (確率, もう動いた席が安全, 後ろの鎖)
+        taken = []
+        for st, pr, _ in self._ordinary:
+            safe = self._acted_safe(st)
+            if safe > 0.0:
+                taken.append((st, pr, safe, self._chain(st)))
+        rest = 1.0 - ph
+        if rest <= 0:
+            return stuck_acted
+        lose = (pk * stuck_acted + pn + pc * (1.0 if original else stuck_acted) + sum(pr * safe for _, pr, safe, _ in taken)) / rest
+        for j in range(k, 0, -1):
+            swap = 0.0
+            for st, pr, safe, (free, push) in taken:
+                if mine_joker:
+                    others = free[j + 1]  # 道化を渡された席は失格して消える
+                elif not mine_dumped:
+                    others = free[j + 1] if own >= st else 0.0  # 相手はその札を持つ
+                else:
+                    others = push[j + 1][self._W_PUSHED if own < st else self._O_PUSHED]
+                swap += pr * safe * others
+            cat = 1.0 if original else stuck_acted * stuck_free[j + 1]
+            lose = ph * lose + pn + pc * cat + pj + swap
+        return lose
+
+
 def strength_of(rank: str) -> int:
     """Wire-string wrapper over the domain's strength order (道化 weakest --
     the elevated-joker exception only exists after a deck draw, which the

@@ -46,6 +46,21 @@ def test_it_keeps_when_it_knows_a_weaker_card_is_out_there():
     assert not WIN.decide_change_ctx(ctx(own_rank="3", acted_this_deal=kept, known_held={"a": "1"}))
 
 
+def test_it_keeps_even_a_card_it_always_dumps_when_a_weaker_one_is_known():
+    """獅子は必ず交換する札だが、前の席に道化を渡して受け取った獅子なら持つ。
+
+    渡した相手はもう動けないので、獅子を持ち続ければ負けない。次の席に流すと
+    その保証を捨てることになる。
+    """
+    took_my_joker = dict(
+        acted_this_deal=frozenset({"a", "b", "c"}),
+        exchanges_this_deal=(ExchangeRecord(requester="c", target="me", result="accepted"),),
+    )
+    assert WIN.decide_change_ctx(ctx(own_rank="獅子", **took_my_joker))  # 相手の札が分からなければ交換
+    assert not WIN.decide_change_ctx(ctx(own_rank="獅子", known_held={"c": "道化"}, **took_my_joker))
+    assert WIN.decide_change_ctx(ctx(own_rank="獅子", known_held={"c": "仮面"}, **took_my_joker))  # 相手のほうが強い
+
+
 def test_both_types_exchange_identically():
     for kw in (dict(), dict(acted_this_deal=frozenset({"a"})), dict(deal_number=2), dict(turn_order=("me", "a", "b", "c", "d", "e"))):
         assert _changes_at(WIN, **kw) == _changes_at(RANK, **kw)

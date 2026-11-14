@@ -25,14 +25,14 @@ class Probe(BaseCls):
         base = super().decide_change_ctx(ctx); feats = None
         if ST["log"] is not None:
             own = ctx.own_rank; tot = ctx.unseen_total
-            num = own in pol.FULL_DECK_COUNTS and own not in pol.NEVER_CHANGE_RANKS and own not in ALWAYS
+            num = own in pol.FULL_DECK_COUNTS and own not in pol.NEVER_CHANGE_RANKS
             feats = dict(num=False, rank=own, n=N, li=ST["li"])
             if num and tot > 0:
                 c, danger = kcut(ctx); lm = ctx.loss_model(c); roles = list(ctx.seat_roles().values())
                 others = [v for p, v in ctx.chips.items() if p != ctx.my_id]
                 feats = dict(num=True, rank=own, n=N, li=ST["li"], alive=ctx.alive_count, child=bool(ctx.is_child_time), deal=min(ctx.deal_number, 5),
                              deck=ctx.exchange_target is None, pw=ctx.unseen_weaker_than_own() / tot, danger=danger, kc=c,
-                             lk=lm.lose_if_keep(), lc=lm.lose_if_change(), nk=roles.count("kept"), ns=roles.count("stuck"),
+                             lk=lm.lose_if_keep(), lc=lm.lose_if_change(), flk=lm.final_lose_if_keep(), flc=lm.final_lose_if_change(), always=own in ALWAYS, nk=roles.count("kept"), ns=roles.count("stuck"),
                              nmv=roles.count("moved"), nu=roles.count("unacted"), nkn=roles.count("known"),
                              tknown=lm.target_role == "known", flowed=ctx.was_taken_from(ctx.my_id), orig=ctx.own_card_original,
                              chips=ctx.my_chips, pot=ctx.pot_chips, ahead=sum(1 for v in others if v > ctx.my_chips), nopp=len(others))

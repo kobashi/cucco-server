@@ -139,3 +139,48 @@ async def test_it_does_not_change_a_card_that_came_from_a_seat_now_holding_a_wea
         ev("turn_prompt", {"player_id": "me", "timeout_sec": 30}),
     ])  # fmt: skip
     assert [t for t, _ in ai.conn.sent if t.endswith("_declare")] == ["no_change_declare"]
+
+
+# -- 判定時の見積もり(札の流れ) ----------------------------------------------
+
+
+def test_with_nobody_left_to_act_the_final_estimate_is_the_snapshot():
+    """自分が最後なら、札はもう動かない。判定時の見積もりは「いま開いたら」と同じ。"""
+    c = ctx(turn_order=("a", "b", "c", "d", "me"), acted_this_deal=frozenset({"a", "b", "c", "d"}))
+    model = c.loss_model(0.4)
+    assert model.final_lose_if_keep() == pytest.approx(model.lose_if_keep())
+
+
+def test_weak_cards_behind_me_drain_away_before_the_showdown():
+    """後ろの席の弱い札は、判定までに山札へ抜けるか、持ち主ごと失格で消える。
+
+    「いま開いたら」の見積もりは後ろの4席に弱い札が残ると数えるので、持ち続けた
+    ときの負けを低く見すぎる(4人卓の実測: 見積もり 0.11 に対し実際 0.24)。
+    """
+    c = ctx(own_rank="5", turn_order=("me", "a", "b", "c", "d"))
+    model = c.loss_model(0.4)
+    assert model.final_lose_if_keep() > 1.5 * model.lose_if_keep()
+
+
+def test_a_known_weaker_card_still_settles_the_final_estimate():
+    c = ctx(own_rank="5", turn_order=("a", "me", "b", "c", "d"), acted_this_deal=frozenset({"a"}), known_held={"a": "1"})
+    assert c.loss_model(0.4).final_lose_if_keep() == 0.0
+
+
+def test_changing_counts_the_ways_an_exchange_gets_you_disqualified():
+    """人間に仕掛ける・道化を受け取る・配られた札で猫に当たると失格。負けに数える。"""
+    c = ctx(own_rank="5", turn_order=("me", "a", "b", "c", "d"))
+    floor = (2 + 2) / 43  # 次の席が人間か道化(見えていない43枚のうち2枚ずつ)
+    dealt = c.loss_model(0.4).final_lose_if_change()
+    assert floor < dealt < 1.0
+    passed_on = ctx(own_rank="5", turn_order=("me", "a", "b", "c", "d"), own_card_original=True)
+    assert passed_on.loss_model(0.4).final_lose_if_change() > dealt  # 配られた札だと猫でも失格
+
+
+def test_final_estimates_are_probabilities_at_every_seat():
+    for i in range(5):
+        order = tuple(["a", "b", "c", "d"][:i] + ["me"] + ["a", "b", "c", "d"][i:])
+        for rank in ("道化", "獅子", "0", "5", "12"):
+            model = ctx(own_rank=rank, turn_order=order, acted_this_deal=frozenset(order[:i])).loss_model(0.4)
+            assert 0.0 <= model.final_lose_if_keep() <= 1.0
+            assert 0.0 <= model.final_lose_if_change() <= 1.0
