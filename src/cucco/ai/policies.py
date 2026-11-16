@@ -395,6 +395,12 @@ class CountingWin(CountingSniper):
        動けないので、持ち続ければ負けない)。これを入れる前との対比較で、
        2〜10人卓の平均 +0.26pt(SE 0.05)、平均順位は3人卓を除く全卓で上がった。
 
+       「ノーチェンジした席は弱くない」は、相手が標準的に打つときだけ正しい。
+       そこで**開示された札から各席の癖を覚え**(`ctx.seat_samples`)、弱い札でも
+       持つ席はそのように読む(`ADAPT`)。学ばない場合との対比較で、常に替えない
+       相手に 4人卓 +2.4pt / 8人卓 +6.0pt、慎重な相手に 4人卓 +0.7pt。内蔵AIが
+       相手なら変わらない。実際の人間では測っていない。
+
     クク宣言は、最弱の席がほぼ決まっているときだけ凍結する(`_declare_now`)。
 
     2. **継続は、払えるなら払う。**残りが0枚になっても払うほうが1位の確率は
@@ -417,6 +423,8 @@ class CountingWin(CountingSniper):
     # 交換で「最弱になる確率」がこれ以上下がるなら交換する。0 にしないのは、
     # 交換の側の見積もりが拒否・失格・その後の連鎖を見ていない粗い近似だから。
     CHANGE_MARGIN = 0.06
+    # 開示された札から各席の交換の癖を学び、その席の札の見積もりに使う
+    ADAPT = True
 
     def opponent_keep_cutoff(self, ctx) -> float:
         """相手が「これより弱ければ交換する」と置くしきい値(counting_conservative の式)。"""
@@ -436,7 +444,7 @@ class CountingWin(CountingSniper):
             return not any(strength_of(rank) < mine for rank in ctx.known_held.values())
         if ctx.unseen_total <= 0:
             return False
-        model = ctx.loss_model(self.opponent_keep_cutoff(ctx))
+        model = ctx.loss_model(self.opponent_keep_cutoff(ctx), adapt=self.ADAPT)
         return model.lose_if_keep() - model.lose_if_change() > self.CHANGE_MARGIN
 
     # クク宣言: 「いま開示したら最弱」の席がこの確からしさで決まっていれば凍結する

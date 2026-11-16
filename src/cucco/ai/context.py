@@ -27,6 +27,7 @@ own hand: the multiset a policy should reason over.
 from __future__ import annotations
 
 from collections import Counter
+import math
 from dataclasses import dataclass, field
 
 from cucco.domain.cards import RANK_ORDER, strength
@@ -47,6 +48,7 @@ class ExchangeRecord:
     target: str | None  # None = 山札と交換した
     result: str  # accepted / refused / deck_exchange_accepted / deck_draw_refused
     revealed_rank: str | None = None  # 拒否で公開された札(人間・馬・猫・家)
+    given_up_card: str | None = None  # 山札交換で捨てた札(表向きで捨て札に出る)
 
 
 @dataclass
@@ -80,6 +82,11 @@ class PolicyContext:
     # 元の持ち主」に落ちるので、True のまま交換を仕掛けると自爆の危険がある。
     # 既定が False なのは、席情報と同じく渡さない呼び出し側を壊さないため。
     own_card_original: bool = False
+
+    # 各席がこれまでに「持った札/手放した札」の記録(開示と山札交換で見えた分)。
+    # 値は (その時点の標準的な境目からのずれ, 持ったか)。`loss_model` がここから
+    # 席ごとの交換の癖を見積もる。1ゲームのあいだ溜まる。既定は空(=全席が標準)。
+    seat_samples: dict[str, tuple[tuple[int, bool], ...]] = field(default_factory=dict)
 
     @property
     def is_child_time(self) -> bool:
@@ -204,9 +211,13 @@ class PolicyContext:
         """
         return 1.0 - self.loss_model(keep_cutoff, leak).none_weaker(strength_of(self.own_rank))
 
-    def loss_model(self, keep_cutoff: float, leak: float = 0.0) -> "LossModel":
-        """このディールの「誰が最弱か」の見積もりを、問い合わせられる形で返す。"""
-        return LossModel(self, keep_cutoff, leak)
+    def loss_model(self, keep_cutoff: float, leak: float = 0.0, adapt: bool = False) -> "LossModel":
+        """このディールの「誰が最弱か」の見積もりを、問い合わせられる形で返す。
+
+        `adapt=True` なら、`seat_samples` に記録のある席は `keep_cutoff` の代わりに
+        **その席の癖**(標準より弱い札でも持つ/強い札でも手放す)で札を絞る。
+        """
+        return LossModel(self, keep_cutoff, leak, adapt)
 
 
 class LossModel:
@@ -223,7 +234,7 @@ class LossModel:
     docs/ai-policy-reference.md §6)。判断材料の1つとして使うこと。
     """
 
-    def __init__(self, ctx: PolicyContext, keep_cutoff: float, leak: float = 0.0) -> None:
+    def __init__(self, ctx: PolicyContext, keep_cutoff: float, leak: float = 0.0, adapt: bool = False) -> None:
         self.ctx = ctx
         counts = ctx.unseen_counts
         total = ctx.unseen_total
@@ -231,27 +242,66 @@ class LossModel:
         # 弱い順に (強さ, 枚数, 持ち続けられる割合)。札が「持ち続けられる」かは、
         # 弱いほうから積んだ割合がしきい値以上か。特殊札は性質で決まる。
         self.cards: list[tuple[int, int, float]] = []
+        ordinary_index: list[int | None] = []  # cards と同じ並び。普通の札なら弱い順の番号
+        default_dumped = 0  # 標準の境目: 普通の札のうち、弱いほうから何種が手放されるか
         below = 0
         for rank in _RANKS_WEAK_TO_STRONG:
             n = counts.get(rank, 0)
+            if rank in _ALWAYS_KEPT:
+                kept = 1.0
+            elif rank in _ALWAYS_DUMPED:
+                kept = leak
+            else:
+                kept = 1.0 if total and below / total >= keep_cutoff else leak
+            index = _ORDINARY_INDEX.get(rank)
+            if index is not None and kept < 0.5:
+                default_dumped += 1
             if n:
-                if rank in _ALWAYS_KEPT:
-                    kept = 1.0
-                elif rank in _ALWAYS_DUMPED:
-                    kept = leak
-                else:
-                    kept = 1.0 if total and below / total >= keep_cutoff else leak
                 self.cards.append((_STRENGTH_BY_VALUE[rank], n, kept))
+                ordinary_index.append(index)
             below += n
         self.keep_w = sum(n * k for _, n, k in self.cards)
         self.dump_w = sum(n * (1.0 - k) for _, n, k in self.cards)
         roles = ctx.seat_roles()
         self.roles = roles
         self.known = [strength_of(ctx.known_held[p]) for p, r in roles.items() if r == "known"]
-        self.n_kept = sum(1 for r in roles.values() if r == "kept")
-        self.n_stuck = sum(1 for r in roles.values() if r == "stuck")
+        # 癖の記録がある席は、標準の境目ではなく席ごとの見積もりで扱う。
+        # profiled[pid] = (役割, cards と同じ並びの「その札を持ち続ける割合」)
+        self.profiled: dict[str, tuple[str, list[float]]] = {}
+        if adapt:
+            for pid, role in roles.items():
+                samples = ctx.seat_samples.get(pid)
+                if samples and role in ("kept", "stuck"):
+                    shift = seat_shift_posterior(samples)
+                    self.profiled[pid] = (role, [
+                        kept if index is None else sum(w for d, w in shift.items() if index >= default_dumped + d)
+                        for (_, _, kept), index in zip(self.cards, ordinary_index)
+                    ])  # fmt: skip
+        plain = [r for p, r in roles.items() if p not in self.profiled]
+        self.n_kept = plain.count("kept")
+        self.n_stuck = plain.count("stuck")
         self.n_uniform = sum(1 for r in roles.values() if r in ("moved", "unacted"))
         self.target_role = roles.get(ctx.exchange_target) if ctx.exchange_target else None
+        if ctx.exchange_target in self.profiled:
+            self.target_role = "profiled"
+
+    def _profiled_safe(self, strength: int, skip: str | None = None) -> float:
+        """癖の記録がある席に、その強さより弱い札が**ない**確率。"""
+        out = 1.0
+        for pid, (role, keeps) in self.profiled.items():
+            if pid == skip:
+                continue
+            weak = mass = 0.0
+            for (st, n, _), k in zip(self.cards, keeps):
+                w = n * (k if role == "kept" else 1.0 - k)
+                mass += w
+                if st < strength:
+                    weak += w
+            if mass > 0:
+                out *= 1.0 - weak / mass
+            elif self.total > 0:  # 見積もりと動きが矛盾。手がかりなしに戻す
+                out *= 1.0 - sum(n for st, n, _ in self.cards if st < strength) / self.total
+        return out
 
     def none_weaker(self, strength: int, without_target: bool = False) -> float:
         """その強さの札より弱い札を、他の誰も持っていない確率。
@@ -281,7 +331,8 @@ class LossModel:
                 n_stuck -= 1
             elif self.target_role in ("moved", "unacted"):
                 n_uniform -= 1
-        return (1.0 - q_kept) ** n_kept * (1.0 - q_stuck) ** n_stuck * (1.0 - uniform) ** n_uniform
+        profiled = self._profiled_safe(strength, self.ctx.exchange_target if without_target else None)
+        return (1.0 - q_kept) ** n_kept * (1.0 - q_stuck) ** n_stuck * (1.0 - uniform) ** n_uniform * profiled
 
     def weakest_probs(self) -> dict[str, float]:
         """**いま開示したら誰が最弱か**の見積もり(他席だけ。合計1)。
@@ -431,7 +482,8 @@ class LossModel:
         dw, do, gw, go = self._classes(t)
         takeable = self._p_cucco + dw + do + gw + go
         q_moved = (dw + gw) / takeable if takeable > 0 else uniform
-        return (1.0 - q_kept) ** self.n_kept * (1.0 - q_stuck) ** self.n_stuck * (1.0 - q_moved) ** self._n_moved
+        plain = (1.0 - q_kept) ** self.n_kept * (1.0 - q_stuck) ** self.n_stuck * (1.0 - q_moved) ** self._n_moved
+        return plain * self._profiled_safe(t)
 
     # 交換を仕掛ける席が持っている札の状態: (t より弱い/以上/道化) × (配られた札か)
     _W_OWN, _O_OWN, _J_OWN, _W_PUSHED, _O_PUSHED = range(5)
@@ -554,6 +606,43 @@ _RANKS_WEAK_TO_STRONG: tuple[str, ...] = tuple(r.value for r in RANK_ORDER)
 # (policies.py の NEVER_CHANGE_RANKS / ALWAYS_CHANGE_RANKS と同じ集合。)
 _ALWAYS_KEPT = frozenset({"クク", "人間", "馬", "猫", "家"})
 _ALWAYS_DUMPED = frozenset({"道化", "獅子", "仮面", "桶"})
+# 普通の札(獅子〜12)の弱い順の番号。席ごとの交換の癖は、この並びの上の
+# 「境目が標準から何種ずれているか」で表す。
+_ORDINARY_INDEX: dict[str, int] = {
+    r: i for i, r in enumerate(r for r in _RANKS_WEAK_TO_STRONG if r not in _ALWAYS_KEPT and r != "道化")
+}
+_SHIFT_RANGE = range(-len(_ORDINARY_INDEX), len(_ORDINARY_INDEX) + 1)
+SHIFT_PRIOR_WIDTH = 3.0  # 記録がないうちは標準(ずれ 0)を信じる強さ
+SHIFT_NOISE = 0.15  # 見積もりと合わない1手を、気まぐれとして許す確率
+
+
+def standard_dump_count(alive_count: int, child_time: bool) -> int:
+    """標準的な打ち手が手放す普通の札の種類数(弱いほうから)。席の癖を測る物差し。
+
+    counting_conservative の境目を、新しい山(44枚)で数えたもの。記録を取る時点の
+    見えていない札までは追わない(物差しなので、どの席にも同じなら足りる)。
+    """
+    cutoff = 0.62 - 0.047 * alive_count - 0.5 * (4 / 43) - (0.05 if child_time else 0.0)
+    return sum(1 for r, i in _ORDINARY_INDEX.items() if r in _ALWAYS_DUMPED or (2 + 2 * i) / 43 < cutoff)
+
+
+def seat_shift_posterior(samples: tuple[tuple[int, bool], ...]) -> dict[int, float]:
+    """席の境目が標準から何種ずれているかの見積もり(ずれ -> 確からしさ)。
+
+    記録 (ずれ, 持ったか) は「標準の境目から数えて何種上の札を、持った/手放した」。
+    境目が d だけ上にある席は、ずれ d 以上の札を持ち、それ未満を手放す。合わない
+    記録は気まぐれとして `SHIFT_NOISE` で許す。持った札しか見えないことが多いので、
+    動くのは主に**標準なら手放す札を持っていた**ときである(= 慎重な席)。
+    """
+    weights = {}
+    for d in _SHIFT_RANGE:
+        w = math.exp(-abs(d) / SHIFT_PRIOR_WIDTH)
+        for offset, kept in samples:
+            if (offset >= d) != kept:
+                w *= SHIFT_NOISE
+        weights[d] = w
+    norm = sum(weights.values())
+    return {d: w / norm for d, w in weights.items()}
 
 
 @dataclass
@@ -580,6 +669,8 @@ class CountingTracker:
     disqualified: set[str] = field(default_factory=set)
     acted_this_deal: set[str] = field(default_factory=set)
     exchanges_this_deal: list[ExchangeRecord] = field(default_factory=list)
+    # 席ごとの (標準の境目からのずれ, 持ったか)。ディールをまたいで溜め、ゲームの終わりに消す
+    seat_samples: dict[str, list[tuple[int, bool]]] = field(default_factory=dict)
 
     def observe(self, event) -> None:
         p = event.payload
@@ -616,6 +707,10 @@ class CountingTracker:
             # 次のディールの席順から外れる(ポットから降りた/大人の時間で脱落)。
             pid = p.get("player_id")
             self.pot_participants = tuple(x for x in self.pot_participants if x != pid)
+        elif t == "game_ended":
+            # 癖の記録は1ゲームごとに取り直す。席替えのあとも同じ相手とは限らず、
+            # 評価走行ではゲームごとに独立でないと同じシードを再現できない。
+            self.seat_samples.clear()
         elif t == "exchange_result":
             self._observe_exchange(p)
         elif t == "no_change_declared" or t == "turn_timeout_consumed":
@@ -639,6 +734,7 @@ class CountingTracker:
             for rank in (p.get("hands") or {}).values():
                 if rank:
                     self.revealed_this_deal[rank] += 1
+            self._learn_from_open(p.get("hands") or {})
         elif t == "deal_result":
             # Authoritative: replace the provisional mid-deal layer.
             for entry in p.get("discarded_cards", ()):
@@ -649,6 +745,41 @@ class CountingTracker:
             self._observe_chips(p)
             if p.get("next_dealer"):
                 self.dealer_id = p["next_dealer"]
+
+    SAMPLES_KEPT_PER_SEAT = 60
+
+    def _learn_from_open(self, hands: dict[str, str]) -> None:
+        """開示された札と、このディールの動きから、各席の「持った/手放した」を記録する。
+
+        - ノーチェンジした席: 開示された札を**持った**
+        - 山札と交換した席: 捨てた札を**手放した**(交換の記録に残る)
+        - 席と交換した席: 相手がその札を動かさなかったなら、相手の開示札が**手放した**札
+        - 交換を拒否された席: 開示された札が、**手放そうとした**札
+        """
+        last: dict[str, ExchangeRecord] = {}
+        for e in self.exchanges_this_deal:
+            last[e.requester] = e
+        standard = standard_dump_count(len(hands) + len(self.disqualified), self.deal_number <= 3)
+
+        def note(pid: str, rank: str | None, kept: bool) -> None:
+            index = _ORDINARY_INDEX.get(rank or "")
+            if index is not None:
+                samples = self.seat_samples.setdefault(pid, [])
+                samples.append((index - standard, kept))
+                del samples[: -self.SAMPLES_KEPT_PER_SEAT]
+
+        for pid, rank in hands.items():
+            if pid in self.acted_this_deal and pid not in last:
+                note(pid, rank, True)
+        for pid, record in last.items():
+            if record.result == "deck_exchange_accepted":
+                note(pid, record.given_up_card, False)
+            elif record.result == "accepted" and record.target in hands:
+                moved_on = record.target in last and last[record.target].result in ("accepted", "deck_exchange_accepted")
+                if not moved_on:
+                    note(pid, hands[record.target], False)
+            elif record.result in ("refused", "deck_draw_refused") and pid in hands:
+                note(pid, hands[pid], False)  # 手放そうとして拒否された札
 
     def _reset_deal(self) -> None:
         self.revealed_this_deal.clear()
@@ -673,6 +804,7 @@ class CountingTracker:
                     target=p.get("target"),
                     result=str(result),
                     revealed_rank=p.get("revealed_rank"),
+                    given_up_card=p.get("given_up_card"),
                 )
             )
         if result == "accepted":

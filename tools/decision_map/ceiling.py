@@ -1,6 +1,6 @@
 """天井の測定: 見えないはずの情報を見せた「カンニングAI」が、counting_win にどれだけ勝つか。
 
-usage: ceiling.py N n_games MODE [seed0]
+usage: ceiling.py N n_games MODE [seed0] [相手(カンマ区切り、N-1 席ぶん)] [方策を読むディレクトリ]
 
 MODE(どれも交換の判断だけを差し替える。継続とクク宣言は counting_win のまま):
   hands   全員の手札が見える
@@ -12,7 +12,8 @@ MODE(どれも交換の判断だけを差し替える。継続とクク宣言は
           (山札の並びと後ろの席の動きまで見えている。届かない上限)
 
 hands / acted / behind / model は、決め方(負ける確率の差が CHANGE_MARGIN 以上なら
-交換)を変えずに、入力の情報だけを差し替える。相手は混成卓(lab.panel(N)[0])。
+交換)を変えずに、入力の情報だけを差し替える。相手は既定で混成卓(lab.panel(N)[0])。
+相手を指定すれば、打ち方の違う卓での「適応の伸びしろ」(model)が測れる。
 """
 
 import dataclasses
@@ -30,7 +31,14 @@ MODE = sys.argv[3]
 SEED0 = int(sys.argv[4]) if len(sys.argv) > 4 else 97_000_000
 assert MODE in ("hands", "acted", "behind", "model", "deal"), MODE
 ME = "P0"
-OPP = panel(N)[0]
+if len(sys.argv) > 6:
+    from pathlib import Path
+
+    from cucco.ai.plugins import load_policy_dir
+
+    load_policy_dir(Path(sys.argv[6]))
+OPP = sys.argv[5].split(",") if len(sys.argv) > 5 else panel(N)[0]
+assert len(OPP) == N - 1, OPP
 ALWAYS = {r.value for r in pol.ALWAYS_CHANGE_RANKS}
 RANKS = list(pol.FULL_DECK_COUNTS)
 ST = {"game": None, "keep": {}, "stat": [0, 0], "inner": False, "script": None, "idx": 0, "fired": False, "out": None, "hist": None, "seed": None}

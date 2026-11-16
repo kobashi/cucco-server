@@ -111,6 +111,7 @@ class MockAI:
             acted_this_deal=frozenset(self.tracker.acted_this_deal),
             exchanges_this_deal=tuple(self.tracker.exchanges_this_deal),
             own_card_original=self._own_card_original,
+            seat_samples={pid: tuple(v) for pid, v in self.tracker.seat_samples.items() if pid != me},
         )
 
     def _info(self, message: str) -> None:
