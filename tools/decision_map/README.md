@@ -21,6 +21,10 @@ python rollout.py 8 16000 dv8.pkl v8.json counting_win
 python rollout_cucco.py 8 30000 dc8.pkl v8.json
 # 4) 交換ルール「持ち続けた負け確率 − β×交換した負け確率 > τ」の β, τ を探す
 uv run --with numpy python fit_rule.py W      # W = 勝率, R = 平均順位
+# 5) 天井: 見えないはずの情報を見せたAIが counting_win にどれだけ勝つか
+#    hands=全員の手札 / acted=動いた席だけ / behind=未行動の席だけ /
+#    model=各席の交換基準だけ / deal=持つ・替えるの結果を両方見る
+python ceiling.py 4 6000 model
 ```
 
 4) は 2,3,4,6,8,10 人のデータ(`dv2.pkl` … `dv10.pkl`)が揃っている前提。
@@ -32,6 +36,10 @@ uv run --with numpy python fit_rule.py W      # W = 勝率, R = 平均順位
 - `fit_rule.py` の「利得」は**1判断あたり**の見積もり。判断を1つだけ変えた
   ときの差を足したもので、**多くの判断を同時に変えるルールでは外れる**
   (継続を払わないルールは、見積もりでは得でも 3〜5人卓の実戦では損だった)
+
+- `ceiling.py` の差は**届かない上限**。`behind` と `deal` は手がかりのない情報
+  (運)で、推論で取り戻せるのは `acted` まで、相手の打ち方を学んで取り戻せるのは
+  `model` まで。新しい作り方のAIを検討するときは、先にここを測る
 
 ## 守ること
 
