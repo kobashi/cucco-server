@@ -4,6 +4,20 @@
 Cambio)のネット対戦サーバー。ゲーム研究ゼミ内での運用を想定し、人間・AI
 プレイヤーの両方が同じWebSocketプロトコルで対局できる。
 
+## AIを作る人へ
+
+自分のAIを卓に座らせたい人は、**[`docs/ai-start-here.md`](docs/ai-start-here.md)
+から読む**。目的別にどの文書を読めばよいか、Coding Agent に渡す文書の組、
+強くするヒントがどこにあるかをまとめてある。
+
+| やりたいこと | 文書 |
+|---|---|
+| 作って置く(手順) | [`docs/ai-player-guide.md`](docs/ai-player-guide.md) |
+| メソッド・判断材料・クク宣言のタイミング・測り方を引く | [`docs/ai-policy-reference.md`](docs/ai-policy-reference.md) |
+| ルールを確かめる | [`docs/rules/final_rules.md`](docs/rules/final_rules.md) |
+| 強くするヒントを探す | [`docs/ai-advanced-policies.md`](docs/ai-advanced-policies.md)、[`CHANGELOG.md`](CHANGELOG.md)(実測の記録) |
+| 見本を見る | [`docs/examples/`](docs/examples/) |
+
 ## 特徴
 
 - **ルールエンジン**: 22種×2枚(44枚)のカード、特殊札(道化・人間・馬・猫・家・
@@ -61,8 +75,9 @@ Cambio)のネット対戦サーバー。ゲーム研究ゼミ内での運用を�
 ### ゼミ生のAIを追加する
 
 `policies/` に `.py` を1つ置いてサーバーを再起動すると、そのAIで卓に座らせられる
-(サーバーのコードは変更しない)。書き方・置き方・強さの測り方は
-[`docs/ai-player-guide.md`](docs/ai-player-guide.md)(手順書)と
+(サーバーのコードは変更しない)。読む順番は
+[`docs/ai-start-here.md`](docs/ai-start-here.md)(入口)にまとめてある。書き方・置き方は
+[`docs/ai-player-guide.md`](docs/ai-player-guide.md)(手順書)、引くのは
 [`docs/ai-policy-reference.md`](docs/ai-policy-reference.md)(リファレンス)、見本は
 [`docs/examples/`](docs/examples/)(最小の形と、クク宣言のタイミングだけを
 書き換える狙い撃ちの例)。
@@ -84,7 +99,7 @@ Cambio)のネット対戦サーバー。ゲーム研究ゼミ内での運用を�
 
 ドメイン層・プロトコル層・サーバー層・永続化層・評価モード・サンプル
 クライアント・人間向けブラウザクライアント2種(リファレンス+効果音・
-カード演出付きプレイ用)まで実装済み、テスト465件全てパス。複数回のレビュー(Fable5)と
+カード演出付きプレイ用)まで実装済み、テスト504件全てパス。複数回のレビュー(Fable5)と
 ゼミ内試用(v1.0.0b1〜b30)を経て主要な不具合は修正済み。GitHub Pages + Cloudflare Tunnelでの学外公開運用まで
 実績あり。成績確認(`cucco.tools.stats`)・サーバー管理(卓一覧・停止卓の
 強制中止・成績確認・データ掃除ができるブラウザ管理コンソール+`cucco.tools.admin`、ローカル専用リスナー)・放置卓の自動GC
@@ -160,14 +175,25 @@ docs/           # 要求仕様・ルール・プロトコル設計・実装ガ�
 
 ## ドキュメント
 
+**AIを作る**
+
+- [`docs/ai-start-here.md`](docs/ai-start-here.md) — **入口**(読む順番・Coding Agent に渡す文書・ヒントの在りか)
+- [`docs/ai-player-guide.md`](docs/ai-player-guide.md) — ゼミ生AIの作り方と追加のしかた(手順書)
+- [`docs/ai-policy-reference.md`](docs/ai-policy-reference.md) — AI方策リファレンス(メソッド・判断材料・クク宣言のタイミング・札の早見表・測り方)
+- [`docs/ai-advanced-policies.md`](docs/ai-advanced-policies.md) — 上位AI実装案集(教材。検証の作法もここ)
+- [`docs/ai-client-guide.md`](docs/ai-client-guide.md) — AIプレイヤー実装ガイド(外部クライアントとして作る場合)
+- [`docs/examples/`](docs/examples/) — 方策ファイルの見本
+- [`docs/rules/strategy_hints.md`](docs/rules/strategy_hints.md) / [`docs/rules/play_summary_granpere.md`](docs/rules/play_summary_granpere.md) — 判断のヒントと製品付属の判断表
+
+**ルールと仕様**
+
 - [`docs/requirements.md`](docs/requirements.md) — 要求仕様書(全体像はここから)
 - [`docs/rules/final_rules.md`](docs/rules/final_rules.md) — 確定したゲームルール
 - [`docs/protocol/design.md`](docs/protocol/design.md) — 通信プロトコル設計
 - [`docs/protocol/decisions.md`](docs/protocol/decisions.md) — プロトコル設計の決定事項・変更履歴
-- [`docs/ai-player-guide.md`](docs/ai-player-guide.md) — **ゼミ生AIの作り方と追加のしかた**(手順書)
-- [`docs/ai-policy-reference.md`](docs/ai-policy-reference.md) — **AI方策リファレンス**(判断材料・札の早見表・測り方)
-- [`docs/ai-client-guide.md`](docs/ai-client-guide.md) — AIプレイヤー実装ガイド(外部クライアント)
-- [`docs/ai-advanced-policies.md`](docs/ai-advanced-policies.md) — 上位AI実装案集(教材)
+
+**運用とクライアント**
+
 - [`docs/human-client-guide.md`](docs/human-client-guide.md) — 人間向けUI実装ガイド
 - [`docs/server-operations.md`](docs/server-operations.md) — ゲームサーバー運用マニュアル(起動・停止・管理・データ)
 - [`docs/web-client-operations.md`](docs/web-client-operations.md) — ブラウザクライアント操作手順書

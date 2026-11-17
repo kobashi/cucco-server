@@ -21,6 +21,15 @@ class ExamplePolicy(BasePolicy):
                      "クク" "仮面" などの特殊札(いずれも文字列)
         alive_count: そのディールに残っている人数(自分を含む)
         """
+        if own_rank in ("道化", "獅子", "仮面", "桶"):
+            return True               # 0 より弱い特殊札。持っていると負ける
         if not own_rank.isdigit():
-            return False              # 特殊札は持っておく
+            return False              # 人間・馬・猫・家・クク は強いので持つ
         return int(own_rank) <= 4     # 4以下なら交換
+
+    # ククを「持った瞬間」に宣言したいなら、これを足す。足さないと、宣言するのは
+    # 自分の手番が来たときだけで、それまでに直前の席に取られることがある
+    # (docs/ai-policy-reference.md §1「クク宣言は2つのメソッドに分かれる」)。
+    #
+    # def declare_cucco_eagerly(self, ctx) -> bool:
+    #     return True

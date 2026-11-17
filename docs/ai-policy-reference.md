@@ -1,6 +1,7 @@
 # AI方策リファレンス
 
-書いている最中に引くための一覧。**作り方・置き方の手順**は
+書いている最中に引くための一覧。**どの文書を読めばよいか**は
+[ai-start-here.md](ai-start-here.md)、**作り方・置き方の手順**は
 [ai-player-guide.md](ai-player-guide.md)、**ルール本体**は
 [rules/final_rules.md](rules/final_rules.md)、**強いAIの考え方**は
 [ai-advanced-policies.md](ai-advanced-policies.md) を参照。
@@ -16,12 +17,12 @@
 | メソッド | 呼ばれる場面 | 返す | 未実装時 |
 |---|---|---|---|
 | `decide_change(own_rank, alive_count)` | 自分の手番 | `True`=交換(カンビオ) / `False`=しない | **これか `decide_change_ctx` のどちらかは必須** |
-| `decide_cucco_declare(own_rank, alive_count)` | クク札を持っている自分の手番・「どうぞ」 | `True`=クク宣言 | 常に `True` |
+| `decide_cucco_declare(own_rank, alive_count)` | クク札を持っている**自分の手番**と、親の「どうぞ」。**手番の外では呼ばれない**(下の「クク宣言は2つのメソッドに分かれる」) | `True`=クク宣言 | 常に `True` |
 | `decide_continue(chips, required_chips)` | 子供の時間に敗者になった | `True`=払って続行 | 常に `True` |
 | `decide_change_ctx(ctx)` | 上と同じ場面(**こちらが優先**) | 同上 | `decide_change` に委譲 |
 | `decide_cucco_declare_ctx(ctx)` | 同上 | 同上 | `decide_cucco_declare` に委譲 |
 | `decide_continue_ctx(ctx)` | 同上 | 同上 | `decide_continue` に委譲 |
-| `declare_cucco_eagerly(ctx)` | クク札を**持った瞬間**(手番を待たずに宣言するか) | `True`=即宣言 | `False`(**中間の席ではクク を取られる**。§3) |
+| `declare_cucco_eagerly(ctx)` | クク札を持っていて**自分の手番でないとき**(配られた直後・交換が1つ終わるたび。手番の前も後も) | `True`=いま宣言 | `False`(**中間の席ではクク を取られる**。§3) |
 
 `_ctx` 版を実装すると、下の `PolicyContext` すべてが使える。両方実装した場合は
 `_ctx` 版が呼ばれる。
@@ -30,6 +31,50 @@
 > **例外を投げても対局は止まらない。** その判断だけ既定値(交換しない / 続行する /
 > クク宣言する)で進み、サーバーのログに理由が残る。ただし黙って弱くなるので、
 > ログは確認すること。
+
+### クク宣言は2つのメソッドに分かれる
+
+ルール上、クク宣言は**自分の手番でなくてもいつでもできる**
+([rules/final_rules.md](rules/final_rules.md)「宣言できるタイミングと優先順位」)。
+方策の側では、**手番で聞かれるメソッド**と**手番の外で聞かれるメソッド**が別に
+なっている。
+
+| ディール中の場面 | 聞かれるメソッド | 書かなかったとき |
+|---|---|---|
+| 札が配られた直後(全席) | `declare_cucco_eagerly` | 宣言しない |
+| 親の「どうぞ」 | `decide_cucco_declare_ctx` | 宣言する |
+| **手番前**: 他の席の交換が1つ終わるたび | `declare_cucco_eagerly` | 宣言しない |
+| 交換でクク を受け取った直後 | `declare_cucco_eagerly` | 宣言しない |
+| **自分の手番** | `decide_cucco_declare_ctx` | 宣言する |
+| **手番後**: 他の席の交換が1つ終わるたび | `declare_cucco_eagerly` | 宣言しない |
+
+> [!IMPORTANT]
+> **`decide_cucco_declare` を `True` にしても「即宣言」にはならない。** これは
+> 自分の手番が来たときの答えで、手番が来るまでは聞かれない。そのあいだに直前の
+> 席がカンビオを宣言すると、クク は取られる(クク は交換を拒否できない)。
+> **手番の前後で宣言したいなら `declare_cucco_eagerly` を書く。**
+
+よく使う形:
+
+```python
+# 持った瞬間に必ず宣言する
+def declare_cucco_eagerly(self, ctx) -> bool:
+    return True
+
+# 手番のときと同じ基準を、手番の外でも使う
+def declare_cucco_eagerly(self, ctx) -> bool:
+    return self.decide_cucco_declare_ctx(ctx)
+
+# 取られる危険があるあいだだけ先に宣言し、安全なら手番以降まで待つ
+def declare_cucco_eagerly(self, ctx) -> bool:
+    return bool(ctx.unacted_before_me())
+```
+
+- `declare_cucco_eagerly` が呼ばれるのは**交換が起きたとき**で、ノーチェンジ
+  宣言では呼ばれない。手番前に誰も交換しなければ、配られた直後の1回だけになる
+- 親以外が「どうぞ」より前に出した宣言は捨てられず、「どうぞ」の直後に効く
+- 1ディールで宣言は1回。宣言したあとはもう聞かれない
+- 待つかどうかの損得(誰に取られうるか、誰を負けさせるか)は §3
 
 ## 2. 判断材料(`PolicyContext`)
 
@@ -155,7 +200,8 @@ order = [第1, 第2, 第3, 親]      ← 循環しない
 | 親 | 「どうぞ」の場面で宣言できる(自分の手番は最後尾なので、ここが他プレイヤーが動く前の唯一の機会。第一手番のカンビオはこれに割り込めない) |
 
 `declare_cucco_eagerly(ctx)` を `True` にすると、手番を待たず**持った瞬間**に
-宣言する(`deal_started` と交換成立の直後に呼ばれる)。既定は `False` で、これは
+宣言する(配られた直後と、交換が1つ終わるたびに呼ばれる。場面の一覧は §1
+「クク宣言は2つのメソッドに分かれる」)。既定は `False` で、これは
 ベースラインの挙動を固定するためなので、**中間の席ではクク を取られる**。内蔵の
 `counting_aggressive` / `counting_conservative` は `True`。
 

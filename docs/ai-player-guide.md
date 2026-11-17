@@ -3,6 +3,9 @@
 自分のAIをCuccoの卓に座らせるための手順書。**サーバーのコードには一切手を
 入れない**。ファイルを1つ置くか、自分のプログラムを外から繋ぐかのどちらか。
 
+どの文書を読めばよいか迷ったら **[入口](ai-start-here.md)** へ(Coding Agent に
+渡す文書の組もそこにある)。
+
 関連: **[方策リファレンス](ai-policy-reference.md)**(書いている最中に引く一覧) /
 [ルール](rules/final_rules.md) / [AIの考え方](ai-advanced-policies.md) /
 [プロトコル](protocol/design.md) / [外部クライアントの作り方](ai-client-guide.md)
@@ -41,22 +44,44 @@ class MyPolicy(BasePolicy):
     name = "zemi_yamada"             # ← 卓で選ぶときの名前
 
     def decide_change(self, own_rank: str, alive_count: int) -> bool:
+        if own_rank in ("道化", "獅子", "仮面", "桶"):
+            return True                # 0 より弱い札。持っていると負ける
         if not own_rank.isdigit():
-            return False
+            return False               # 人間・馬・猫・家・クク は強いので持つ
         return int(own_rank) <= 4
 ```
+
+> [!WARNING]
+> **特殊札がすべて強いわけではない。** 道化・獅子・仮面・桶は **0 より弱い**。
+> 「数字でない札は持つ」とだけ書くと、いちばん弱い札を持ち続けて負ける
+> (強さの順は[リファレンス](ai-policy-reference.md) §4)。
 
 ### 決めること
 
 | メソッド | いつ呼ばれるか | 返すもの | 省略したときの動き |
 |---|---|---|---|
 | `decide_change(own_rank, alive_count)` | 自分の手番 | `True`=交換(カンビオ) | **必須** |
-| `decide_cucco_declare(own_rank, alive_count)` | クク札を持っている手番 | `True`=クク宣言 | 常に宣言する |
+| `decide_cucco_declare(own_rank, alive_count)` | クク札を持っている**自分の手番** | `True`=クク宣言 | 常に宣言する |
+| `declare_cucco_eagerly(ctx)` | クク札を持っていて**自分の手番でないとき**(配られた直後・交換が起きるたび) | `True`=いま宣言 | **宣言しない**(手番まで待つ) |
 | `decide_continue(chips, required_chips)` | 子供の時間に敗者になった | `True`=払って続行 | 常に払って続行 |
 
-`own_rank` は `"0"`〜`"12"` の数字か、`"道化" "人間" "馬" "猫" "家" "クク" "仮面"`
-などの特殊札(いずれも文字列)。`alive_count` はそのディールに残っている人数
-(自分を含む)。
+`own_rank` は `"0"`〜`"12"` の数字か、`"道化" "獅子" "仮面" "桶" "人間" "馬" "猫"
+"家" "クク"` の特殊札(いずれも文字列)。`alive_count` はそのディールに残っている
+人数(自分を含む)。
+
+### ククを「すぐ」宣言したいとき
+
+`decide_cucco_declare` は**自分の手番が来たとき**にしか聞かれない。手番を待って
+いるあいだに直前の席がカンビオを宣言すると、ククは取られる(ククは交換を拒否
+できない)。**配られた瞬間に宣言したいなら、これを足す。**
+
+```python
+    def declare_cucco_eagerly(self, ctx) -> bool:
+        return True
+```
+
+手番前・手番・手番後のどこで何が聞かれるかは、
+[リファレンス](ai-policy-reference.md) §1「クク宣言は2つのメソッドに分かれる」。
 
 ### 名前の決まり
 
@@ -68,8 +93,8 @@ class MyPolicy(BasePolicy):
 ### 場に出た札まで見て判断する
 
 数えながら打つAIを書くなら、`decide_change_ctx(ctx)` を実装する。`ctx` から
-見えるもの(自分の手札・残り人数・チップ・捨て札・公開された札・未確認の札の
-枚数)は [`src/cucco/ai/context.py`](../src/cucco/ai/context.py) と
+見えるもの(自分の手札・残り人数・チップ・未確認の札の枚数・他の席の動き)の
+一覧は[リファレンス](ai-policy-reference.md) §2、考え方は
 [ai-advanced-policies.md](ai-advanced-policies.md) を参照。
 
 ```python
@@ -79,8 +104,11 @@ class MyCountingPolicy(BasePolicy):
     name = "zemi_yamada_counting"
 
     def decide_change_ctx(self, ctx) -> bool:
-        unseen = ctx.unseen_counts()          # まだ見えていない札の枚数
-        return False                          # ここに自分の判断を書く
+        weaker = ctx.unseen_weaker_than_own()  # 見えていない札のうち、自分より弱い枚数
+        total = ctx.unseen_total               # 見えていない札の合計
+        if total == 0:
+            return False
+        return weaker / total < 0.35           # 弱い札が少ない = 自分が最弱になりやすい
 
     def decide_change(self, own_rank, alive_count):
         return False                          # ctx 版を使う場合も残しておく
@@ -119,6 +147,15 @@ python -m cucco.tools.stats --policies
 
 `--policies` は方策別の成績(勝率・平均順位・失格率)を出す。**方策名で集計する**
 ので、名前を変えると別物として記録される。
+
+手元で速く比べるなら `tools/fast_eval.py` を使う(サーバーは要らない)。まず内蔵の
+`matrix` と比べ、大きく負けるなら取り違えを疑う。
+
+```bash
+python tools/fast_eval.py --candidate zemi_yamada --baseline matrix --policy-dir policies
+```
+
+読み方は[リファレンス](ai-policy-reference.md) §6。
 
 まとまった数を回すなら評価モード(卓の作成時に選ぶ)を使う。測り方の作法
 (何ゲーム必要か、相手構成で結果がどう変わるか)は
